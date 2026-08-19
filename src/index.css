@@ -187,3 +187,124 @@ html, body {
   animation: blinkPrompt 0.8s step-end infinite;
   margin-left: 2px;
 }
+
+/* ================= idle-game HUD ================= */
+.panel-chip {
+  background: linear-gradient(160deg, rgba(22, 17, 32, 0.92), rgba(10, 8, 16, 0.92));
+  border: 1px solid rgba(150, 130, 170, 0.3);
+  padding: 4px 10px;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+
+.hud-btn {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: #e8dfc8;
+  background: linear-gradient(180deg, rgba(40, 33, 52, 0.94), rgba(16, 13, 24, 0.94));
+  border: 1px solid rgba(150, 130, 170, 0.4);
+  padding: 5px 11px;
+  cursor: pointer;
+  clip-path: polygon(7px 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%, 0 7px);
+  transition: all 0.14s ease;
+}
+.hud-btn:hover { color: #ffd23c; border-color: rgba(255, 210, 60, 0.7); transform: translateY(-1px); }
+
+.dock-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: #f2ead8;
+  background: linear-gradient(180deg, rgba(46, 37, 60, 0.96), rgba(18, 14, 26, 0.96));
+  border: 1px solid rgba(160, 140, 190, 0.45);
+  padding: 9px 18px 7px;
+  cursor: pointer;
+  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
+  transition: all 0.16s ease;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+}
+.dock-btn:hover { transform: translateY(-3px); border-color: rgba(255, 210, 60, 0.8); color: #ffd23c; box-shadow: 0 10px 24px rgba(0, 0, 0, 0.6); }
+.dock-btn.gacha-dock {
+  background: linear-gradient(180deg, rgba(120, 24, 80, 0.92), rgba(50, 10, 40, 0.95));
+  border-color: rgba(255, 143, 208, 0.75);
+  color: #ffd6ec;
+  padding: 12px 22px 9px;
+  font-size: 15px;
+}
+.dock-btn.gacha-dock:hover { color: #ffffff; border-color: #ff8fd0; }
+
+.panel-row {
+  background: linear-gradient(160deg, rgba(26, 21, 38, 0.9), rgba(12, 9, 18, 0.92));
+  border: 1px solid rgba(150, 130, 170, 0.25);
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.upgrade-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 12px;
+  color: #ffe9b8;
+  background: linear-gradient(180deg, rgba(120, 86, 20, 0.85), rgba(60, 40, 10, 0.9));
+  border: 1px solid rgba(255, 210, 60, 0.6);
+  padding: 6px 14px;
+  cursor: pointer;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  transition: all 0.14s ease;
+}
+.upgrade-btn:hover:not(:disabled) { transform: scale(1.05); border-color: #ffd23c; box-shadow: 0 0 14px rgba(255, 210, 60, 0.4); }
+
+.skin-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  background: linear-gradient(165deg, rgba(30, 24, 44, 0.9), rgba(12, 9, 18, 0.92));
+  border: 1px solid rgba(150, 130, 170, 0.3);
+  padding: 8px;
+  cursor: pointer;
+  clip-path: polygon(9px 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%, 0 9px);
+  transition: all 0.16s ease;
+}
+.skin-card:hover { transform: translateY(-3px); }
+
+/* gacha card reveal */
+@keyframes cardIn {
+  0% { opacity: 0; transform: scale(0.2) rotateY(160deg); }
+  60% { opacity: 1; transform: scale(1.12) rotateY(0deg); }
+  100% { opacity: 1; transform: scale(1) rotateY(0deg); }
+}
+.card-in { animation: cardIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+@keyframes shineSweep {
+  0% { transform: translateX(-130%) skewX(-18deg); }
+  100% { transform: translateX(230%) skewX(-18deg); }
+}
+.card-shine {
+  overflow: hidden;
+}
+.card-shine::after {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 40%;
+  background: linear-gradient(100deg, transparent, rgba(255, 240, 200, 0.35), transparent);
+  animation: shineSweep 1.8s ease-in-out infinite;
+}
+
+/* ================= scrollbar ================= */
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: rgba(10, 8, 16, 0.6); }
+*::-webkit-scrollbar-thumb { background: #4b4257; border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: #6a5f7d; }

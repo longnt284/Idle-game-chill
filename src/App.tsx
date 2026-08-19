@@ -1,138 +1,168 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Engine, VIEW_H, VIEW_W, type EngineEvent, type RunStats } from './game/engine';
-import { getMuted, initAudio, setMuted, sfx } from './game/audio';
-import { CHAPTERS } from './story';
-import { DeathScreen, PauseScreen, StoryScreen, TitleScreen, VictoryScreen } from './ui/screens';
+import { IdleEngine, HudSnapshot, EndStats, GameEvent, GACHA_COST } from './game/engine';
+import { TitleScreen, StoryScreen, VictoryScreen } from './ui/screens';
+import { GameHud, GachaModal, PartyModal, EquipModal, PauseOverlay } from './ui/panels';
 
-type Screen = 'title' | 'story' | 'playing' | 'pause' | 'dead' | 'victory';
+const SAVE_KEY = 'huyet-kiem-idle-v1';
+
+type View = 'title' | 'story' | 'game' | 'victory';
+type Modal = null | 'gacha' | 'party' | 'equip';
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const engineRef = useRef<Engine | null>(null);
-  const [screen, setScreen] = useState<Screen>('title');
-  const [chapterIdx, setChapterIdx] = useState(0);
-  const [stats, setStats] = useState<RunStats>({ level: 1, kills: 0, score: 0, time: 0, floor: 0, bestCombo: 0 });
-  const [muted, setMutedState] = useState(false);
-  const [size, setSize] = useState({ w: 960, h: 540 });
+  const engineRef = useRef<IdleEngine | null>(null);
+  const [view, setView] = useState<View>('title');
+  const [chapter, setChapter] = useState(0);
+  const [modal, setModal] = useState<Modal>(null);
+  const [paused, setPaused] = useState(false);
+  const [hud, setHud] = useState<HudSnapshot | null>(null);
+  const [stats, setStats] = useState<EndStats | null>(null);
+  const [hasSave] = useState(() => {
+    try { return !!localStorage.getItem(SAVE_KEY); } catch { return false; }
+  });
+  const [metaTick, setMetaTick] = useState(0);
 
-  const handleEvent = useCallback((e: EngineEvent) => {
-    switch (e.type) {
-      case 'playing':
-        setScreen('playing');
-        break;
-      case 'pause':
-        setScreen('pause');
-        break;
-      case 'dead':
-        setStats(e.stats);
-        setScreen('dead');
-        break;
-      case 'victory':
-        setStats(e.stats);
-        setScreen('victory');
-        break;
-      case 'story':
-        setChapterIdx(e.chapter);
-        setScreen('story');
-        break;
+  const onEvent = useCallback((e: GameEvent) => {
+    if (e.type === 'story') {
+      setChapter(e.chapter);
+      setModal(null);
+      setPaused(false);
+      setView('story');
+    } else if (e.type === 'victory') {
+      setStats(e.stats);
+      setModal(null);
+      setView('victory');
     }
   }, []);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const engine = new Engine(canvas, handleEvent);
-    engineRef.current = engine;
-
-    const onResize = () => {
-      const scale = Math.min(window.innerWidth / VIEW_W, window.innerHeight / VIEW_H);
-      const w = Math.floor(VIEW_W * scale);
-      const h = Math.floor(VIEW_H * scale);
-      setSize({ w, h });
-      engine.setView(w, h);
-    };
-    onResize();
-    window.addEventListener('resize', onResize);
-
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === 'm') {
-        initAudio();
-        const m = !getMuted();
-        setMuted(m);
-        setMutedState(m);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-
+    const cv = canvasRef.current;
+    if (!cv) return;
+    const eng = new IdleEngine(cv, { onHud: setHud, onEvent });
+    engineRef.current = eng;
     return () => {
-      window.removeEventListener('resize', onResize);
-      window.removeEventListener('keydown', onKey);
-      engine.destroy();
+      eng.destroy();
       engineRef.current = null;
     };
-  }, [handleEvent]);
+  }, [onEvent]);
 
-  const startGame = useCallback(() => {
-    initAudio();
-    sfx.click();
-    setChapterIdx(0);
-    setScreen('story');
-  }, []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (view !== 'game') return;
+      const k = e.key.toLowerCase();
+      if (k === 'p' || k === 'escape') {
+        if (modal) { setModal(null); return; }
+        engineRef.current?.togglePause();
+        setPaused((p) => !p);
+      } else if (k === 'm') engineRef.current?.toggleMute();
+      else if (k === 'g' && !paused) setModal((m) => (m === 'gacha' ? null : 'gacha'));
+      else if (k === '1') engineRef.current?.setSpeed(1);
+      else if (k === '2') engineRef.current?.setSpeed(2);
+      else if (k === '3') engineRef.current?.setSpeed(3);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [view, modal, paused]);
 
-  const storyDone = useCallback(() => {
-    sfx.click();
-    engineRef.current?.beginFloor(chapterIdx);
-  }, [chapterIdx]);
+  const start = () => {
+    if (hasSave) {
+      engineRef.current?.continueFromStory();
+      setView('game');
+    } else {
+      engineRef.current?.startGame();
+      setChapter(0);
+      setView('story');
+    }
+  };
 
-  const retry = useCallback(() => {
-    initAudio();
-    sfx.click();
-    engineRef.current?.retryFloor();
-  }, []);
-
-  const resume = useCallback(() => {
-    sfx.click();
-    engineRef.current?.setPaused(false);
-  }, []);
-
-  const quitToTitle = useCallback(() => {
-    sfx.click();
-    engineRef.current?.resetRun();
-    setScreen('title');
-  }, []);
-
-  const toggleMute = useCallback(() => {
-    initAudio();
-    const m = !getMuted();
-    setMuted(m);
-    setMutedState(m);
-    if (!m) sfx.click();
-  }, []);
-
-  const chapter = CHAPTERS[Math.min(chapterIdx, CHAPTERS.length - 1)];
+  const engine = engineRef.current;
+  const meta = engine ? engine.getMeta() : null;
+  const inGame = view === 'game' && hud;
 
   return (
-    <div className="w-full h-full flex items-center justify-center bg-[#07060b]">
-      <div className="relative" style={{ width: size.w, height: size.h }}>
-        <canvas
-          ref={canvasRef}
-          className="block w-full h-full"
-          style={{ imageRendering: 'auto', cursor: screen === 'playing' ? 'crosshair' : 'default' }}
-        />
-        {screen === 'title' && <TitleScreen onStart={startGame} muted={muted} onToggleMute={toggleMute} />}
-        {screen === 'story' && <StoryScreen key={chapterIdx} chapter={chapter} onDone={storyDone} />}
-        {screen === 'pause' && (
-          <PauseScreen
-            stats={engineRef.current?.getStats() ?? stats}
-            onResume={resume}
-            onQuit={quitToTitle}
-            muted={muted}
-            onToggleMute={toggleMute}
-          />
-        )}
-        {screen === 'dead' && <DeathScreen stats={stats} onRetry={retry} />}
-        {screen === 'victory' && <VictoryScreen stats={stats} onReplay={quitToTitle} />}
+    <div className="relative w-screen h-screen bg-[#07060b] overflow-hidden font-body">
+      {/* battle layer — canvas always mounted */}
+      <div className="absolute inset-0 flex items-center justify-center bg-[#05040a]">
+        <div className="relative" style={{ width: 'min(100vw, calc(100vh * 2.0625))' }}>
+          <canvas ref={canvasRef} className="block w-full h-auto" />
+
+          {inGame && (
+            <>
+              <GameHud
+                hud={hud}
+                engine={engine}
+                onOpen={(m) => { setModal(m); setMetaTick((t) => t + 1); }}
+                onPause={() => { engineRef.current?.togglePause(); setPaused((p) => !p); }}
+              />
+
+              {/* keyboard hints */}
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 hidden lg:flex items-center gap-3 text-[10px] font-display tracking-wider text-[#8a8172] pointer-events-none select-none">
+                <span><span className="kbd">G</span> Triệu hồi</span>
+                <span><span className="kbd">1·2·3</span> Tốc độ</span>
+                <span><span className="kbd">P</span> Tạm dừng</span>
+                <span><span className="kbd">M</span> Âm thanh</span>
+              </div>
+
+              {/* first-run tip */}
+              {hud.kills === 0 && hud.wave <= 1 && !modal && (
+                <div className="absolute bottom-24 right-4 anim-fade-up pointer-events-none" style={{ animationDelay: '1.5s' }}>
+                  <div className="panel-dark px-4 py-2.5 text-[12px] text-[#e8dfc8] max-w-[230px]" style={{ clipPath: 'polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px)' }}>
+                    <span className="text-pink-300 font-display font-bold">Mẹo:</span> nhấn <b className="text-pink-300">Triệu Hồi</b>, dùng <b className="text-pink-300">{GACHA_COST} Ngọc</b> để gọi đồng hành đầu tiên!
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
+
+      {/* modal layer */}
+      {inGame && modal === 'gacha' && engine && (
+        <GachaModal engine={engine} hud={hud} onClose={() => setModal(null)} />
+      )}
+      {inGame && modal === 'party' && engine && (
+        <PartyModal engine={engine} hud={hud} onClose={() => setModal(null)} />
+      )}
+      {inGame && modal === 'equip' && engine && meta && (
+        <EquipModal
+          key={metaTick}
+          engine={engine}
+          onClose={() => setModal(null)}
+          ownedSkins={meta.ownedSkins}
+          equippedSkin={meta.equippedSkin}
+          ownedItems={meta.ownedItems}
+          equipped={meta.equipped}
+        />
+      )}
+      {inGame && paused && !modal && (
+        <PauseOverlay
+          engine={engine}
+          onResume={() => { engineRef.current?.togglePause(); setPaused(false); }}
+        />
+      )}
+
+      {/* full-screen view layers */}
+      {view === 'title' && (
+        <div className="absolute inset-0 z-20">
+          <TitleScreen onStart={start} hasSave={hasSave} />
+        </div>
+      )}
+      {view === 'story' && (
+        <div className="absolute inset-0 z-20">
+          <StoryScreen
+            chapter={chapter}
+            onDone={() => {
+              engineRef.current?.continueFromStory();
+              setView('game');
+            }}
+          />
+        </div>
+      )}
+      {view === 'victory' && stats && (
+        <div className="absolute inset-0 z-20">
+          <VictoryScreen stats={stats} onRestart={() => engineRef.current?.hardReset()} />
+        </div>
+      )}
     </div>
   );
 }

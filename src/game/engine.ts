@@ -490,6 +490,35 @@ export function drawChibiHero(ctx: CanvasRenderingContext2D, look: ChibiLook, t:
   ctx.restore();
 }
 
+function withAlpha(hex: string, a: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+/** Vẽ chân dung chibi vào canvas (dùng cho UI: gacha, đội hình, HUD, skin). */
+export function renderChibiPortrait(canvas: HTMLCanvasElement, look: ChibiLook, t: number): void {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  // vầng hào quang sau lưng
+  const g = ctx.createRadialGradient(w / 2, h * 0.52, 2, w / 2, h * 0.52, h * 0.56);
+  g.addColorStop(0, withAlpha(look.aura, 0.42 + 0.12 * Math.sin(t * 3)));
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+  // bóng đất
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.beginPath();
+  ctx.ellipse(w / 2, h * 0.93, w * 0.3, h * 0.035, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.save();
+  const s = h / 172;
+  ctx.translate(w / 2, h * 0.93 - Math.abs(Math.sin(t * 2.3)) * h * 0.022);
+  drawChibiHero(ctx, look, t, 0, 0, s, 1, 0);
+  ctx.restore();
+}
+
 function drawWeapon(ctx: CanvasRenderingContext2D, w: ChibiLook['weapon'], lunge: number, aura: string): void {
   ctx.strokeStyle = 'rgba(20,10,25,0.95)';
   ctx.lineWidth = 2.5;

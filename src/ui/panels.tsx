@@ -1,10 +1,62 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode, CSSProperties } from 'react';
-import type { MetaInfo, GachaResult, Rarity, Pos } from '../game/engine';
+import type { MetaInfo, GachaResult, Rarity, Pos, ChibiLook } from '../game/engine';
 import {
-  COMPANIONS, RARITY, SKINS, SKIN_COST, ITEMS, GACHA_COST, GACHA_X10_COST, SPEEDS, fmt,
+  COMPANIONS, RARITY, SKINS, SKIN_COST, ITEMS, GACHA_COST, GACHA_X10_COST, SPEEDS, fmt, renderChibiPortrait,
 } from '../game/engine';
 import type { GameIdle } from '../game/engine';
+
+// ---------- chibi portrait (canvas) ----------
+function ChibiCanvas({ look, size, animate = false }: { look: ChibiLook; size: number; animate?: boolean }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const key = JSON.stringify(look);
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    const L = JSON.parse(key) as ChibiLook;
+    const dpr = 2;
+    const W = Math.round(size * 0.9 * dpr);
+    const H = Math.round(size * dpr);
+    if (cv.width !== W) cv.width = W;
+    if (cv.height !== H) cv.height = H;
+    if (!animate) {
+      renderChibiPortrait(cv, L, 0.85);
+      return;
+    }
+    let raf = 0;
+    const t0 = performance.now();
+    const loop = (): void => {
+      renderChibiPortrait(cv, L, (performance.now() - t0) / 1000);
+      raf = requestAnimationFrame(loop);
+    };
+    loop();
+    return () => cancelAnimationFrame(raf);
+  }, [key, size, animate]);
+  return <canvas ref={ref} style={{ width: Math.round(size * 0.9), height: size, display: 'block' }} />;
+}
+
+function PortraitFrame({ look, size, ring, animate = false, className = '' }: { look: ChibiLook; size: number; ring: string; animate?: boolean; className?: string }) {
+  const w = Math.round(size * 0.9);
+  return (
+    <div className={`relative shrink-0 overflow-hidden flex items-end justify-center ${className}`}
+      style={{
+        width: w, height: size, borderRadius: 10,
+        background: `radial-gradient(circle at 50% 24%, ${ring}3a, #15101f 74%)`,
+        border: `2px solid ${ring}`,
+        boxShadow: `0 0 16px ${ring}55, inset 0 -12px 22px rgba(0,0,0,.6)`,
+      }}>
+      <ChibiCanvas look={look} size={size - 4} animate={animate} />
+      <div className="absolute inset-x-0 top-0 h-1/3 pointer-events-none" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.13), transparent)' }} />
+    </div>
+  );
+}
+
+function lookOfResult(r: GachaResult): ChibiLook {
+  if (r.kind === 'companion') return COMPANIONS.find((c) => c.id === r.id)?.look ?? SKINS[0].look;
+  if (r.kind === 'skin') return SKINS.find((s) => s.id === r.id)?.look ?? SKINS[0].look;
+  // vật phẩm: dùng look trung tính ánh vàng
+  return { hair: '#ffd23c', outfit: '#8a6a1e', outfit2: '#4e3c10', skin: '#f0d8a8', eyes: '#8a5a1e', hairStyle: 'none', weapon: 'none', accessory: 'none', aura: '#ffb43c' };
+}
 
 // ---------- tiny SVG icons ----------
 const Svg = ({ d, s = 15, c = 'currentColor' }: { d: string; s?: number; c?: string }) => (
@@ -81,9 +133,9 @@ export function HudOverlay({ meta, engine }: { meta: MetaInfo; engine: GameIdle 
   return (
     <>
       {/* Kael card bottom-left */}
-      <div className="absolute bottom-3 left-3 flex items-center gap-2.5 pointer-events-none select-none">
-        <Avatar outfit={SKINS.find((s) => s.id === meta.equippedSkin)?.look.outfit ?? '#3a3a46'} aura="#c2172f" letter="K" size={52} />
-        <div>
+      <div className="absolute bottom-3 left-3 flex items-end gap-2.5 pointer-events-none select-none">
+        <PortraitFrame look={SKINS.find((s) => s.id === meta.equippedSkin)?.look ?? SKINS[0].look} ring={SKINS.find((s) => s.id === meta.equippedSkin)?.look.aura ?? '#c2172f'} size={64} animate />
+        <div className="pb-1">
           <div className="font-display text-lg leading-none text-[#f0e8d8]" style={{ textShadow: '0 2px 8px #000' }}>
             KAEL <span className="text-[#ffd23c] text-sm">Lv {meta.kaelLevel}</span>
           </div>
@@ -174,9 +226,10 @@ export function SummonModal({ meta, engine, onClose }: { meta: MetaInfo; engine:
         </p>
         {/* results */}
         {results && (
-          <div className={`grid gap-2 mb-4 w-full ${results.length > 1 ? 'grid-cols-5' : 'grid-cols-1 max-w-[220px] mx-auto'}`}>
+          <div className={`grid gap-2 mb-4 w-full ${results.length > 1 ? 'grid-cols-5' : 'grid-cols-1 max-w-[230px] mx-auto'}`}>
             {results.map((r, i) => {
               const rc = RARITY[r.rarity];
+              const big = results.length === 1 && (r.rarity === 'epic' || r.rarity === 'legendary');
               return (
                 <div key={i} className="anim-fade-up relative rounded-md p-2 flex flex-col items-center text-center"
                   style={{
@@ -185,8 +238,9 @@ export function SummonModal({ meta, engine, onClose }: { meta: MetaInfo; engine:
                     border: `1.5px solid ${rc.color}`,
                     boxShadow: r.rarity === 'legendary' || r.rarity === 'epic' ? `0 0 18px ${rc.color}88` : 'none',
                   }}>
+                  <PortraitFrame look={lookOfResult(r)} ring={rc.color} size={big ? 128 : results.length > 1 ? 62 : 84} animate={big} className="mt-1" />
                   <RarityStars r={r.rarity} />
-                  <div className="font-display text-[13px] leading-tight mt-1" style={{ color: rc.color }}>{r.name}</div>
+                  <div className="font-display leading-tight mt-1" style={{ color: rc.color, fontSize: big ? 17 : 13 }}>{r.name}</div>
                   <div className="font-ui text-[9px] text-[#9a917f] mt-0.5 leading-snug">
                     {r.kind === 'companion' ? 'Đồng hành' : r.kind === 'skin' ? 'Skin Kael' : 'Vật phẩm'}
                   </div>
@@ -253,7 +307,7 @@ export function PartyModal({ meta, engine, onClose }: { meta: MetaInfo; engine: 
                 opacity: owned > 0 ? 1 : 0.5,
                 boxShadow: inParty ? `0 0 14px ${rc.color}55` : 'none',
               }}>
-              <Avatar outfit={c.look.outfit} aura={rc.color} letter={c.name[0]} size={46} />
+              <PortraitFrame look={c.look} ring={rc.color} size={58} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <span className="font-display text-[15px] leading-none" style={{ color: owned ? rc.color : '#6a6378' }}>{c.name}</span>

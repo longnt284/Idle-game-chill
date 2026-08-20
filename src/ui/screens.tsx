@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CHAPTERS, ENDING, IMG } from '../story';
 import type { EndStats } from '../game/engine';
-import { fmt } from '../game/engine';
+import { fmt, TOTAL_FLOORS } from '../game/engine';
 
 function Embers({ n = 16 }: { n?: number }) {
   const embers = useMemo(
@@ -174,7 +174,7 @@ export function EndScreen({ stats, onRestart }: { stats: EndStats; onRestart: ()
           <div className="anim-fade-up mt-6">
             <div className="grid grid-cols-3 gap-3 mb-5">
               {[
-                ['TẦNG SÂU', '30/30'],
+                ['TẦNG SÂU', `${TOTAL_FLOORS}/${TOTAL_FLOORS}`],
                 ['QUỶ ĐÃ DIỆT', fmt(stats.kills)],
                 ['THỜI GIAN', `${mm}p ${ss}s`],
               ].map(([k, v]) => (

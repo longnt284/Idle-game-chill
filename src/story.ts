@@ -56,13 +56,43 @@ export const CHAPTERS: StoryChapter[] = [
       'Vô Diện Thần — Bàn Tay Trái của Chúa Trời — xoay chiếc cổ không xương về phía Kael, giọng nói vang lên từ khắp mọi hướng: "Ngươi đến đúng hẹn, kẻ mang dấu ấn. Linh hồn ngươi đã được định giá từ đêm ấy." Kael nhìn những người bạn sau lưng, rồi nâng kiếm: "Giá đó... ngươi không trả nổi đâu." Trận cuối cùng — BẮT ĐẦU.',
     ],
   },
+  {
+    kicker: 'SAU TẦNG 40 — VỰC SÂU',
+    title: 'Dưới Cả Địa Ngục',
+    img: IMG.floor2,
+    accent: '#ff5a7a',
+    panels: [
+      'Vô Diện Thần tan thành tro — nhưng hầm ngục không sụp đổ. Trái lại, nền đá dưới chân đoàn quân nứt toác, hé ra một vực sâu hun hút mà ngay cả ánh trăng máu cũng không rọi tới. Hóa ra 30 tầng trên chỉ là "cổng ngoài".',
+      'Từ bóng tối vọng lên tiếng cười của Vexal — Chúa Tể Vực Sâu: "Các ngươi tưởng giết được một Bàn Tay là thắng? Chúa Trời có năm Bàn Tay, và hầm ngục này... chỉ là lòng bàn tay thứ nhất." Kael siết chặt Trảm Long. Còn 60 tầng nữa. Đoàn quân lại bước xuống.',
+    ],
+  },
+  {
+    kicker: 'SAU TẦNG 70 — CỔNG TRỜI SỤP',
+    title: 'Nơi Thần Chết',
+    img: IMG.floor3,
+    accent: '#8cdcff',
+    panels: [
+      'Korgath gục, kéo theo cả mảng trời giả sụp xuống. Sau tầng 70, đoàn quân đặt chân vào vùng đất mà ngay cả quỷ cũng tránh — nơi những vị thần bại trận bị đày xuống và mục rữa. Không khí đặc quánh mùi của những lời thề bị phản bội.',
+      'Yuki — hiền nhân của đội — lần đầu lên tiếng sau nhiều ngày im lặng: "Đại ca... em đọc được ký ức của tầng này. Vô Diện Thần không phải kẻ mạnh nhất. Ở tầng 100, thứ đang chờ chúng ta... là Khởi Nguồn — nơi mọi dấu ấn được khắc, và mọi linh hồn bị định giá." Kael gật đầu: "Vậy thì mình đến đó. Hỏi nó một câu."',
+    ],
+  },
+  {
+    kicker: 'TẦNG 90 — NGAI HƯ KHÔNG',
+    title: 'Trước Khởi Nguồn',
+    img: IMG.title,
+    accent: '#ffd23c',
+    panels: [
+      'Nyx — Hình Hài Vô Định — tan chảy thành vũng gương vụn, trong mỗi mảnh phản chiếu một khuôn mặt của những người đã ngã xuống suốt 90 tầng. Đoàn quân giờ chỉ còn là một nhóm nhỏ, nhưng ánh mắt ai cũng sáng như đuốc.',
+      'Trước mặt họ, Bậc Thăng Thiên dẫn lên Ngai Chúa Tể — nơi Khởi Nguồn chờ đợi. Kael quay lại nhìn đồng đội lần cuối, cười: "Từ đêm thực nhật đó đến giờ, chúng ta đã đi một quãng đường dài. Cảm ơn vì đã không bỏ ta lại." Rồi anh quay lên, nâng kiếm: "Đi thôi. Kết thúc chuyện này — để còn về nhà ăn tối."',
+    ],
+  },
 ];
 
 export const ENDING = {
   kicker: 'CHƯƠNG CUỐI',
   title: 'Bình Minh Đầu Tiên',
   text: [
-    'Thần tan rã như tro trước gió. Nguyệt thực khép lại sau trăm năm, và ánh sáng thật sự rơi xuống đáy vực. 30 tầng hầm ngục im lặng — lần đầu tiên trong lịch sử, không còn tiếng gầm nào vang lên.',
+    'Khởi Nguồn tan rã như tro trước gió, kéo theo cả năm Bàn Tay và toàn bộ dấu ấn từng được khắc. Nguyệt thực khép lại sau trăm năm, và ánh sáng thật sự rơi xuống đáy vực. 100 tầng hầm ngục im lặng — lần đầu tiên trong lịch sử, không còn tiếng gầm nào vang lên.',
     'Vết thương trên cổ vẫn cháy. Dấu ấn không biến mất — có những món nợ không bao giờ được xóa. Nhưng xung quanh Kael giờ là một mái nhà biết di chuyển: Lyra lau cây cung, Bram cười ầm ĩ, Yuki băng bó cho Kuro... Hận thù từng là con đường duy nhất — giờ chỉ là một lối rẽ đã đi qua.',
     'Đoàn quân bước về phía ánh sáng đầu tiên. Cuộc săn vẫn còn dài, và kẻ mang dấu ấn thì không bao giờ dừng chân. Nhưng từ nay, anh không bao giờ bước một mình nữa.',
   ],

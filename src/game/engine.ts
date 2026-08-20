@@ -4,8 +4,17 @@ import { IMG } from '../story';
 export const VIEW_W = 960;
 export const VIEW_H = 540;
 const GROUND = 476;
-export const TOTAL_FLOORS = 30;
-export const WAVES_PER_FLOOR = 7; // đợt 7 = boss
+export const TOTAL_FLOORS = 100;
+export const WAVES_PER_FLOOR = 7; // đợt 7 = boss (tầng có boss) hoặc đợt tinh nhuệ
+// Tầng 1-30: boss mỗi tầng. Tầng 31-100: boss mỗi 10 tầng (40,50,...,100) → thêm 7 boss.
+export function hasBossOnFloor(floorIdx: number): boolean {
+  return floorIdx < 30 ? true : floorIdx % 10 === 9;
+}
+export function bossIndexForFloor(floorIdx: number): number {
+  return floorIdx < 30 ? floorIdx : 30 + Math.floor((floorIdx - 30) / 10);
+}
+// Sau khi qua tầng X (index) → mở chương truyện tương ứng
+export const STORY_AFTER: Record<number, number> = { 9: 1, 19: 2, 28: 3, 39: 4, 69: 5, 89: 6 };
 export const SPEEDS = [1, 2, 3, 4, 6];
 const SAVE_KEY = 'huyet-kiem-ca-idle-v2';
 const CLASH_X = 640;
@@ -18,6 +27,7 @@ const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
 
 export function fmt(n: number): string {
   const u: Array<[number, string]> = [
+    [1e33, 'Dc'], [1e30, 'No'], [1e27, 'Oc'], [1e24, 'Sp'], [1e21, 'Sx'],
     [1e18, 'Qi'], [1e15, 'Qa'], [1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'K'],
   ];
   for (const [v, s] of u) {
@@ -255,6 +265,20 @@ export const FLOOR_NAMES = [
   'Cổng Xương', 'Hầm Rêu', 'Điện Gãy', 'Hang Dơi', 'Hành Lang Tro', 'Giếng Sâu', 'Vườn Gai', 'Cầu Than Thở', 'Ngục Rỉ Sét', 'Điện Phản Thệ',
   'Bờ Máu', 'Nhà Thờ Đắm', 'Hầm Gai', 'Đầm Lầy Dạ Quang', 'Thư Viện Cháy', 'Phòng Gương', 'Chuông Vỡ', 'Lò Mổ Cũ', 'Vực Than Khóc', 'Điện Đói Khát',
   'Thềm Thực Nhật', 'Rừng Treo Ngược', 'Sa Mạc Xương', 'Biển Tĩnh Lặng', 'Thành Phố Chìm', 'Cổng Sao Rơi', 'Điện Gió Gào', 'Lối Đi Không Tên', 'Bậc Thang Cuối', 'Ngai Vĩnh Cửu',
+  // --- Vực Sâu (tầng 31-40) ---
+  'Bãi Chiến Xưa', 'Hầm Cột Gãy', 'Đường Gai Mọc', 'Giếng Khô', 'Phòng Thờ Cũ', 'Cầu Sắt Rỉ', 'Hang Tro Nén', 'Vực Gió Lùa', 'Điện Đổ Nát', 'Cổng Vực Sâu',
+  // --- Hầm Máu (tầng 41-50) ---
+  'Sông Máu Ngầm', 'Nhà Xác Trôi', 'Đầm Dạ Quang', 'Hầm Thịt', 'Thư Viện Mốc', 'Phòng Gương Vỡ', 'Chuông Đắm', 'Lò Luyện Tội', 'Vực Khóc Than', 'Điện Huyết Vương',
+  // --- Vực Trời (tầng 51-60) ---
+  'Thềm Sao Rơi', 'Rừng Ngược', 'Sa Mạc Tro', 'Biển Không Sóng', 'Thành Chìm', 'Cổng Thiên Thạch', 'Điện Gió', 'Hành Lang Vô Danh', 'Bậc Thang Xoắn', 'Ngai Sụp Đổ',
+  // --- Băng Đen (tầng 61-70) ---
+  'Hầm Băng Đen', 'Cột Sống Khổng Lồ', 'Động Pha Lê', 'Suối Quên Lãng', 'Cầu Vồng Gãy', 'Vườn Tượng Đá', 'Phòng Thời Gian', 'Hang Phản Chiếu', 'Lối Mòn Vô Tận', 'Cổng Trời Sụp',
+  // --- Lửa Tàn (tầng 71-80) ---
+  'Điện Lửa Tàn', 'Ruộng Xương Trắng', 'Tháp Nghiêng', 'Đầm Lầy Sôi', 'Hầm Mộ Vua', 'Cổng Sừng Quỷ', 'Phòng Giam Thần', 'Hành Lang Gai Nhọn', 'Vực Sấm Rền', 'Điện Phán Xét',
+  // --- Trăng Máu (tầng 81-90) ---
+  'Bến Đò Âm', 'Rừng Mắt Mở', 'Đồi Than Hồng', 'Cầu Hồn Vượt', 'Thung Lũng Quên', 'Cổng Trăng Máu', 'Điện Sương Mù', 'Hang Đom Đóm Ma', 'Bậc Vĩnh Biệt', 'Ngai Hư Không',
+  // --- Hỗn Mang (tầng 91-100) ---
+  'Cổng Hỗn Mang', 'Hành Lang Lưỡi', 'Phòng Ký Ức', 'Vực Phản Bội', 'Cầu Định Mệnh', 'Điện Tro Tàn', 'Hang Thần Chết', 'Lối Cuối Cùng', 'Bậc Thăng Thiên', 'Ngai Chúa Tể',
 ];
 const BOSS_KINDS = ['knight', 'ogre', 'lich', 'demon', 'queen'] as const;
 export interface BossDef { name: string; kind: (typeof BOSS_KINDS)[number]; }
@@ -271,6 +295,14 @@ export const BOSSES: BossDef[] = [
   { name: 'Thủy Quái Leviar', kind: 'queen' }, { name: 'Dusk Bóng Đèn Tắt', kind: 'lich' }, { name: 'Astraeus Kẻ Ăn Sao', kind: 'demon' },
   { name: 'Zephyr Linh Hồn Gió', kind: 'lich' }, { name: 'Null Kẻ Vô Danh', kind: 'knight' }, { name: 'Omega Hộ Vệ Ngai', kind: 'knight' },
   { name: 'VÔ DIỆN THẦN — Bàn Tay Trái', kind: 'demon' },
+  // --- 7 Chúa Tể Vực Sâu (tầng 40 → 100) ---
+  { name: 'VEXAL — Chúa Tể Vực Sâu', kind: 'demon' },
+  { name: 'CARMILLA — Huyết Nữ Hoàng', kind: 'queen' },
+  { name: 'ZERATH — Kẻ Nuốt Sao', kind: 'lich' },
+  { name: 'KORGATH — Thần Sấm Sụp Đổ', kind: 'ogre' },
+  { name: 'ARCHON — Thẩm Phán Lửa', kind: 'knight' },
+  { name: 'NYX — Hình Hài Vô Định', kind: 'demon' },
+  { name: 'CHÚA TỂ HỖN MANG — Khởi Nguồn', kind: 'demon' },
 ];
 
 // ============ types ============
@@ -880,7 +912,8 @@ export class GameIdle {
 
   // ---------- economy ----------
   private gw(): number { return this.floor * WAVES_PER_FLOOR + this.wave + 1; }
-  private zone(): number { return this.floor < 10 ? 0 : this.floor < 20 ? 1 : 2; }
+  private zone(): number { return Math.floor(this.floor / 10) % 3; }
+  private bossDef(): BossDef { return BOSSES[bossIndexForFloor(this.floor)]; }
   private foeHpBase(): number { return 5 * Math.pow(this.gw(), 2.45); }
   private foeAtkBase(): number { return 3.2 * Math.pow(this.gw(), 2.1); }
   private goldPerKill(): number { return Math.round((5 + this.gw() * 1.5) * Math.pow(this.gw(), 1.15) * 10 * this.partyGoldAura); }
@@ -1046,21 +1079,23 @@ export class GameIdle {
     this.projs = [];
     this.bossActive = false;
     for (const h of this.heroes) { h.hp = h.maxHp; h.dead = false; }
-    this.showBanner(`TẦNG ${this.floor + 1}/30`, FLOOR_NAMES[this.floor], ZONES[this.zone()].accent, 2.4);
+    this.showBanner(`TẦNG ${this.floor + 1}/${TOTAL_FLOORS}`, FLOOR_NAMES[this.floor], ZONES[this.zone()].accent, 2.4);
     sfx.warn();
     this.startWave();
   }
   private startWave(): void {
-    const isBoss = this.wave === WAVES_PER_FLOOR - 1;
+    const isLast = this.wave === WAVES_PER_FLOOR - 1;
+    const isBoss = isLast && hasBossOnFloor(this.floor);
     if (isBoss) {
       this.bossActive = true;
-      const boss = BOSSES[this.floor];
+      const boss = this.bossDef();
       this.showBanner('BOSS XUẤT HIỆN', boss.name, '#ff3b52', 2.6);
       sfx.roar();
       this.shake = Math.max(this.shake, 9);
       this.spawnQueue = [{ kind: 'boss', delay: 0.9 }];
     } else {
-      const count = 2 + Math.min(3, Math.floor(this.floor / 6)) + (this.wave >= 3 ? 1 : 0);
+      let count = 2 + Math.min(4, Math.floor(this.floor / 8)) + (this.wave >= 3 ? 1 : 0);
+      if (isLast) count += 2; // tầng không boss: đợt 7 là đợt tinh nhuệ đông hơn
       this.spawnQueue = [];
       for (let i = 0; i < count; i++) {
         this.spawnQueue.push({ kind: pick(MONSTER_KINDS[this.zone()]), delay: 0.15 + i * 0.3 });
@@ -1080,7 +1115,7 @@ export class GameIdle {
       slime: zone === 1 ? '#5a8a4a' : '#4a7a8a', bat: '#5a4a6a', skeleton: '#c8c0b0', imp: '#b04a5a', wraith: '#6a5a9a', ogre: '#8a6a4a',
       knight: '#7a7a8a', demon: '#8a2a3a', queen: '#9a3a6a', lich: '#5a6a8a',
     };
-    const k = boss ? BOSSES[this.floor].kind : kind;
+    const k = boss ? this.bossDef().kind : kind;
     this.enemies.push({
       uid: this.uid++, kind: k, boss, bossIdx: this.floor,
       hp, maxHp: hp, atk: this.foeAtkBase() * atkMul * (boss ? 1.35 : 1), atkCd: rand(0.8, 1.4), swing: 0,
@@ -1170,7 +1205,7 @@ export class GameIdle {
       const bonus = Math.round((4 + this.floor) * 10);
       this.gems += bonus;
       this.texts.push({ x: e.x, y: GROUND - 190, text: `BOSS +${fmt(bonus)} Ngọc`, color: '#ff4fd8', life: 1.6, size: 20 });
-      this.toast(`Boss ${BOSSES[this.floor].name} đã gục ngã!`, '#ff3b52');
+      this.toast(`Boss ${this.bossDef().name} đã gục ngã!`, '#ff3b52');
     }
     this.texts.push({ x: e.x, y: GROUND - 120 * e.scale, text: `+${fmt(gold)} vàng`, color: '#ffd23c', life: 1, size: 13 });
     this.gainXp(12 + this.floor);
@@ -1213,14 +1248,15 @@ export class GameIdle {
     }
     this.save();
     this.pushMeta();
-    if (cleared === 9 || cleared === 19 || cleared === 28) {
+    const ch = STORY_AFTER[cleared];
+    if (ch !== undefined) {
       this.floor = cleared + 1;
       this.wave = 0;
       this.enemies = [];
       this.projs = [];
       this.spawnQueue = [];
       this.state = 'story';
-      this.onEvent({ type: 'story', chapter: cleared === 9 ? 1 : cleared === 19 ? 2 : 3 });
+      this.onEvent({ type: 'story', chapter: ch });
       return;
     }
     this.startFloor(cleared + 1);
@@ -1643,6 +1679,11 @@ export class GameIdle {
     if (this.spawnQueue.length === 0 && this.enemies.filter((e) => !e.dead).length === 0 && !this.bossActive) {
       this.waveDelay -= dt;
       if (this.waveDelay <= 0) {
+        // Tầng không có boss: diệt xong đợt tinh nhuệ cuối là qua tầng
+        if (this.wave === WAVES_PER_FLOOR - 1 && !hasBossOnFloor(this.floor)) {
+          this.floorCleared();
+          return;
+        }
         this.wave += 1;
         if (this.wave >= WAVES_PER_FLOOR) this.wave = WAVES_PER_FLOOR - 1;
         this.gainXp(45 + this.floor * 2);
@@ -1654,7 +1695,7 @@ export class GameIdle {
     const boss = this.enemies.find((e) => e.boss && !e.dead);
     this.hudCache = {
       floor: this.floor, wave: this.wave + 1, inBoss: this.bossActive,
-      bossName: BOSSES[this.floor].name, bossHpPct: boss ? clamp(boss.hp / boss.maxHp, 0, 1) : 0,
+      bossName: hasBossOnFloor(this.floor) ? this.bossDef().name : '', bossHpPct: boss ? clamp(boss.hp / boss.maxHp, 0, 1) : 0,
       gold: this.gold, gems: this.gems, kaelLevel: this.kaelLevel, asc: this.kaelAsc(), power: this.power(),
       floorName: FLOOR_NAMES[this.floor],
     };
@@ -2011,18 +2052,24 @@ export class GameIdle {
     ctx.textBaseline = 'alphabetic';
     ctx.font = '21px "Bangers", cursive';
     ctx.fillStyle = hud.inBoss ? '#ff3b52' : '#f0e8d8';
-    ctx.fillText(`TẦNG ${hud.floor + 1}/30`, 26, 38);
+    ctx.fillText(`TẦNG ${hud.floor + 1}/${TOTAL_FLOORS}`, 26, 38);
     ctx.font = '600 11px "Be Vietnam Pro", sans-serif';
     ctx.fillStyle = zone.accent;
     ctx.fillText(hud.floorName.toUpperCase(), 120, 37);
     // wave pips
+    const bossFloor = hasBossOnFloor(hud.floor);
     for (let i = 0; i < WAVES_PER_FLOOR; i++) {
       const px = 28 + i * 26;
       const py = 54;
       ctx.beginPath();
       ctx.moveTo(px, py - 7); ctx.lineTo(px + 7, py); ctx.lineTo(px, py + 7); ctx.lineTo(px - 7, py); ctx.closePath();
       const done = hud.wave > i + 1 || (hud.wave === i + 1 && hud.inBoss);
-      ctx.fillStyle = i === WAVES_PER_FLOOR - 1 ? (hud.inBoss ? '#ff3b52' : '#5a2030') : done ? zone.accent : '#2c2738';
+      let fill = done ? zone.accent : '#2c2738';
+      if (i === WAVES_PER_FLOOR - 1) {
+        if (bossFloor) fill = hud.inBoss ? '#ff3b52' : '#5a2030';
+        else if (!done) fill = '#6a5a2a';
+      }
+      ctx.fillStyle = fill;
       ctx.fill();
       ctx.strokeStyle = 'rgba(0,0,0,0.5)';
       ctx.lineWidth = 1.4;

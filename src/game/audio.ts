@@ -3,6 +3,11 @@ let master: GainNode | null = null;
 let noiseBuf: AudioBuffer | null = null;
 let muted = false;
 let ambientStarted = false;
+/** Hai bộ dao động nền — cao độ đổi theo vùng để mỗi 10 tầng nghe khác nhau. */
+let droneA: OscillatorNode | null = null;
+let droneB: OscillatorNode | null = null;
+/** Tần số gốc cho từng vùng (Hz) — đi xuống dần rồi lên lại ở vùng Hỗn Mang. */
+const ZONE_DRONE = [55, 49, 62, 58, 46, 65, 52, 69, 44, 41];
 
 export function initAudio(): void {
   if (ctx) {
@@ -176,6 +181,14 @@ export const sfx = {
   },
 };
 
+/** Đổi cao độ nền theo vùng đang chơi (0–9). Chuyển mượt trong ~1.5 giây. */
+export function setZoneMood(zoneIdx: number): void {
+  if (!ctx) return;
+  const f = ZONE_DRONE[((zoneIdx % ZONE_DRONE.length) + ZONE_DRONE.length) % ZONE_DRONE.length];
+  droneA?.frequency.setTargetAtTime(f, ctx.currentTime, 0.5);
+  droneB?.frequency.setTargetAtTime(f * 1.0145, ctx.currentTime, 0.5);
+}
+
 function startAmbient(): void {
   if (!ctx || !master || ambientStarted) return;
   ambientStarted = true;
@@ -186,6 +199,8 @@ function startAmbient(): void {
   const o2 = ctx.createOscillator();
   o2.type = 'sawtooth';
   o2.frequency.value = 55.8;
+  droneA = o1;
+  droneB = o2;
   const f = ctx.createBiquadFilter();
   f.type = 'lowpass';
   f.frequency.value = 150;

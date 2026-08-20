@@ -1,68 +1,23 @@
-import { useEffect, useRef, useState } from 'react';
-import type { ReactNode, CSSProperties } from 'react';
-import type { MetaInfo, GachaResult, Rarity, Pos, ChibiLook } from '../game/engine';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
+import type {
+  ChibiLook, CompanionStats, GachaResult, MetaInfo, OfflineReport, Pos, Rarity, WeaponDef,
+} from '../game/engine';
 import {
-  COMPANIONS, RARITY, SKINS, SKIN_COST, ITEMS, GACHA_COST, GACHA_X10_COST, GACHA_X100_COST, GACHA_X500_COST,
-  SPEEDS, MAX_PARTY, WEAPONS, WGACHA_COST, fmt, renderChibiPortrait,
+  BAL, COMPANIONS, GACHA_COST, GACHA_X10_COST, GACHA_X100_COST, GACHA_X500_COST, ITEMS,
+  MAX_ITEM_SLOTS, MAX_PARTY, RARITY, SKINS, SKIN_COST, TOTAL_FLOORS, WAVES_PER_FLOOR, WEAPONS,
+  WGACHA_COST, WGACHA_X10_COST, fmt, hasBossOnFloor, renderPortrait, zoneOf,
 } from '../game/engine';
 import type { GameIdle } from '../game/engine';
 
-// ---------- chibi portrait (canvas) ----------
-function ChibiCanvas({ look, size, animate = false }: { look: ChibiLook; size: number; animate?: boolean }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  const key = JSON.stringify(look);
-  useEffect(() => {
-    const cv = ref.current;
-    if (!cv) return;
-    const L = JSON.parse(key) as ChibiLook;
-    const dpr = 2;
-    const W = Math.round(size * 0.9 * dpr);
-    const H = Math.round(size * dpr);
-    if (cv.width !== W) cv.width = W;
-    if (cv.height !== H) cv.height = H;
-    if (!animate) {
-      renderChibiPortrait(cv, L, 0.85);
-      return;
-    }
-    let raf = 0;
-    const t0 = performance.now();
-    const loop = (): void => {
-      renderChibiPortrait(cv, L, (performance.now() - t0) / 1000);
-      raf = requestAnimationFrame(loop);
-    };
-    loop();
-    return () => cancelAnimationFrame(raf);
-  }, [key, size, animate]);
-  return <canvas ref={ref} style={{ width: Math.round(size * 0.9), height: size, display: 'block' }} />;
-}
+export type PanelId = 'none' | 'summon' | 'party' | 'equip' | 'skin' | 'weapon' | 'pause' | 'prestige';
 
-function PortraitFrame({ look, size, ring, animate = false, className = '' }: { look: ChibiLook; size: number; ring: string; animate?: boolean; className?: string }) {
-  const w = Math.round(size * 0.9);
-  return (
-    <div className={`relative shrink-0 overflow-hidden flex items-end justify-center ${className}`}
-      style={{
-        width: w, height: size, borderRadius: 10,
-        background: `radial-gradient(circle at 50% 24%, ${ring}3a, #15101f 74%)`,
-        border: `2px solid ${ring}`,
-        boxShadow: `0 0 16px ${ring}55, inset 0 -12px 22px rgba(0,0,0,.6)`,
-      }}>
-      <ChibiCanvas look={look} size={size - 4} animate={animate} />
-      <div className="absolute inset-x-0 top-0 h-1/3 pointer-events-none" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.13), transparent)' }} />
-    </div>
-  );
-}
+// ============ nguyên thủy dùng chung ============
 
-function lookOfResult(r: GachaResult): ChibiLook {
-  if (r.kind === 'companion') return COMPANIONS.find((c) => c.id === r.id)?.look ?? SKINS[0].look;
-  if (r.kind === 'skin') return SKINS.find((s) => s.id === r.id)?.look ?? SKINS[0].look;
-  // vật phẩm: dùng look trung tính ánh vàng
-  return { hair: '#ffd23c', outfit: '#8a6a1e', outfit2: '#4e3c10', skin: '#f0d8a8', eyes: '#8a5a1e', hairStyle: 'none', weapon: 'none', accessory: 'none', aura: '#ffb43c' };
-}
-
-// ---------- tiny SVG icons ----------
-const Svg = ({ d, s = 15, c = 'currentColor' }: { d: string; s?: number; c?: string }) => (
+const Svg = ({ d, s = 15, c = 'currentColor' }: { d: string; s?: number; c?: string }): React.JSX.Element => (
   <svg width={s} height={s} viewBox="0 0 24 24" fill={c} aria-hidden="true"><path d={d} /></svg>
 );
+
 const ICONS = {
   gem: 'M12 2 22 12 12 22 2 12 12 2z',
   coin: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 15a5 5 0 1 1 0-10 5 5 0 0 1 0 10z',
@@ -76,127 +31,496 @@ const ICONS = {
   mute: 'M3 10v4h4l5 5V5L7 10H3zm18.1 2 2.4-2.4-1.4-1.4-2.4 2.4-2.4-2.4-1.4 1.4 2.4 2.4-2.4 2.4 1.4 1.4 2.4-2.4 2.4 2.4 1.4-1.4-2.4-2.4z',
   close: 'M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12 19 6.4z',
   star: 'M12 2l2.9 6.6 7.1.7-5.4 4.8 1.6 7L12 17.4 5.8 21l1.6-7L2 9.3l7.1-.7L12 2z',
+  shield: 'M12 2 4 5v6c0 5 3.4 9.7 8 11 4.6-1.3 8-6 8-11V5l-8-3z',
+  flame: 'M12 2s5 4.5 5 9a5 5 0 0 1-10 0c0-1.6.6-3 1.3-4.2C8.8 8.6 9 10 10 10c0-3 2-5.5 2-8z',
+  anvil: 'M3 7h6l2 3h7a4 4 0 0 1-4 4h-1l2 4H7l2-4H8a5 5 0 0 1-5-5V7z',
+  seal: 'M12 1.6 14.6 7l5.9.9-4.3 4.1 1 5.9L12 15.1 6.8 17.9l1-5.9L3.5 7.9 9.4 7 12 1.6z',
+  chevron: 'M9.4 6 8 7.4 12.6 12 8 16.6 9.4 18l6-6-6-6z',
+  lock: 'M17 9V7a5 5 0 0 0-10 0v2H5v12h14V9h-2zM9 7a3 3 0 0 1 6 0v2H9V7z',
 };
 
-function RarityStars({ r }: { r: Rarity }) {
-  const n = RARITY[r].stars;
+/** Chân dung nhân vật vẽ trên canvas. Chỉ chạy vòng lặp khi thật sự cần động. */
+function Portrait({ look, size, animate = false, action = 'idle' }: {
+  look: ChibiLook; size: number; animate?: boolean; action?: 'idle' | 'attack';
+}): React.JSX.Element {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const key = JSON.stringify(look);
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    const L = JSON.parse(key) as ChibiLook;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const W = Math.round(size * 0.86 * dpr);
+    const H = Math.round(size * dpr);
+    if (cv.width !== W) cv.width = W;
+    if (cv.height !== H) cv.height = H;
+    if (!animate) { renderPortrait(cv, L, 0.85, action); return; }
+    let raf = 0;
+    const t0 = performance.now();
+    const loop = (): void => {
+      renderPortrait(cv, L, (performance.now() - t0) / 1000, action);
+      raf = requestAnimationFrame(loop);
+    };
+    loop();
+    return () => cancelAnimationFrame(raf);
+  }, [key, size, animate, action]);
+  return <canvas ref={ref} style={{ width: Math.round(size * 0.86), height: size, display: 'block' }} />;
+}
+
+function PortraitFrame({ look, size, ring, animate = false, className = '' }: {
+  look: ChibiLook; size: number; ring: string; animate?: boolean; className?: string;
+}): React.JSX.Element {
+  return (
+    <div
+      className={`relative shrink-0 overflow-hidden flex items-end justify-center ${className}`}
+      style={{
+        width: Math.round(size * 0.86), height: size, borderRadius: 8,
+        background: `radial-gradient(circle at 50% 30%, ${ring}33, #120e1c 76%)`,
+        border: `1.5px solid ${ring}`,
+        boxShadow: `0 0 14px ${ring}44, inset 0 -10px 20px rgba(0,0,0,.6)`,
+      }}
+    >
+      <Portrait look={look} size={size - 4} animate={animate} />
+      <div
+        className="absolute inset-x-0 top-0 h-1/3 pointer-events-none"
+        style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.12), transparent)' }}
+      />
+    </div>
+  );
+}
+
+const ITEM_LOOK: ChibiLook = {
+  hair: '#ffd23c', outfit: '#8a6a1e', outfit2: '#4e3c10', skin: '#f0d8a8', eyes: '#8a5a1e',
+  hairStyle: 'none', weapon: 'none', accessory: 'crown', aura: '#ffb43c',
+};
+function lookOfResult(r: GachaResult): ChibiLook {
+  if (r.kind === 'companion') return COMPANIONS.find((c) => c.id === r.id)?.look ?? SKINS[0].look;
+  if (r.kind === 'skin') return SKINS.find((s) => s.id === r.id)?.look ?? SKINS[0].look;
+  return ITEM_LOOK;
+}
+
+function Stars({ r }: { r: Rarity }): React.JSX.Element {
   return (
     <span className="inline-flex gap-[1px]" style={{ color: RARITY[r].color }}>
-      {Array.from({ length: n }).map((_, i) => <Svg key={i} d={ICONS.star} s={10} />)}
+      {Array.from({ length: RARITY[r].stars }).map((_, i) => <Svg key={i} d={ICONS.star} s={9} />)}
     </span>
   );
 }
-function PosBadge({ pos }: { pos: Pos }) {
-  const label = pos === 'front' ? 'TIỀN PHONG' : pos === 'mid' ? 'TRUNG QUÂN' : 'HẬU QUÂN';
-  const color = pos === 'front' ? '#ff8a5a' : pos === 'mid' ? '#ffd23c' : '#8cdcff';
+
+const POS_META: Record<Pos, { label: string; color: string }> = {
+  front: { label: 'TIỀN PHONG', color: '#ff8a5a' },
+  mid: { label: 'TRUNG QUÂN', color: '#ffd23c' },
+  back: { label: 'HẬU QUÂN', color: '#8cdcff' },
+};
+function PosBadge({ pos }: { pos: Pos }): React.JSX.Element {
+  const m = POS_META[pos];
   return (
-    <span className="font-ui text-[9px] font-bold tracking-wider px-1.5 py-px rounded-sm" style={{ color, border: `1px solid ${color}55`, background: `${color}14` }}>
-      {label}
+    <span className="hk-tag" style={{ color: m.color, border: `1px solid ${m.color}55`, background: `${m.color}14` }}>
+      {m.label}
     </span>
   );
 }
-function Avatar({ outfit, aura, letter, size = 40 }: { outfit: string; aura: string; letter: string; size?: number }) {
+
+function Meter({ pct, color, h = 6, track, className = '', sharp = false }: {
+  pct: number; color: string; h?: number; track?: string; className?: string; sharp?: boolean;
+}): React.JSX.Element {
   return (
-    <div className="relative shrink-0 rounded-full flex items-center justify-center font-display"
-      style={{
-        width: size, height: size,
-        background: `radial-gradient(circle at 35% 30%, ${outfit}, #14101c 130%)`,
-        border: `2px solid ${aura}`,
-        boxShadow: `0 0 14px ${aura}66, inset 0 -6px 12px rgba(0,0,0,.5)`,
-        color: '#f5efe0', fontSize: size * 0.46, textShadow: '0 2px 4px #000',
-      }}>
-      {letter}
+    <div className={`hk-meter ${sharp ? 'sharp' : ''} ${className}`} style={{ height: h, background: track }}>
+      <i style={{ width: `${Math.max(0, Math.min(100, pct * 100))}%`, background: color }} />
     </div>
   );
 }
 
-function Modal({ title, accent = '#ff3b52', onClose, children, wide = false }: { title: string; accent?: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
+function Modal({ title, subtitle, accent = '#ff3b52', onClose, children, wide = false, footer }: {
+  title: string; subtitle?: string; accent?: string; onClose: () => void;
+  children: ReactNode; wide?: boolean; footer?: ReactNode;
+}): React.JSX.Element {
+  useEffect(() => {
+    const h = (e: KeyboardEvent): void => { if (e.code === 'Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [onClose]);
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center p-4" style={{ background: 'rgba(5,4,10,0.78)' }} onClick={onClose}>
+    <div
+      className="absolute inset-0 z-40 flex items-center justify-center p-4"
+      style={{ background: 'rgba(4,3,8,0.8)', backdropFilter: 'blur(3px)' }}
+      onClick={onClose}
+      role="presentation"
+    >
       <div
-        className={`panel-dark relative w-full ${wide ? 'max-w-3xl' : 'max-w-xl'} max-h-[88vh] flex flex-col anim-fade-up`}
-        style={{ borderColor: `${accent}55`, clipPath: 'polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px)' }}
+        className={`hk-panel hk-cut-lg relative w-full ${wide ? 'max-w-[830px]' : 'max-w-[520px]'} max-h-[500px] flex flex-col anim-fade-up`}
+        style={{ borderColor: `${accent}55` }}
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
       >
-        <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: `1px solid ${accent}33`, background: `linear-gradient(90deg, ${accent}1f, transparent)` }}>
-          <h2 className="font-display text-2xl tracking-wide" style={{ color: accent, textShadow: `0 0 16px ${accent}66` }}>{title}</h2>
-          <button onClick={onClose} className="text-[#9a917f] hover:text-[#ff3b52] transition-colors cursor-pointer" aria-label="Đóng"><Svg d={ICONS.close} s={18} /></button>
-        </div>
-        <div className="overflow-y-auto p-5 min-h-0">{children}</div>
+        <header
+          className="flex items-center justify-between gap-3 px-5 py-2.5 shrink-0"
+          style={{ borderBottom: `1px solid ${accent}33`, background: `linear-gradient(90deg, ${accent}1c, transparent)` }}
+        >
+          <div className="min-w-0">
+            <h2 className="font-display text-xl leading-none tracking-wide truncate" style={{ color: accent, textShadow: `0 0 16px ${accent}55` }}>
+              {title}
+            </h2>
+            {subtitle && <p className="font-ui text-[10px] text-[var(--color-bone-dim)] mt-1">{subtitle}</p>}
+          </div>
+          <button onClick={onClose} className="text-[var(--color-bone-dim)] hover:text-[var(--color-blood-lit)] transition-colors cursor-pointer shrink-0" aria-label="Đóng">
+            <Svg d={ICONS.close} s={18} />
+          </button>
+        </header>
+        <div className="overflow-y-auto p-4 min-h-0 flex-1">{children}</div>
+        {footer && <footer className="px-4 py-2.5 shrink-0" style={{ borderTop: `1px solid ${accent}22` }}>{footer}</footer>}
       </div>
     </div>
   );
 }
 
-// ============ HUD: Kael card + dock ============
-export function HudOverlay({ meta, engine }: { meta: MetaInfo; engine: GameIdle }) {
-  const xpPct = Math.min(100, (meta.kaelXp / meta.kaelXpNext) * 100);
-  return (
-    <>
-      {/* Kael card bottom-left */}
-      <div className="absolute bottom-3 left-3 flex items-end gap-2.5 pointer-events-none select-none">
-        <PortraitFrame look={SKINS.find((s) => s.id === meta.equippedSkin)?.look ?? SKINS[0].look} ring={SKINS.find((s) => s.id === meta.equippedSkin)?.look.aura ?? '#c2172f'} size={64} animate />
-        <div className="pb-1">
-          <div className="font-display text-lg leading-none text-[#f0e8d8]" style={{ textShadow: '0 2px 8px #000' }}>
-            KAEL <span className="text-[#ffd23c] text-sm">Lv {meta.kaelLevel}</span>
-          </div>
-          <div className="font-ui text-[10px] text-[#ff8a5a] font-bold tracking-wider mt-0.5">BẬC THĂNG HOA {meta.asc}</div>
-          <div className="w-40 h-2 mt-1 rounded-full overflow-hidden" style={{ background: '#1a1424', border: '1px solid #3a2f4a' }}>
-            <div className="h-full rounded-full transition-all duration-300" style={{ width: `${xpPct}%`, background: 'linear-gradient(90deg, #c2172f, #ff9a3c)' }} />
-          </div>
-          <div className="font-ui text-[9px] text-[#9a917f] mt-0.5">XP {fmt(meta.kaelXp)}/{fmt(meta.kaelXpNext)}</div>
-        </div>
-      </div>
-      <DockBar meta={meta} engine={engine} />
-    </>
-  );
-}
-
-function DockBar({ meta, engine }: { meta: MetaInfo; engine: GameIdle }) {
-  const btn = 'group flex items-center gap-1.5 px-3 py-2 cursor-pointer transition-all duration-150 hover:-translate-y-0.5 font-display text-sm tracking-wide';
-  return (
-    <div className="absolute bottom-3 right-3 flex items-stretch gap-1.5 select-none">
-      <button className={btn} style={dockStyle('#ff4fd8')} onClick={() => dispatchOpen('summon')}>
-        <Svg d={ICONS.gem} s={15} c="#ff4fd8" /> TRIỆU HỒI
-      </button>
-      <button className={btn} style={dockStyle('#3fb9ff')} onClick={() => dispatchOpen('party')}>
-        <Svg d={ICONS.squad} s={15} c="#3fb9ff" /> ĐỘI HÌNH
-      </button>
-      <button className={btn} style={dockStyle('#ffb43c')} onClick={() => dispatchOpen('equip')}>
-        <Svg d={ICONS.bag} s={15} c="#ffb43c" /> TRANG BỊ
-      </button>
-      <button className={btn} style={dockStyle('#ff8a5a')} onClick={() => dispatchOpen('weapon')}>
-        <Svg d={ICONS.sword} s={15} c="#ff8a5a" /> VŨ KHÍ
-      </button>
-      <button className={btn} style={dockStyle('#ffd23c')} onClick={() => engine.cycleSpeed()} title="Tốc độ trận đấu">
-        <Svg d={ICONS.bolt} s={14} c="#ffd23c" /> ×{meta.speed}
-      </button>
-      <button className={btn} style={dockStyle('#8fa3b8')} onClick={() => engine.toggleMute()} title="Âm thanh (M)">
-        <Svg d={meta.muted ? ICONS.mute : ICONS.sound} s={15} c="#8fa3b8" />
-      </button>
-      <button className={btn} style={dockStyle('#ff3b52')} onClick={() => engine.togglePause()} title="Tạm dừng (P)">
-        <Svg d={ICONS.pause} s={13} c="#ff3b52" />
-      </button>
-    </div>
-  );
-}
-function dockStyle(accent: string): CSSProperties {
-  return {
-    color: '#e8dfc8',
-    background: 'linear-gradient(180deg, rgba(28,22,38,0.92), rgba(12,9,18,0.94))',
-    border: `1px solid ${accent}55`,
-    clipPath: 'polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px)',
-    textShadow: '0 2px 6px #000',
-  };
-}
-
-// dispatch custom event so App can open modals (keeps DockBar loosely coupled)
-export function dispatchOpen(which: 'summon' | 'party' | 'equip' | 'skin' | 'weapon'): void {
+export function dispatchOpen(which: Exclude<PanelId, 'none'>): void {
   window.dispatchEvent(new CustomEvent('hk-open-panel', { detail: which }));
 }
 
-// ============ SUMMON ============
-export function SummonModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }) {
+// ============ HUD ============
+
+export function HudOverlay({ meta, engine }: { meta: MetaInfo; engine: GameIdle }): React.JSX.Element {
+  return (
+    <div className="absolute inset-0 pointer-events-none select-none" style={{ fontSize: 12 }}>
+      <FloorCard meta={meta} />
+      <PartyStrip party={meta.party} legion={meta.legionCount} />
+      <ResourceRail meta={meta} />
+      {meta.hud.inBoss && meta.hud.bossMaxHp > 0 && <BossBar meta={meta} />}
+      <ComboBadge meta={meta} />
+      <KaelCard meta={meta} />
+      <BannerLayer banner={meta.banner} />
+      <ToastStack toasts={meta.toasts} />
+      <DockBar meta={meta} engine={engine} />
+    </div>
+  );
+}
+
+function FloorCard({ meta }: { meta: MetaInfo }): React.JSX.Element {
+  const h = meta.hud;
+  const zone = zoneOf(h.floor);
+  const bossFloor = hasBossOnFloor(h.floor);
+  return (
+    <div className="absolute top-3 left-3 hk-glass hk-cut-md px-3 py-2 w-[262px]">
+      <div className="flex items-baseline gap-1.5 whitespace-nowrap">
+        <span className="font-display text-[19px] leading-none" style={{ color: h.inBoss ? '#ff3b52' : '#ece4d2' }}>
+          {h.floor >= TOTAL_FLOORS ? `VỰC ${h.floor - TOTAL_FLOORS + 1}` : `TẦNG ${h.floor + 1}`}
+        </span>
+        {h.floor < TOTAL_FLOORS && (
+          <span className="num text-[10px] text-[var(--color-bone-faint)]">/{TOTAL_FLOORS}</span>
+        )}
+        <span className="font-body text-[10px] text-[var(--color-bone-dim)] ml-auto truncate max-w-[150px]">
+          {h.floorName}
+        </span>
+      </div>
+      <div className="font-ui text-[9px] font-bold tracking-widest mt-0.5 truncate" style={{ color: zone.accent }}>
+        {zone.name.toUpperCase()}
+      </div>
+      <div className="flex items-center gap-1 mt-1.5">
+        {Array.from({ length: WAVES_PER_FLOOR }).map((_, i) => {
+          const done = h.wave > i + 1 || (h.wave === i + 1 && h.inBoss);
+          const current = h.wave === i + 1 && !h.inBoss;
+          const last = i === WAVES_PER_FLOOR - 1;
+          const color = last && bossFloor
+            ? (h.inBoss ? '#ff3b52' : done ? '#ff3b52' : '#5a2030')
+            : done ? zone.accent : current ? zone.accent : '#2c2738';
+          return (
+            <span
+              key={i}
+              title={last && bossFloor ? 'Boss' : `Đợt ${i + 1}`}
+              style={{
+                width: last ? 12 : 9, height: last ? 12 : 9,
+                background: color,
+                opacity: done || current ? 1 : 0.55,
+                transform: `rotate(45deg) scale(${current ? 1.25 : 1})`,
+                transition: 'all .2s ease',
+                boxShadow: current ? `0 0 8px ${color}` : 'none',
+                borderRadius: 1,
+              }}
+            />
+          );
+        })}
+        <span className="font-ui text-[9px] font-bold text-[var(--color-bone-faint)] ml-auto tracking-wider">
+          {h.inBoss ? 'BOSS CHIẾN' : `ĐỢT ${h.wave}/${WAVES_PER_FLOOR}`}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function ResourceRail({ meta }: { meta: MetaInfo }): React.JSX.Element {
+  const h = meta.hud;
+  const rows: Array<{ v: string; label: string; color: string; icon: string }> = [
+    { v: fmt(h.gold), label: 'VÀNG', color: '#ffd23c', icon: ICONS.coin },
+    { v: fmt(h.gems), label: 'NGỌC', color: '#ff4fd8', icon: ICONS.gem },
+    { v: fmt(h.power), label: 'LỰC CHIẾN', color: '#ff8a5a', icon: ICONS.bolt },
+  ];
+  return (
+    <div className="absolute top-3 right-3 flex flex-col gap-1.5 items-end">
+      {rows.map((r) => (
+        <div key={r.label} className="hk-glass hk-cut-sm flex items-center gap-2 pl-2 pr-2.5 py-1 w-[168px]">
+          <Svg d={r.icon} s={13} c={r.color} />
+          <span className="num text-[15px] leading-none" style={{ color: r.color }}>{r.v}</span>
+          <span className="font-ui text-[8px] font-bold text-[var(--color-bone-faint)] tracking-widest ml-auto">{r.label}</span>
+        </div>
+      ))}
+      {meta.seals > 0 && (
+        <div className="hk-glass hk-cut-sm flex items-center gap-2 pl-2 pr-2.5 py-1 w-[168px]" title="Huyết Ấn — hệ số nhân vĩnh viễn từ Thăng Hoa">
+          <Svg d={ICONS.seal} s={13} c="#a78bfa" />
+          <span className="num text-[15px] leading-none text-[#a78bfa]">×{meta.sealMul.toFixed(2)}</span>
+          <span className="font-ui text-[8px] font-bold text-[var(--color-bone-faint)] tracking-widest ml-auto">{meta.seals} ẤN</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BossBar({ meta }: { meta: MetaInfo }): React.JSX.Element {
+  const h = meta.hud;
+  return (
+    <div className="absolute top-3 left-1/2 -translate-x-1/2 w-[420px] anim-fade-up">
+      <div className="hk-glass hk-cut-md px-4 py-2" style={{ borderColor: 'rgba(255,59,82,0.55)' }}>
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="font-display text-[15px] leading-none text-[#ff3b52] truncate" style={{ textShadow: '0 0 14px rgba(255,59,82,.6)' }}>
+            {h.bossName}
+          </span>
+          <span className="num text-[10px] text-[var(--color-bone-dim)] shrink-0">
+            {fmt(h.bossHp)} / {fmt(h.bossMaxHp)}
+          </span>
+        </div>
+        <div className="mt-1.5 relative">
+          <Meter pct={h.bossHpPct} color="linear-gradient(90deg,#ff5a6a,#8a1020)" h={11} sharp />
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{ background: 'repeating-linear-gradient(90deg, transparent 0 24px, rgba(0,0,0,.35) 24px 25px)' }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ComboBadge({ meta }: { meta: MetaInfo }): React.JSX.Element | null {
+  const { combo, comboPct } = meta.hud;
+  if (combo < 3) return null;
+  const tier = combo >= 40 ? '#ff4fd8' : combo >= 20 ? '#ff3b52' : combo >= 10 ? '#ff9a3c' : '#ffd23c';
+  const bonus = Math.min(combo, BAL.COMBO_MAX) * 2;
+  return (
+    <div className="absolute left-3 top-[168px] w-[210px]" key={combo}>
+      <div className="anim-combo origin-left" style={{ transform: 'rotate(-4deg)' }}>
+        <div className="flex items-baseline gap-1.5 whitespace-nowrap">
+          <span className="font-display leading-none" style={{ fontSize: 32, color: tier, textShadow: `0 0 18px ${tier}, 0 3px 0 #1a0a12` }}>
+            {combo}
+          </span>
+          <span className="font-display leading-none" style={{ fontSize: 14, color: tier, textShadow: '0 2px 6px #000' }}>
+            LIÊN TRẢM
+          </span>
+        </div>
+        <div className="font-ui text-[9px] font-bold mt-0.5" style={{ color: tier }}>+{bonus}% VÀNG</div>
+        <Meter pct={comboPct} color={tier} h={3} className="mt-1 w-[92px]" />
+      </div>
+    </div>
+  );
+}
+
+function KaelCard({ meta }: { meta: MetaInfo }): React.JSX.Element {
+  const skin = SKINS.find((s) => s.id === meta.equippedSkin) ?? SKINS[0];
+  const xpPct = meta.kaelXpNext > 0 ? meta.kaelXp / meta.kaelXpNext : 0;
+  const rage = meta.hud.rage;
+  const rageFull = rage >= 0.999;
+  return (
+    <div className="absolute bottom-3 left-3 flex items-end gap-2.5">
+      <PortraitFrame look={skin.look} ring={skin.look.aura} size={62} animate />
+      <div className="pb-0.5">
+        <div className="font-display text-[17px] leading-none text-[var(--color-bone)]" style={{ textShadow: '0 2px 8px #000' }}>
+          KAEL <span className="num text-[11px] text-[#ffd23c]">Lv {meta.kaelLevel}</span>
+        </div>
+        <div className="w-[168px] mt-1">
+          <Meter pct={xpPct} color="linear-gradient(90deg,#c2172f,#ff9a3c)" h={5} />
+          <div className="flex justify-between font-ui text-[8px] text-[var(--color-bone-faint)] mt-0.5 tracking-wide">
+            <span>KINH NGHIỆM</span>
+            <span className="num">{fmt(meta.kaelXp)}/{fmt(meta.kaelXpNext)}</span>
+          </div>
+        </div>
+        <div className={`w-[168px] mt-1 ${rageFull ? 'anim-rage-full rounded-full' : ''}`}>
+          <Meter pct={rage} color={rageFull ? '#ff3b52' : 'linear-gradient(90deg,#8a1020,#ff3b52)'} h={7} />
+          <div className="flex justify-between font-ui text-[8px] mt-0.5 tracking-wide">
+            <span className={rageFull ? 'text-[#ff3b52] font-bold' : 'text-[var(--color-bone-faint)]'}>
+              {rageFull ? 'HUYẾT NGUYỆT TRẢM!' : 'NỘ KHÍ'}
+            </span>
+            <span className="num text-[var(--color-bone-faint)]">{Math.floor(rage * 100)}%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Bảng điểm danh đồng hành — nằm ngay dưới thẻ tầng, tránh vùng chiến đấu. */
+function PartyStrip({ party, legion }: { party: MetaInfo['party']; legion: number }): React.JSX.Element | null {
+  if (party.length === 0) return null;
+  return (
+    <div className="absolute left-3 top-[96px] flex items-end gap-1 w-[262px] flex-wrap">
+      {party.slice(0, 12).map((p) => {
+        const rc = RARITY[p.rarity];
+        return (
+          <div key={p.id} className="w-[22px]" title={`${p.name} · Lv ${p.level}`}>
+            <div
+              className="h-[22px] flex items-center justify-center font-display text-[11px]"
+              style={{
+                background: `linear-gradient(160deg, ${rc.color}30, #100c18)`,
+                border: `1px solid ${p.hpPct > 0 ? rc.color : '#3a3346'}`,
+                color: p.hpPct > 0 ? rc.color : '#4c4459',
+                borderRadius: 3,
+                filter: p.hpPct > 0 ? 'none' : 'grayscale(1)',
+              }}
+            >
+              {p.name[0]}
+            </div>
+            <Meter pct={p.hpPct} color={p.hpPct > 0.35 ? '#3fe0b0' : '#ff3b52'} h={2} className="mt-[2px]" sharp />
+          </div>
+        );
+      })}
+      {legion > 0 && (
+        <div
+          className="h-[22px] px-1 flex items-center font-ui text-[9px] font-bold text-[#b8a0ff]"
+          style={{ border: '1px solid #b8a0ff55', background: 'rgba(184,160,255,.1)', borderRadius: 3 }}
+          title={`${legion} đồng hành tiếp viện — tập kích định kỳ`}
+        >
+          +{legion}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BannerLayer({ banner }: { banner: MetaInfo['banner'] }): React.JSX.Element | null {
+  if (!banner) return null;
+  return (
+    <div key={banner.key} className="absolute inset-x-0 top-[132px] flex flex-col items-center text-center px-16">
+      <div className="anim-banner" style={{ '--dur': `${banner.life}s` } as CSSProperties}>
+        <div
+          className="font-display leading-none"
+          style={{ fontSize: 42, color: banner.color, textShadow: `0 0 28px ${banner.color}, 0 3px 0 #14060e, 0 0 76px ${banner.color}55` }}
+        >
+          {banner.main}
+        </div>
+        <div className="font-ui text-[12px] font-bold tracking-[0.2em] mt-1.5 text-[var(--color-bone)]" style={{ textShadow: '0 2px 10px #000' }}>
+          {banner.sub}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ToastStack({ toasts }: { toasts: MetaInfo['toasts'] }): React.JSX.Element {
+  return (
+    <div className="absolute left-1/2 -translate-x-1/2 top-[74px] flex flex-col items-center gap-1">
+      {toasts.map((t) => (
+        <div
+          key={t.id}
+          className="anim-toast hk-glass hk-cut-sm px-3 py-1 font-ui text-[11px] font-bold"
+          style={{ color: t.color, borderColor: `${t.color}55`, opacity: Math.min(1, t.life) }}
+        >
+          {t.text}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DockBar({ meta, engine }: { meta: MetaInfo; engine: GameIdle }): React.JSX.Element {
+  const canPrestige = meta.canPrestige;
+  return (
+    <div className="absolute bottom-3 right-3 flex flex-col items-end gap-1.5 pointer-events-auto">
+      {/* hàng tiện ích — chỉ biểu tượng, gọn để chừa chỗ cho sân khấu */}
+      <div className="flex items-stretch gap-1.5">
+        <button
+          className="hk-dock"
+          data-on={meta.farmMode}
+          style={{
+            borderColor: meta.farmMode ? '#8cdcff' : '#3a3350',
+            color: meta.farmMode ? '#8cdcff' : '#ece4d2',
+            padding: '5px 10px', fontSize: 11,
+          }}
+          onClick={() => engine.toggleFarmMode()}
+          title="F — Trấn Giữ: lặp lại tầng hiện tại để tích luỹ thay vì đi xuống sâu"
+        >
+          <Svg d={ICONS.shield} s={12} c={meta.farmMode ? '#8cdcff' : '#8fa3b8'} />
+          {meta.farmMode ? 'TRẤN GIỮ' : 'TIẾN CÔNG'}
+        </button>
+        <button
+          className="hk-dock"
+          style={{ borderColor: '#ffd23c66', padding: '5px 10px', fontSize: 11 }}
+          onClick={() => engine.cycleSpeed()}
+          title="Tốc độ trận đấu"
+        >
+          <Svg d={ICONS.bolt} s={12} c="#ffd23c" /> ×{meta.speed}
+        </button>
+        <button
+          className="hk-dock"
+          style={{ padding: '5px 9px' }}
+          onClick={() => engine.toggleMute()}
+          title="Âm thanh (M)"
+          aria-label="Bật hoặc tắt âm thanh"
+        >
+          <Svg d={meta.muted ? ICONS.mute : ICONS.sound} s={13} c="#8fa3b8" />
+        </button>
+        <button
+          className="hk-dock"
+          style={{ borderColor: '#ff3b5266', padding: '5px 9px' }}
+          onClick={() => engine.togglePause()}
+          title="Tạm dừng (P)"
+          aria-label="Tạm dừng"
+        >
+          <Svg d={ICONS.pause} s={12} c="#ff3b52" />
+        </button>
+      </div>
+      {/* hàng chính */}
+      <div className="flex items-stretch gap-1.5">
+        <button className="hk-dock" style={{ borderColor: '#ff4fd888', color: '#ffd6ec' }} onClick={() => dispatchOpen('summon')}>
+          <Svg d={ICONS.gem} s={14} c="#ff4fd8" /> TRIỆU HỒI
+        </button>
+        <button className="hk-dock" style={{ borderColor: '#3fb9ff88' }} onClick={() => dispatchOpen('party')}>
+          <Svg d={ICONS.squad} s={14} c="#3fb9ff" /> ĐỘI HÌNH
+        </button>
+        <button className="hk-dock" style={{ borderColor: '#ffb43c88' }} onClick={() => dispatchOpen('equip')}>
+          <Svg d={ICONS.bag} s={14} c="#ffb43c" /> TRANG BỊ
+        </button>
+        <button className="hk-dock" style={{ borderColor: '#ff8a5a88' }} onClick={() => dispatchOpen('weapon')}>
+          <Svg d={ICONS.sword} s={14} c="#ff8a5a" /> VŨ KHÍ
+        </button>
+        <button
+          className="hk-dock"
+          style={{ borderColor: canPrestige ? '#a78bfa' : '#3a3350', color: canPrestige ? '#c9b6ff' : '#6f6780' }}
+          onClick={() => dispatchOpen('prestige')}
+          title={canPrestige ? `Sẵn sàng nhận ${meta.sealsPending} Huyết Ấn` : `Cần xuống sâu hơn tầng ${BAL.SEAL_MIN_FLOOR}`}
+        >
+          <Svg d={ICONS.seal} s={14} c={canPrestige ? '#a78bfa' : '#6f6780'} />
+          THĂNG HOA
+          {canPrestige && (
+            <span className="num text-[10px] px-1 rounded-sm" style={{ background: '#a78bfa', color: '#140c22' }}>
+              +{meta.sealsPending}
+            </span>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ============ TRIỆU HỒI ============
+
+const PULLS: Array<{ n: 1 | 10 | 100 | 500; cost: number; accent: string }> = [
+  { n: 1, cost: GACHA_COST, accent: '#ff4fd8' },
+  { n: 10, cost: GACHA_X10_COST, accent: '#ff4fd8' },
+  { n: 100, cost: GACHA_X100_COST, accent: '#ffb43c' },
+  { n: 500, cost: GACHA_X500_COST, accent: '#7dff5a' },
+];
+
+export function SummonModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }): React.JSX.Element {
   const [results, setResults] = useState<GachaResult[] | null>(null);
   const [spinning, setSpinning] = useState(false);
   const timerRef = useRef<number | null>(null);
@@ -207,8 +531,7 @@ export function SummonModal({ meta, engine, onClose }: { meta: MetaInfo; engine:
     if (times === null) return;
     if (timerRef.current !== null) { window.clearTimeout(timerRef.current); timerRef.current = null; }
     pendingRef.current = null;
-    const r = engine.gacha(times);
-    setResults(r);
+    setResults(engine.gacha(times));
     setSpinning(false);
   };
   useEffect(() => () => { if (timerRef.current !== null) window.clearTimeout(timerRef.current); }, []);
@@ -218,12 +541,10 @@ export function SummonModal({ meta, engine, onClose }: { meta: MetaInfo; engine:
     setSpinning(true);
     setResults(null);
     pendingRef.current = times;
-    const delay = times === 1 ? 500 : times === 10 ? 900 : 1300;
-    timerRef.current = window.setTimeout(finish, delay);
+    timerRef.current = window.setTimeout(finish, times === 1 ? 480 : times === 10 ? 820 : 1150);
   };
 
-  // tổng hợp kết quả cho lượt quay lớn
-  const summary = (() => {
+  const summary = useMemo(() => {
     if (!results || results.length < 20) return null;
     const byRarity: Record<string, number> = { mythic: 0, legendary: 0, epic: 0, rare: 0, common: 0 };
     const byName = new Map<string, { r: GachaResult; n: number; isNew: boolean }>();
@@ -233,62 +554,82 @@ export function SummonModal({ meta, engine, onClose }: { meta: MetaInfo; engine:
       const e = byName.get(k);
       if (e) { e.n += 1; if (r.isNew) e.isNew = true; } else byName.set(k, { r, n: 1, isNew: r.isNew });
     }
-    const top = [...byName.entries()].sort((a, b) => {
-      const ord = { mythic: 5, legendary: 4, epic: 3, rare: 2, common: 1 } as Record<string, number>;
-      return ord[b[1].r.rarity] - ord[a[1].r.rarity] || b[1].n - a[1].n;
-    });
+    const ord: Record<string, number> = { mythic: 5, legendary: 4, epic: 3, rare: 2, common: 1 };
+    const top = [...byName.entries()].sort(
+      (a, b) => ord[b[1].r.rarity] - ord[a[1].r.rarity] || b[1].n - a[1].n,
+    );
     return { byRarity, top };
-  })();
+  }, [results]);
 
   return (
-    <Modal title="ĐÀI TRIỆU HỒI HUYẾT NGUYỆT" accent="#ff4fd8" onClose={onClose} wide>
+    <Modal
+      title="ĐÀI TRIỆU HỒI HUYẾT NGUYỆT"
+      subtitle="Thần Thoại 1.5% · Huyền Thoại 4% · Cực Hiếm 12% · Hiếm 33% · Thường 49.5% — mỗi 10 lượt bảo hiểm ≥1 Cực Hiếm"
+      accent="#ff4fd8"
+      onClose={onClose}
+      wide
+      footer={
+        <div className="flex items-center gap-2">
+          <div className="grid grid-cols-4 gap-2 flex-1">
+            {PULLS.map((p) => (
+              <button
+                key={p.n}
+                className="hk-btn lg solid justify-center"
+                disabled={spinning || meta.gems < p.cost}
+                onClick={() => roll(p.n)}
+                style={{ background: meta.gems >= p.cost ? p.accent : '#2c2738', color: meta.gems >= p.cost ? '#140c1c' : '#6f6780' }}
+              >
+                ×{p.n} — {fmt(p.cost)}
+              </button>
+            ))}
+          </div>
+          <div className="num text-[13px] text-[#ff4fd8] flex items-center gap-1.5 shrink-0 pl-2">
+            <Svg d={ICONS.gem} s={13} c="#ff4fd8" /> {fmt(meta.gems)}
+          </div>
+        </div>
+      }
+    >
       <div className="flex flex-col items-center">
-        {/* summon circle */}
-        <div className="relative w-36 h-36 flex items-center justify-center mb-1">
-          <svg viewBox="0 0 200 200" className={`absolute inset-0 ${spinning ? 'anim-slow-spin' : ''}`} style={{ animationDuration: spinning ? '1.2s' : '3s' }}>
+        <div className="relative w-28 h-28 flex items-center justify-center mb-2">
+          <svg viewBox="0 0 200 200" className={`absolute inset-0 ${spinning ? 'anim-slow-spin' : ''}`} style={{ animationDuration: spinning ? '1.1s' : '3s' }}>
             <circle cx="100" cy="100" r="92" fill="none" stroke="#ff4fd855" strokeWidth="2" strokeDasharray="14 8" />
             <circle cx="100" cy="100" r="72" fill="none" stroke="#ff3b5277" strokeWidth="1.5" strokeDasharray="4 10" />
             <path d="M100 12 188 100 100 188 12 100z" fill="none" stroke="#ffd23c44" strokeWidth="1.5" />
           </svg>
-          <svg viewBox="0 0 100 100" className={`w-14 h-14 ${spinning ? 'animate-pulse' : ''}`}>
+          <svg viewBox="0 0 100 100" className={`w-12 h-12 ${spinning ? 'animate-pulse' : ''}`}>
             <path d="M50 4 66 38 98 50 66 62 50 96 34 62 2 50 34 38z" fill="#ff4fd8" opacity="0.9" />
             <path d="M50 22 59 42 80 50 59 58 50 78 41 58 20 50 41 42z" fill="#fff" opacity="0.85" />
           </svg>
-          {spinning && <div className="absolute inset-0 rounded-full anim-pulse-glow" />}
         </div>
-        <p className="font-ui text-[10px] text-[#9a917f] text-center mb-3">
-          Thần Thoại <span className="text-[#c96bff] font-bold">1.5%</span> · Huyền Thoại <span className="text-[#ff4fd8] font-bold">4%</span> · Cực Hiếm <span className="text-[#ffb43c] font-bold">12%</span> · Hiếm <span className="text-[#3fb9ff] font-bold">33%</span> · Thường <span className="text-[#8fa3b8] font-bold">49.5%</span>
-          <br />Cứ mỗi 10 lần chắc chắn ≥1 Cực Hiếm (bảo hiểm)
-        </p>
 
         {spinning && (
-          <button onClick={finish} className="font-ui text-[11px] font-bold text-[#e8dfc8] px-3 py-1 mb-2 cursor-pointer"
-            style={{ border: '1px solid #e8dfc855', clipPath: 'polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px)' }}>
-            BỎ QUA HOẠT CẢNH ▸▸
-          </button>
+          <button onClick={finish} className="hk-btn mb-2">BỎ QUA HOẠT CẢNH ▸▸</button>
         )}
 
-        {/* results */}
         {results && !summary && (
-          <div className={`grid gap-2 mb-4 w-full ${results.length > 1 ? 'grid-cols-5' : 'grid-cols-1 max-w-[230px] mx-auto'}`}>
+          <div className={`grid gap-2 w-full ${results.length > 1 ? 'grid-cols-5' : 'grid-cols-1 max-w-[220px] mx-auto'}`}>
             {results.map((r, i) => {
               const rc = RARITY[r.rarity];
-              const big = results.length === 1 && (r.rarity === 'epic' || r.rarity === 'legendary' || r.rarity === 'mythic');
+              const big = results.length === 1;
+              const shiny = r.rarity === 'epic' || r.rarity === 'legendary' || r.rarity === 'mythic';
               return (
-                <div key={i} className="anim-fade-up relative rounded-md p-2 flex flex-col items-center text-center"
+                <div
+                  key={i}
+                  className={`card-in relative rounded-md p-2 flex flex-col items-center text-center ${shiny ? 'card-shine' : ''}`}
                   style={{
-                    animationDelay: `${i * 70}ms`,
-                    background: `linear-gradient(165deg, ${rc.color}26, #0e0a16 70%)`,
+                    animationDelay: `${i * 60}ms`,
+                    background: `linear-gradient(165deg, ${rc.color}26, #0d0a14 72%)`,
                     border: `1.5px solid ${rc.color}`,
-                    boxShadow: r.rarity === 'legendary' || r.rarity === 'epic' || r.rarity === 'mythic' ? `0 0 18px ${rc.color}88` : 'none',
-                  }}>
-                  <PortraitFrame look={lookOfResult(r)} ring={rc.color} size={big ? 128 : results.length > 1 ? 62 : 84} animate={big} className="mt-1" />
-                  <RarityStars r={r.rarity} />
-                  <div className="font-display leading-tight mt-1" style={{ color: rc.color, fontSize: big ? 17 : 13 }}>{r.name}</div>
-                  <div className="font-ui text-[9px] text-[#9a917f] mt-0.5 leading-snug">
+                    boxShadow: shiny ? `0 0 18px ${rc.color}77` : 'none',
+                  }}
+                >
+                  <PortraitFrame look={lookOfResult(r)} ring={rc.color} size={big ? 120 : 58} animate={big && shiny} />
+                  <Stars r={r.rarity} />
+                  <div className="font-display leading-tight mt-0.5" style={{ color: rc.color, fontSize: big ? 17 : 12 }}>{r.name}</div>
+                  <div className="font-ui text-[9px] text-[var(--color-bone-faint)] leading-snug">
                     {r.kind === 'companion' ? 'Đồng hành' : r.kind === 'skin' ? 'Skin Kael' : 'Vật phẩm'}
                   </div>
-                  <div className={`font-ui text-[9px] font-bold mt-1 ${r.isNew ? 'text-[#3fe0b0]' : 'text-[#ffd23c]'}`}>
+                  <div className="font-ui text-[9px] font-bold mt-0.5" style={{ color: r.isNew ? '#3fe0b0' : '#ffd23c' }}>
                     {r.isNew ? 'MỚI!' : r.dupeText}
                   </div>
                 </div>
@@ -297,25 +638,31 @@ export function SummonModal({ meta, engine, onClose }: { meta: MetaInfo; engine:
           </div>
         )}
 
-        {/* tổng hợp cho lượt lớn */}
         {results && summary && (
-          <div className="w-full mb-4 anim-fade-up">
+          <div className="w-full anim-fade-up">
             <div className="flex justify-center gap-2 flex-wrap mb-3">
               {(['mythic', 'legendary', 'epic', 'rare', 'common'] as const).map((rr) => (
-                <div key={rr} className="px-2.5 py-1 text-center" style={{ background: `${RARITY[rr].color}1c`, border: `1px solid ${RARITY[rr].color}66`, clipPath: 'polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px)' }}>
+                <div
+                  key={rr}
+                  className="hk-cut-sm px-3 py-1 text-center"
+                  style={{ background: `${RARITY[rr].color}1c`, border: `1px solid ${RARITY[rr].color}66` }}
+                >
                   <div className="font-display text-lg leading-none" style={{ color: RARITY[rr].color }}>{summary.byRarity[rr]}</div>
-                  <div className="font-ui text-[8px]" style={{ color: RARITY[rr].color }}>{RARITY[rr].name.toUpperCase()}</div>
+                  <div className="font-ui text-[8px] tracking-wider" style={{ color: RARITY[rr].color }}>{RARITY[rr].name.toUpperCase()}</div>
                 </div>
               ))}
             </div>
-            <div className="grid grid-cols-5 gap-1.5 max-h-56 overflow-y-auto pr-1">
+            <div className="grid grid-cols-6 gap-1.5 max-h-[210px] overflow-y-auto pr-1">
               {summary.top.map(([k, { r, n, isNew }]) => {
                 const rc = RARITY[r.rarity];
                 return (
-                  <div key={k} className="rounded-md p-1.5 flex flex-col items-center text-center"
-                    style={{ background: `linear-gradient(165deg, ${rc.color}20, #0e0a16 75%)`, border: `1px solid ${rc.color}88` }}>
-                    <PortraitFrame look={lookOfResult(r)} ring={rc.color} size={46} />
-                    <div className="font-display text-[10px] leading-tight mt-0.5" style={{ color: rc.color }}>{r.name}</div>
+                  <div
+                    key={k}
+                    className="rounded-md p-1.5 flex flex-col items-center text-center"
+                    style={{ background: `linear-gradient(165deg, ${rc.color}20, #0d0a14 76%)`, border: `1px solid ${rc.color}88` }}
+                  >
+                    <PortraitFrame look={lookOfResult(r)} ring={rc.color} size={44} />
+                    <div className="font-display text-[10px] leading-tight mt-0.5 truncate w-full" style={{ color: rc.color }}>{r.name}</div>
                     <div className="font-ui text-[9px] font-bold" style={{ color: isNew ? '#3fe0b0' : '#ffd23c' }}>{isNew ? 'MỚI!' : `×${n}`}</div>
                   </div>
                 );
@@ -323,200 +670,369 @@ export function SummonModal({ meta, engine, onClose }: { meta: MetaInfo; engine:
             </div>
           </div>
         )}
-
-        <div className="grid grid-cols-2 gap-2 w-full">
-          <button className="btn-blade primary" disabled={spinning || meta.gems < GACHA_COST} onClick={() => roll(1)} style={{ opacity: meta.gems < GACHA_COST ? 0.45 : 1 }}>
-            <Svg d={ICONS.gem} s={14} c="#ff4fd8" /> ×1 — {fmt(GACHA_COST)}
-          </button>
-          <button className="btn-blade primary" disabled={spinning || meta.gems < GACHA_X10_COST} onClick={() => roll(10)} style={{ opacity: meta.gems < GACHA_X10_COST ? 0.45 : 1 }}>
-            <Svg d={ICONS.gem} s={14} c="#ff4fd8" /> ×10 — {fmt(GACHA_X10_COST)}
-          </button>
-          <button className="btn-blade" disabled={spinning || meta.gems < GACHA_X100_COST} onClick={() => roll(100)} style={{ opacity: meta.gems < GACHA_X100_COST ? 0.45 : 1, borderColor: '#ffb43c88' }}>
-            <Svg d={ICONS.gem} s={14} c="#ffb43c" /> ×100 — {fmt(GACHA_X100_COST)}
-          </button>
-          <button className="btn-blade" disabled={spinning || meta.gems < GACHA_X500_COST} onClick={() => roll(500)} style={{ opacity: meta.gems < GACHA_X500_COST ? 0.45 : 1, borderColor: '#c96bff88' }}>
-            <Svg d={ICONS.gem} s={14} c="#c96bff" /> ×500 — {fmt(GACHA_X500_COST)}
-          </button>
-        </div>
-        <div className="font-ui text-sm text-[#ff4fd8] mt-2 font-bold flex items-center gap-1.5">
-          <Svg d={ICONS.gem} s={13} c="#ff4fd8" /> {fmt(meta.gems)} Ngọc trong túi
-        </div>
       </div>
     </Modal>
   );
 }
 
-// ============ PARTY ============
-export function PartyModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }) {
-  const [filter, setFilter] = useState<Rarity | 'all'>('all');
+// ============ ĐỘI HÌNH ============
+
+type SortKey = 'power' | 'rarity' | 'level' | 'name';
+
+export function PartyModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }): React.JSX.Element {
+  const [filter, setFilter] = useState<Rarity | 'all' | 'owned'>('owned');
+  const [sort, setSort] = useState<SortKey>('power');
+  const [bulk, setBulk] = useState<1 | 10 | 100 | 'max'>(10);
+
   const ownedCount = Object.keys(meta.ownedCompanions).length;
   const deployed = meta.deployedIds ?? COMPANIONS.filter((c) => (meta.ownedCompanions[c.id] ?? 0) > 0).map((c) => c.id);
-  const isDeployed = (id: string): boolean => deployed.includes(id);
-  const list = COMPANIONS.filter((c) => filter === 'all' || c.rarity === filter);
+  // Chưa có ai thì lọc "đang có" sẽ ra trang trắng — hiện toàn bộ danh sách
+  // để người chơi thấy được mình đang hướng tới cái gì.
+  const effFilter = filter === 'owned' && ownedCount === 0 ? 'all' : filter;
+
+  const list = useMemo(() => {
+    const ord: Record<Rarity, number> = { mythic: 5, legendary: 4, epic: 3, rare: 2, common: 1 };
+    return COMPANIONS
+      .filter((c) => {
+        if (effFilter === 'all') return true;
+        if (effFilter === 'owned') return (meta.ownedCompanions[c.id] ?? 0) > 0;
+        return c.rarity === effFilter;
+      })
+      .map((c) => ({ c, st: engine.companionStats(c.id) }))
+      .sort((a, b) => {
+        const ao = (meta.ownedCompanions[a.c.id] ?? 0) > 0 ? 1 : 0;
+        const bo = (meta.ownedCompanions[b.c.id] ?? 0) > 0 ? 1 : 0;
+        if (ao !== bo) return bo - ao;
+        if (sort === 'name') return a.c.name.localeCompare(b.c.name);
+        if (sort === 'rarity') return ord[b.c.rarity] - ord[a.c.rarity];
+        if (sort === 'level') return (meta.ownedCompanions[b.c.id] ?? 0) - (meta.ownedCompanions[a.c.id] ?? 0);
+        return (b.st?.power ?? 0) - (a.st?.power ?? 0);
+      });
+  }, [effFilter, sort, meta.ownedCompanions, engine]);
+
+  const bulkLabel = bulk === 'max' ? 'MAX' : `+${bulk}`;
+  const doUpgrade = (id: string): void => {
+    if (bulk === 'max') engine.upgradeCompanionMax(id);
+    else engine.upgradeCompanionTimes(id, bulk);
+  };
+
   return (
-    <Modal title={`ĐỘI HÌNH — ${ownedCount} SỞ HỮU · ${deployed.length}/${MAX_PARTY} RA TRẬN`} accent="#3fb9ff" onClose={onClose} wide>
-      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+    <Modal
+      title="ĐỘI HÌNH"
+      subtitle={`${ownedCount} sở hữu · ${deployed.length}/${MAX_PARTY} ra trận · 12 mạnh nhất đứng sân, phần còn lại tiếp viện`}
+      accent="#3fb9ff"
+      onClose={onClose}
+      wide
+      footer={
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <span className="font-ui text-[9px] text-[var(--color-bone-faint)] tracking-widest">MỖI LẦN</span>
+            {([1, 10, 100, 'max'] as const).map((b) => (
+              <button
+                key={String(b)}
+                onClick={() => setBulk(b)}
+                className="hk-btn"
+                style={bulk === b ? { background: '#ffd23c', color: '#140c1c', borderColor: 'transparent' } : undefined}
+              >
+                {b === 'max' ? 'MAX' : `+${b}`}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => engine.upgradeAllCompanions()}
+            disabled={ownedCount === 0}
+            className="hk-btn lg solid"
+            style={{ background: ownedCount > 0 ? '#3fe0b0' : '#2c2738', color: ownedCount > 0 ? '#0c1a16' : '#6f6780' }}
+            title="Dồn Vàng để san bằng cấp cả đội — mỗi đồng vàng bỏ vào người thấp cấp đổi được nhiều lực chiến hơn"
+          >
+            <Svg d={ICONS.squad} s={13} c={ownedCount > 0 ? '#0c1a16' : '#6f6780'} /> NÂNG CẤP TOÀN ĐỘI
+          </button>
+          <div className="num text-[13px] text-[#ffd23c] flex items-center gap-1.5">
+            <Svg d={ICONS.coin} s={13} c="#ffd23c" /> {fmt(meta.gold)}
+          </div>
+        </div>
+      }
+    >
+      {/* Kael — luôn ở đầu vì đây là nơi tiêu vàng đáng giá nhất */}
+      <div
+        className="rounded-md p-2.5 mb-3 flex gap-3 items-center"
+        style={{ background: 'linear-gradient(120deg, rgba(194,23,47,.18), #0d0a14 70%)', border: '1.5px solid #ff3b5288' }}
+      >
+        <PortraitFrame
+          look={(SKINS.find((s) => s.id === meta.equippedSkin) ?? SKINS[0]).look}
+          ring="#ff3b52"
+          size={56}
+        />
+        <div className="flex-1 min-w-0">
+          <div className="font-display text-[16px] leading-none text-[#ff3b52]">
+            KAEL <span className="num text-[11px] text-[#ffd23c]">Lv {meta.kaelLevel}</span>
+          </div>
+          <div className="font-ui text-[10px] text-[var(--color-bone-dim)] mt-1">
+            <span className="text-[#ff8a5a] font-bold">{fmt(meta.kaelAtk)}</span> Công ·
+            <span className="text-[#3fe0b0] font-bold"> {fmt(meta.kaelHp)}</span> Máu · Tiền phong
+          </div>
+          <div className="font-body text-[10px] text-[var(--color-bone-faint)] mt-0.5">
+            Tôi luyện Kael để giữ nhịp với độ khó của tầng — sát thương và máu tăng {Math.round((BAL.LEVEL_POWER - 1) * 100)}% mỗi cấp.
+          </div>
+        </div>
+        <button
+          className="hk-btn lg solid"
+          style={{ background: meta.gold >= meta.kaelUpgradeCost ? '#ff3b52' : '#2c2738', color: meta.gold >= meta.kaelUpgradeCost ? '#fff' : '#6f6780' }}
+          disabled={meta.gold < meta.kaelUpgradeCost}
+          onClick={() => engine.upgradeKael(bulk === 'max' ? 500 : bulk)}
+        >
+          TÔI LUYỆN {fmt(meta.kaelUpgradeCost)}
+        </button>
+      </div>
+
+      {/* bộ lọc */}
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-2.5">
         <div className="flex flex-wrap gap-1.5">
-          {(['all', 'mythic', 'legendary', 'epic', 'rare', 'common'] as const).map((f) => (
-            <button key={f} onClick={() => setFilter(f)}
-              className="font-ui text-[10px] font-bold px-2.5 py-1 cursor-pointer transition-colors"
-              style={{
-                color: filter === f ? '#0e0a16' : f === 'all' ? '#e8dfc8' : RARITY[f as Rarity].color,
-                background: filter === f ? (f === 'all' ? '#e8dfc8' : RARITY[f as Rarity].color) : 'transparent',
-                border: `1px solid ${f === 'all' ? '#e8dfc855' : RARITY[f as Rarity].color + '66'}`,
-                clipPath: 'polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px)',
-              }}>
-              {f === 'all' ? 'TẤT CẢ' : RARITY[f as Rarity].name.toUpperCase()}
-            </button>
-          ))}
+          {(['owned', 'all', 'mythic', 'legendary', 'epic', 'rare', 'common'] as const).map((f) => {
+            const isR = f !== 'all' && f !== 'owned';
+            const col = isR ? RARITY[f as Rarity].color : f === 'owned' ? '#3fe0b0' : '#ece4d2';
+            return (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className="hk-btn"
+                style={effFilter === f
+                  ? { background: col, color: '#140c1c', borderColor: 'transparent' }
+                  : { color: col, borderColor: `${col}55` }}
+              >
+                {f === 'all' ? 'TẤT CẢ' : f === 'owned' ? 'ĐANG CÓ' : RARITY[f as Rarity].name.toUpperCase()}
+              </button>
+            );
+          })}
         </div>
         <div className="flex gap-1.5">
-          <button onClick={() => engine.deployAll()} className="font-ui text-[10px] font-bold px-2.5 py-1 cursor-pointer text-[#0e0a16]"
-            style={{ background: '#3fe0b0', clipPath: 'polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px)' }}>
-            CHỌN TẤT CẢ
-          </button>
-          <button onClick={() => engine.clearDeploy()} className="font-ui text-[10px] font-bold px-2.5 py-1 cursor-pointer text-[#e8dfc8]"
-            style={{ border: '1px solid #e8dfc855', clipPath: 'polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px)' }}>
-            BỎ CHỌN
-          </button>
+          {(['power', 'rarity', 'level', 'name'] as const).map((s) => (
+            <button
+              key={s}
+              onClick={() => setSort(s)}
+              className="hk-btn"
+              style={sort === s ? { background: '#3fb9ff', color: '#0d1620', borderColor: 'transparent' } : undefined}
+            >
+              {s === 'power' ? 'LỰC' : s === 'rarity' ? 'BẬC' : s === 'level' ? 'CẤP' : 'TÊN'}
+            </button>
+          ))}
+          <button onClick={() => engine.deployAll()} className="hk-btn solid" style={{ background: '#3fe0b0' }}>CHỌN TẤT CẢ</button>
+          <button onClick={() => engine.clearDeploy()} className="hk-btn">BỎ CHỌN</button>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-2.5">
-        {list.map((c) => {
-          const owned = meta.ownedCompanions[c.id] ?? 0;
-          const rc = RARITY[c.rarity];
-          const inParty = isDeployed(c.id) && owned > 0;
-          const lvl = owned;
-          const rarMul = 1 + ({ common: 0, rare: 1, epic: 2, legendary: 3, mythic: 4 } as Record<string, number>)[c.rarity] * 0.15;
-          const g = Math.pow(1.11, Math.max(0, lvl - 1)) * rarMul;
-          const atk = Math.round(c.atkBase * g);
-          const hp = Math.round(c.hpBase * g);
-          const c1 = engine.upgradeCostOf(lvl);
-          const c10 = engine.upgradeBulkCost(c.id, 10);
-          const c100 = engine.upgradeBulkCost(c.id, 100);
-          const upBtn = (label: string, cost: number, fn: () => void): ReactNode => (
-            <button onClick={fn} disabled={meta.gold < cost}
-              className="font-ui text-[9px] font-bold px-1.5 py-0.5 cursor-pointer transition-all hover:brightness-125"
-              style={{
-                color: meta.gold >= cost ? '#0e0a16' : '#6a6378',
-                background: meta.gold >= cost ? '#ffd23c' : '#2c2738',
-                clipPath: 'polygon(4px 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%, 0 4px)',
-              }}>
-              {label} {fmt(cost)}
-            </button>
-          );
-          return (
-            <div key={c.id} className="relative rounded-md p-2.5 flex gap-2.5"
-              style={{
-                background: owned > 0 ? `linear-gradient(160deg, ${rc.color}1c, #0d0a14 75%)` : 'rgba(20,16,28,0.5)',
-                border: `1.5px solid ${owned > 0 ? (inParty ? rc.color : rc.color + '55') : '#2c2738'}`,
-                opacity: owned > 0 ? 1 : 0.5,
-                boxShadow: inParty ? `0 0 14px ${rc.color}55` : 'none',
-              }}>
-              {owned > 0 && (
-                <button onClick={() => engine.toggleDeploy(c.id)}
-                  className="absolute top-1.5 right-1.5 z-10 font-ui text-[8px] font-bold px-1.5 py-0.5 cursor-pointer transition-all hover:brightness-125"
-                  style={{
-                    color: inParty ? '#0e0a16' : '#9a917f',
-                    background: inParty ? '#3fe0b0' : 'rgba(44,39,56,0.9)',
-                    border: inParty ? 'none' : '1px solid #4b4257',
-                    clipPath: 'polygon(4px 0,100% 0,100% calc(100% - 4px),calc(100% - 4px) 100%,0 100%,0 4px)',
-                  }}>
-                  {inParty ? '✓ RA TRẬN' : 'CHỌN'}
-                </button>
-              )}
-              <PortraitFrame look={c.look} ring={rc.color} size={58} />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 flex-wrap pr-14">
-                  <span className="font-display text-[15px] leading-none" style={{ color: owned ? rc.color : '#6a6378' }}>{c.name}</span>
-                  <RarityStars r={c.rarity} />
-                  {owned > 0 && <span className="font-ui text-[10px] text-[#ffd23c] font-bold">Lv {lvl}</span>}
-                </div>
-                <div className="font-ui text-[9px] text-[#9a917f] tracking-wide mt-0.5">
-                  {c.role} · {c.school}
-                </div>
-                <div className="flex items-center gap-1 mt-1"><PosBadge pos={c.pos} /></div>
-                <div className="mt-1">
-                  <span className="font-ui text-[10px] font-bold" style={{ color: rc.color }}>✦ {c.skill.name}</span>
-                  <span className="font-body text-[10px] text-[#b8b0a0] ml-1 leading-tight">{c.skill.desc}</span>
-                </div>
-                {owned > 0 ? (
-                  <>
-                    <div className="font-ui text-[10px] text-[#9a917f] mt-1">
-                      <span className="text-[#ff8a5a] font-bold">{fmt(atk)}</span> Công · <span className="text-[#3fe0b0] font-bold">{fmt(hp)}</span> Máu
-                    </div>
-                    <div className="flex items-center gap-1 mt-1.5 flex-wrap">
-                      {upBtn('+1', c1, () => engine.upgradeCompanion(c.id))}
-                      {upBtn('+10', c10, () => engine.upgradeCompanionTimes(c.id, 10))}
-                      {upBtn('+100', c100, () => engine.upgradeCompanionTimes(c.id, 100))}
-                    </div>
-                  </>
-                ) : (
-                  <div className="font-ui text-[9px] text-[#6a6378] mt-1">Chưa sở hữu — hãy triệu hồi!</div>
-                )}
-              </div>
-            </div>
-          );
-        })}
+
+      {ownedCount === 0 && (
+        <div className="rounded-md p-3 mb-2.5 text-center font-body text-[11px] text-[var(--color-bone-dim)]"
+          style={{ background: 'rgba(255,79,216,.08)', border: '1px dashed #ff4fd855' }}>
+          Chưa có đồng hành nào. Mở <b className="text-[#ff4fd8]">ĐÀI TRIỆU HỒI</b> để chiêu mộ —
+          dưới đây là toàn bộ {COMPANIONS.length} nhân vật có thể gặp.
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-2">
+        {list.map(({ c, st }) => (
+          <CompanionRow
+            key={c.id}
+            def={c}
+            st={st}
+            gold={meta.gold}
+            bulkLabel={bulkLabel}
+            bulkCost={engine.upgradeBulkCost(c.id, bulk === 'max' ? 1 : bulk)}
+            onToggle={() => engine.toggleDeploy(c.id)}
+            onUpgrade={() => doUpgrade(c.id)}
+          />
+        ))}
       </div>
-      <p className="font-ui text-[10px] text-[#6a6378] mt-3 text-center">
-        Chọn tối đa {MAX_PARTY} đồng hành ra trận · 12 mạnh nhất chiến đấu trực tiếp, còn lại tiếp viện · Diệt boss: toàn bộ đồng hành +1 cấp
-      </p>
     </Modal>
   );
 }
 
-// ============ EQUIP ============
-export function EquipModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }) {
+function CompanionRow({ def, st, gold, bulkLabel, bulkCost, onToggle, onUpgrade }: {
+  def: (typeof COMPANIONS)[number];
+  st: CompanionStats | null;
+  gold: number;
+  bulkLabel: string;
+  bulkCost: number;
+  onToggle: () => void;
+  onUpgrade: () => void;
+}): React.JSX.Element {
+  const rc = RARITY[def.rarity];
+  const owned = (st?.level ?? 0) > 0;
+  const inParty = st?.deployed ?? false;
+  const affordable = gold >= bulkCost;
   return (
-    <Modal title="TÚ ĐỒ — VẬT PHẨM" accent="#ffb43c" onClose={onClose}>
-      <div className="grid grid-cols-3 gap-2 mb-4">
-        {[0, 1, 2].map((slot) => {
+    <div
+      className="relative rounded-md p-2 flex gap-2"
+      style={{
+        background: owned ? `linear-gradient(160deg, ${rc.color}18, #0c0a12 76%)` : 'rgba(18,15,26,0.55)',
+        border: `1.5px solid ${owned ? (inParty ? rc.color : `${rc.color}44`) : '#241f33'}`,
+        opacity: owned ? 1 : 0.55,
+        boxShadow: inParty ? `0 0 12px ${rc.color}44` : 'none',
+      }}
+    >
+      {owned && (
+        <button
+          onClick={onToggle}
+          className="hk-btn absolute top-1.5 right-1.5 z-10"
+          style={inParty
+            ? { background: '#3fe0b0', color: '#0c1a16', borderColor: 'transparent' }
+            : { color: '#a79d8c' }}
+        >
+          {inParty ? '✓ RA TRẬN' : 'CHỌN'}
+        </button>
+      )}
+      <div className="relative">
+        <PortraitFrame look={def.look} ring={rc.color} size={62} />
+        {st?.fielded && (
+          <span
+            className="hk-tag absolute -bottom-1 left-1/2 -translate-x-1/2"
+            style={{ background: '#3fe0b0', color: '#0c1a16' }}
+          >
+            SÂN
+          </span>
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5 flex-wrap pr-16">
+          <span className="font-display text-[14px] leading-none" style={{ color: owned ? rc.color : '#5c5470' }}>{def.name}</span>
+          <Stars r={def.rarity} />
+          {owned && <span className="num text-[10px] text-[#ffd23c]">Lv {st?.level}</span>}
+        </div>
+        <div className="font-ui text-[9px] text-[var(--color-bone-faint)] tracking-wide mt-0.5">
+          {def.role} · {def.school} · {def.ranged ? 'Đánh xa' : 'Cận chiến'}
+        </div>
+        <div className="mt-1"><PosBadge pos={def.pos} /></div>
+        <div className="mt-1 leading-snug">
+          <span className="font-ui text-[10px] font-bold" style={{ color: rc.color }}>✦ {def.skill.name}</span>
+          <span className="font-body text-[10px] text-[#b0a89c] ml-1">{def.skill.desc}</span>
+        </div>
+        {owned && st ? (
+          <>
+            <div className="grid grid-cols-4 gap-1 mt-1.5 font-ui text-[9px]">
+              <Stat label="CÔNG" value={fmt(st.atk)} color="#ff8a5a" />
+              <Stat label="MÁU" value={fmt(st.hp)} color="#3fe0b0" />
+              <Stat label="C.MẠNG" value={`${Math.round(st.crit * 100)}%`} color="#ffd23c" />
+              <Stat label="TỐC" value={st.aspd.toFixed(2)} color="#8cdcff" />
+            </div>
+            <button
+              onClick={onUpgrade}
+              disabled={!affordable}
+              className="hk-btn solid w-full mt-1.5 justify-center"
+              style={{ background: affordable ? '#ffd23c' : '#2c2738', color: affordable ? '#140c1c' : '#6f6780' }}
+            >
+              {bulkLabel} · {fmt(bulkCost)} vàng
+            </button>
+          </>
+        ) : (
+          <div className="font-ui text-[9px] text-[var(--color-bone-faint)] mt-1.5">Chưa sở hữu — hãy triệu hồi!</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, color }: { label: string; value: string; color: string }): React.JSX.Element {
+  return (
+    <div>
+      <div className="text-[7.5px] text-[var(--color-bone-faint)] tracking-widest">{label}</div>
+      <div className="num text-[11px] leading-none" style={{ color }}>{value}</div>
+    </div>
+  );
+}
+
+// ============ TRANG BỊ ============
+
+export function EquipModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }): React.JSX.Element {
+  const totals = useMemo(() => {
+    const t = { atk: 0, hp: 0, crit: 0, aspd: 0 };
+    for (const id of meta.equippedItems) {
+      const def = ITEMS.find((i) => i.id === id);
+      const c = meta.ownedItems.find((o) => o.id === id)?.count ?? 0;
+      if (!def || c <= 0) continue;
+      t.atk += (def.bonus.atk ?? 0) * c;
+      t.hp += (def.bonus.hp ?? 0) * c;
+      t.crit += (def.bonus.crit ?? 0) * c;
+      t.aspd += (def.bonus.aspd ?? 0) * c;
+    }
+    return t;
+  }, [meta.equippedItems, meta.ownedItems]);
+
+  return (
+    <Modal
+      title="TÚI ĐỒ — VẬT PHẨM"
+      subtitle={`Trang bị tối đa ${MAX_ITEM_SLOTS} vật phẩm · mỗi bản sao cộng dồn phần trăm chỉ số`}
+      accent="#ffb43c"
+      onClose={onClose}
+      footer={
+        <div className="grid grid-cols-4 gap-2 font-ui text-[10px]">
+          <Stat label="TỔNG CÔNG" value={`+${Math.round(totals.atk * 100)}%`} color="#ff8a5a" />
+          <Stat label="TỔNG MÁU" value={`+${Math.round(totals.hp * 100)}%`} color="#3fe0b0" />
+          <Stat label="CHÍ MẠNG" value={`+${Math.round(totals.crit * 100)}%`} color="#ffd23c" />
+          <Stat label="TỐC ĐÁNH" value={`+${Math.round(totals.aspd * 100)}%`} color="#8cdcff" />
+        </div>
+      }
+    >
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        {Array.from({ length: MAX_ITEM_SLOTS }).map((_, slot) => {
           const id = meta.equippedItems[slot];
           const def = ITEMS.find((i) => i.id === id);
+          const count = meta.ownedItems.find((o) => o.id === id)?.count ?? 0;
           return (
-            <div key={slot} className="rounded-md p-2.5 text-center min-h-[74px] flex flex-col items-center justify-center"
-              style={{ background: 'rgba(20,16,28,0.6)', border: '1.5px dashed #ffb43c55' }}>
+            <div
+              key={slot}
+              className="rounded-md p-2 text-center min-h-[66px] flex flex-col items-center justify-center"
+              style={{
+                background: def ? 'linear-gradient(160deg, rgba(255,180,60,.14), #0d0a14)' : 'rgba(18,15,26,0.6)',
+                border: def ? '1.5px solid #ffb43c88' : '1.5px dashed #3a3350',
+              }}
+            >
               {def ? (
                 <>
-                  <div className="font-display text-[13px] text-[#ffb43c] leading-tight">{def.name}</div>
-                  <div className="font-ui text-[9px] text-[#9a917f] mt-1">×{meta.ownedItems.find((o) => o.id === id)?.count ?? 1} bản sao</div>
+                  <Svg d={ICONS.bag} s={16} c="#ffb43c" />
+                  <div className="font-display text-[12px] text-[#ffb43c] leading-tight mt-1">{def.name}</div>
+                  <div className="num text-[9px] text-[var(--color-bone-faint)] mt-0.5">×{count} bản sao</div>
                 </>
               ) : (
-                <div className="font-ui text-[10px] text-[#6a6378]">Ô trống {slot + 1}</div>
+                <div className="font-ui text-[10px] text-[var(--color-bone-faint)]">Ô trống {slot + 1}</div>
               )}
             </div>
           );
         })}
       </div>
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-1.5">
         {ITEMS.map((it) => {
-          const owned = meta.ownedItems.find((o) => o.id === it.id);
+          const count = meta.ownedItems.find((o) => o.id === it.id)?.count ?? 0;
           const equipped = meta.equippedItems.includes(it.id);
-          const has = (owned?.count ?? 0) > 0;
-          const rowBg = has ? 'rgba(255,180,60,0.07)' : 'rgba(20,16,28,0.4)';
-          const rowBorder = has ? '1px solid rgba(255,180,60,0.4)' : '1px solid #2c2738';
-          const iconBg = has ? 'linear-gradient(160deg, rgba(255,180,60,0.27), #14101c)' : '#14101c';
+          const has = count > 0;
           return (
-            <div key={it.id} className="flex items-center gap-3 rounded-md px-3 py-2"
-              style={{ background: rowBg, border: rowBorder, opacity: has ? 1 : 0.5 }}>
-              <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
-                style={{ background: iconBg, border: '2px solid #ffb43c' }}>
-                <Svg d={ICONS.bag} s={16} c="#ffb43c" />
+            <div
+              key={it.id}
+              className="flex items-center gap-3 rounded-md px-3 py-2"
+              style={{
+                background: has ? 'rgba(255,180,60,0.07)' : 'rgba(18,15,26,0.45)',
+                border: `1px solid ${has ? 'rgba(255,180,60,0.35)' : '#241f33'}`,
+                opacity: has ? 1 : 0.5,
+              }}
+            >
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+                style={{ background: has ? 'linear-gradient(160deg, rgba(255,180,60,.28), #14101c)' : '#14101c', border: '2px solid #ffb43c' }}
+              >
+                <Svg d={ICONS.bag} s={15} c="#ffb43c" />
               </div>
               <div className="flex-1 min-w-0">
-                <div className="font-display text-[14px] text-[#f0e8d8] leading-none">{it.name} {has && <span className="font-ui text-[10px] text-[#ffd23c]">×{owned?.count}</span>}</div>
-                <div className="font-ui text-[10px] text-[#9a917f] mt-0.5">{it.desc}</div>
+                <div className="font-display text-[13px] text-[var(--color-bone)] leading-none">
+                  {it.name} {has && <span className="num text-[10px] text-[#ffd23c]">×{count}</span>}
+                </div>
+                <div className="font-ui text-[10px] text-[var(--color-bone-dim)] mt-0.5">{it.desc}</div>
               </div>
               {has && (
-                <button onClick={() => engine.equipItem(it.id)}
-                  className="font-ui text-[10px] font-bold px-2.5 py-1 cursor-pointer"
-                  style={{
-                    color: equipped ? '#0e0a16' : '#ffb43c',
-                    background: equipped ? '#ffb43c' : 'transparent',
-                    border: '1px solid #ffb43c88',
-                    clipPath: 'polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px)',
-                  }}>
+                <button
+                  onClick={() => engine.equipItem(it.id)}
+                  className="hk-btn"
+                  style={equipped
+                    ? { background: '#ffb43c', color: '#140c1c', borderColor: 'transparent' }
+                    : { color: '#ffb43c', borderColor: '#ffb43c88' }}
+                >
                   {equipped ? 'THÁO' : 'TRANG BỊ'}
                 </button>
               )}
@@ -524,42 +1040,50 @@ export function EquipModal({ meta, engine, onClose }: { meta: MetaInfo; engine: 
           );
         })}
       </div>
-      <p className="font-ui text-[10px] text-[#6a6378] mt-3 text-center">Trang bị tối đa 3 vật phẩm · Bản sao cộng dồn chỉ số · Triệu Hồi để nhận thêm</p>
     </Modal>
   );
 }
 
-// ============ SKINS ============
-export function SkinModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }) {
+// ============ SKIN ============
+
+export function SkinModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }): React.JSX.Element {
   return (
-    <Modal title="TỦ ĐỒ KAEL — SKIN" accent="#c2172f" onClose={onClose}>
-      <div className="grid grid-cols-2 gap-2.5">
+    <Modal title="TỦ ĐỒ KAEL" subtitle="Skin chỉ đổi diện mạo — không ảnh hưởng chỉ số" accent="#c2172f" onClose={onClose} wide>
+      <div className="grid grid-cols-3 gap-2.5">
         {SKINS.map((s) => {
           const owned = meta.ownedSkins.includes(s.id);
           const equipped = meta.equippedSkin === s.id;
           const cost = SKIN_COST[s.id] ?? 0;
           return (
-            <div key={s.id} className="rounded-md p-3 flex gap-3 items-center"
+            <div
+              key={s.id}
+              className="rounded-md p-2.5 flex flex-col items-center text-center"
               style={{
-                background: equipped ? 'rgba(194,23,47,0.14)' : 'rgba(20,16,28,0.55)',
-                border: `1.5px solid ${equipped ? '#ff3b52' : owned ? '#7a688c66' : '#2c2738'}`,
-                boxShadow: equipped ? '0 0 16px rgba(255,59,82,0.4)' : 'none',
-              }}>
-              <Avatar outfit={s.look.outfit} aura={s.look.aura} letter="K" size={48} />
-              <div className="flex-1 min-w-0">
-                <div className="font-display text-[14px] leading-none" style={{ color: equipped ? '#ff3b52' : '#f0e8d8' }}>{s.name}</div>
-                <div className="font-body text-[10px] text-[#9a917f] mt-1 leading-snug">{s.desc}</div>
-                <div className="mt-1.5">
-                  {equipped ? (
-                    <span className="font-ui text-[10px] font-bold text-[#ff3b52]">ĐANG MẶC</span>
-                  ) : owned ? (
-                    <button onClick={() => engine.equipSkin(s.id)} className="font-ui text-[10px] font-bold px-2.5 py-0.5 cursor-pointer text-[#0e0a16]" style={{ background: '#e8dfc8', clipPath: 'polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px)' }}>MẶC</button>
-                  ) : (
-                    <button onClick={() => engine.buySkin(s.id)} className="font-ui text-[10px] font-bold px-2.5 py-0.5 cursor-pointer text-[#ff4fd8]" style={{ border: '1px solid #ff4fd888', clipPath: 'polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px)' }}>
-                      MUA · {cost} <Svg d={ICONS.gem} s={9} c="#ff4fd8" />
-                    </button>
-                  )}
-                </div>
+                background: equipped ? 'rgba(194,23,47,0.16)' : 'rgba(18,15,26,0.6)',
+                border: `1.5px solid ${equipped ? '#ff3b52' : owned ? '#7a688c66' : '#241f33'}`,
+                boxShadow: equipped ? '0 0 16px rgba(255,59,82,0.35)' : 'none',
+              }}
+            >
+              <PortraitFrame look={s.look} ring={s.look.aura} size={92} animate={equipped} />
+              <div className="font-display text-[13px] leading-tight mt-1.5" style={{ color: equipped ? '#ff3b52' : 'var(--color-bone)' }}>
+                {s.name}
+              </div>
+              <div className="font-body text-[9.5px] text-[var(--color-bone-dim)] mt-1 leading-snug min-h-[26px]">{s.desc}</div>
+              <div className="mt-1.5 w-full">
+                {equipped ? (
+                  <span className="font-ui text-[10px] font-bold text-[#ff3b52]">ĐANG MẶC</span>
+                ) : owned ? (
+                  <button onClick={() => engine.equipSkin(s.id)} className="hk-btn solid w-full justify-center" style={{ background: '#ece4d2' }}>MẶC</button>
+                ) : (
+                  <button
+                    onClick={() => engine.buySkin(s.id)}
+                    disabled={meta.gems < cost}
+                    className="hk-btn w-full justify-center"
+                    style={{ color: '#ff4fd8', borderColor: '#ff4fd888' }}
+                  >
+                    <Svg d={meta.gems < cost ? ICONS.lock : ICONS.gem} s={10} c="#ff4fd8" /> {fmt(cost)}
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -569,80 +1093,114 @@ export function SkinModal({ meta, engine, onClose }: { meta: MetaInfo; engine: G
   );
 }
 
-// ============ WEAPON ============
-export function WeaponModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }) {
-  const [lastPull, setLastPull] = useState<{ def: (typeof WEAPONS)[number]; isNew: boolean } | null>(null);
+// ============ VŨ KHÍ ============
+
+export function WeaponModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }): React.JSX.Element {
+  const [lastPull, setLastPull] = useState<Array<{ def: WeaponDef; isNew: boolean }> | null>(null);
   const equipped = engine.equippedWeaponDef();
   const owned = engine.getWeapons();
-  const doPull = (): void => {
-    const r = engine.weaponGacha();
+  const forge = (n: 1 | 10): void => {
+    const r = engine.weaponGacha(n);
     if (r) setLastPull(r);
   };
   return (
-    <Modal title={`KHO VŨ KHÍ — ${WEAPONS.length} LOẠI`} accent="#ff8a5a" onClose={onClose} wide>
-      {/* equipped */}
-      <div className="rounded-md p-3 mb-3 flex items-center gap-3"
-        style={{ background: 'linear-gradient(120deg, rgba(255,138,90,0.14), #0d0a14 70%)', border: '1.5px solid #ff8a5a88' }}>
-        <div className="w-11 h-11 rounded-full flex items-center justify-center shrink-0" style={{ background: '#1c1424', border: '2px solid #ff8a5a' }}>
-          <Svg d={ICONS.sword} s={20} c="#ff8a5a" />
+    <Modal
+      title="LÒ RÈN"
+      subtitle={`${WEAPONS.length} loại vũ khí · tự động trang bị món mạnh nhất · trùng lặp = +1 cấp cường hoá`}
+      accent="#ff8a5a"
+      onClose={onClose}
+      wide
+      footer={
+        <div className="flex items-center gap-2">
+          <button onClick={() => forge(1)} disabled={meta.gems < WGACHA_COST} className="hk-btn lg solid flex-1 justify-center" style={{ background: '#ff8a5a' }}>
+            <Svg d={ICONS.anvil} s={14} c="#2a1208" /> RÈN ×1 — {fmt(WGACHA_COST)}
+          </button>
+          <button onClick={() => forge(10)} disabled={meta.gems < WGACHA_X10_COST} className="hk-btn lg solid flex-1 justify-center" style={{ background: '#ffb43c' }}>
+            <Svg d={ICONS.anvil} s={14} c="#2a1208" /> RÈN ×10 — {fmt(WGACHA_X10_COST)}
+          </button>
+          <div className="num text-[13px] text-[#ff4fd8] flex items-center gap-1.5 shrink-0">
+            <Svg d={ICONS.gem} s={13} c="#ff4fd8" /> {fmt(meta.gems)}
+          </div>
+        </div>
+      }
+    >
+      <div
+        className="rounded-md p-3 mb-3 flex items-center gap-3"
+        style={{ background: 'linear-gradient(120deg, rgba(255,138,90,0.14), #0d0a14 70%)', border: '1.5px solid #ff8a5a88' }}
+      >
+        <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: '#1c1424', border: '2px solid #ff8a5a' }}>
+          <Svg d={ICONS.sword} s={19} c="#ff8a5a" />
         </div>
         <div className="flex-1 min-w-0">
           {equipped ? (
             <>
               <div className="font-display text-[15px] leading-none" style={{ color: RARITY[equipped.def.tier].color }}>
-                {equipped.def.name} <span className="font-ui text-[10px] text-[#ffd23c]">+{equipped.level - 1}</span>
+                {equipped.def.name} {equipped.level > 1 && <span className="num text-[10px] text-[#ffd23c]">+{equipped.level - 1}</span>}
               </div>
-              <div className="font-ui text-[10px] text-[#9a917f] mt-1">
-                <span style={{ color: RARITY[equipped.def.tier].color }}>{RARITY[equipped.def.tier].name}</span> · Công +<span className="text-[#ff8a5a] font-bold">{fmt(equipped.atk)}</span> · Tự động trang bị vũ khí mạnh nhất
+              <div className="font-ui text-[10px] text-[var(--color-bone-dim)] mt-1">
+                <span style={{ color: RARITY[equipped.def.tier].color }}>{RARITY[equipped.def.tier].name}</span>
+                {' · Kael '}
+                <span className="text-[#ff8a5a] font-bold">+{equipped.pct}% Công</span>
+                {' · toàn đội '}
+                <span className="text-[#ffd23c] font-bold">+{equipped.partyPct}%</span>
               </div>
             </>
           ) : (
-            <div className="font-ui text-[11px] text-[#9a917f]">Chưa có vũ khí — hãy rèn bên dưới!</div>
+            <div className="font-ui text-[11px] text-[var(--color-bone-dim)]">Chưa có vũ khí — hãy rèn bên dưới!</div>
           )}
         </div>
       </div>
 
-      {/* forge button */}
-      <div className="flex items-center justify-center gap-3 mb-3">
-        <button onClick={doPull} disabled={meta.gems < WGACHA_COST}
-          className="btn-blade primary" style={{ opacity: meta.gems < WGACHA_COST ? 0.45 : 1, borderColor: '#ff8a5a99' }}>
-          <Svg d={ICONS.sword} s={15} c="#ff8a5a" /> RÈN VŨ KHÍ — {WGACHA_COST} Ngọc
-        </button>
-        <div className="font-ui text-sm text-[#ff4fd8] font-bold flex items-center gap-1.5">
-          <Svg d={ICONS.gem} s={13} c="#ff4fd8" /> {fmt(meta.gems)}
-        </div>
-      </div>
-
       {lastPull && (
-        <div className="anim-fade-up rounded-md p-2.5 mb-3 flex items-center gap-2.5"
-          style={{ background: `linear-gradient(120deg, ${RARITY[lastPull.def.tier].color}22, #0d0a14 75%)`, border: `1.5px solid ${RARITY[lastPull.def.tier].color}` }}>
-          <Svg d={ICONS.sword} s={18} c={RARITY[lastPull.def.tier].color} />
-          <div className="flex-1">
-            <span className="font-display text-[14px]" style={{ color: RARITY[lastPull.def.tier].color }}>{lastPull.def.name}</span>
-            <span className="font-ui text-[10px] ml-2" style={{ color: RARITY[lastPull.def.tier].color }}>{RARITY[lastPull.def.tier].name}</span>
-          </div>
-          <span className={`font-ui text-[10px] font-bold ${lastPull.isNew ? 'text-[#3fe0b0]' : 'text-[#ffd23c]'}`}>
-            {lastPull.isNew ? 'VŨ KHÍ MỚI!' : '+1 nâng cấp'}
-          </span>
+        <div className="anim-fade-up grid grid-cols-2 gap-1.5 mb-3">
+          {lastPull.map((p, i) => {
+            const rc = RARITY[p.def.tier];
+            return (
+              <div
+                key={i}
+                className="rounded-md p-2 flex items-center gap-2"
+                style={{ background: `linear-gradient(120deg, ${rc.color}22, #0d0a14 76%)`, border: `1.5px solid ${rc.color}` }}
+              >
+                <Svg d={ICONS.sword} s={15} c={rc.color} />
+                <span className="font-display text-[12px] truncate flex-1" style={{ color: rc.color }}>{p.def.name}</span>
+                <span className="font-ui text-[9px] font-bold" style={{ color: p.isNew ? '#3fe0b0' : '#ffd23c' }}>
+                  {p.isNew ? 'MỚI!' : '+1'}
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {/* owned list */}
-      <div className="grid grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1">
-        {owned.length === 0 && <div className="col-span-2 font-ui text-[11px] text-[#6a6378] text-center py-4">Chưa sở hữu vũ khí nào</div>}
+      <div className="grid grid-cols-3 gap-1.5 max-h-[200px] overflow-y-auto pr-1">
+        {owned.length === 0 && (
+          <div className="col-span-3 font-ui text-[11px] text-[var(--color-bone-faint)] text-center py-6">Chưa sở hữu vũ khí nào</div>
+        )}
         {owned.map(({ def, level }) => {
           const rc = RARITY[def.tier];
           const isEq = equipped?.def.id === def.id;
           return (
-            <div key={def.id} className="rounded-md p-2 flex items-center gap-2"
-              style={{ background: `linear-gradient(140deg, ${rc.color}18, #0d0a14 75%)`, border: `1px solid ${isEq ? rc.color : rc.color + '44'}`, boxShadow: isEq ? `0 0 12px ${rc.color}55` : 'none' }}>
-              <Svg d={ICONS.sword} s={15} c={rc.color} />
+            <button
+              key={def.id}
+              onClick={() => engine.equipWeapon(def.id)}
+              className="rounded-md p-2 flex items-center gap-2 text-left cursor-pointer transition-transform hover:-translate-y-0.5"
+              style={{
+                background: `linear-gradient(140deg, ${rc.color}18, #0d0a14 76%)`,
+                border: `1px solid ${isEq ? rc.color : `${rc.color}44`}`,
+                boxShadow: isEq ? `0 0 12px ${rc.color}55` : 'none',
+              }}
+            >
+              <Svg d={ICONS.sword} s={14} c={rc.color} />
               <div className="min-w-0 flex-1">
-                <div className="font-display text-[12px] leading-none truncate" style={{ color: rc.color }}>{def.name} {level > 1 && <span className="font-ui text-[9px] text-[#ffd23c]">+{level - 1}</span>}</div>
-                <div className="font-ui text-[9px] text-[#9a917f] mt-0.5">{rc.name} · Công +{fmt(Math.round(def.baseAtk * (1 + 0.3 * (level - 1))))}</div>
+                <div className="font-display text-[11px] leading-none truncate" style={{ color: rc.color }}>
+                  {def.name} {level > 1 && <span className="num text-[9px] text-[#ffd23c]">+{level - 1}</span>}
+                </div>
+                <div className="font-ui text-[9px] text-[var(--color-bone-faint)] mt-0.5">
+                  {rc.name} · +{Math.round((def.baseAtk * (1 + 0.3 * (level - 1))) / 2)}%
+                </div>
               </div>
-              {isEq && <span className="font-ui text-[8px] font-bold text-[#3fe0b0]">ĐANG DÙNG</span>}
-            </div>
+              {isEq && <span className="hk-tag" style={{ background: '#3fe0b0', color: '#0c1a16' }}>DÙNG</span>}
+            </button>
           );
         })}
       </div>
@@ -650,24 +1208,124 @@ export function WeaponModal({ meta, engine, onClose }: { meta: MetaInfo; engine:
   );
 }
 
-// ============ PAUSE ============
-export function PauseModal({ engine, muted, onTitle }: { engine: GameIdle; muted: boolean; onTitle: () => void }) {
+// ============ THĂNG HOA ============
+
+export function PrestigeModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }): React.JSX.Element {
+  const next = meta.sealMul + meta.sealsPending * BAL.SEAL_BONUS;
+  return (
+    <Modal title="THĂNG HOA" subtitle="Khắc Huyết Ấn lên linh hồn — mạnh hơn vĩnh viễn, rồi đi lại từ tầng 1" accent="#a78bfa" onClose={onClose}>
+      <div className="flex items-center justify-center gap-6 py-2 mb-3">
+        <div className="text-center">
+          <div className="font-ui text-[9px] text-[var(--color-bone-faint)] tracking-widest">HIỆN TẠI</div>
+          <div className="font-display text-[30px] leading-none text-[var(--color-bone)]">×{meta.sealMul.toFixed(2)}</div>
+          <div className="num text-[10px] text-[var(--color-bone-dim)] mt-1">{meta.seals} Huyết Ấn</div>
+        </div>
+        <Svg d={ICONS.chevron} s={22} c="#a78bfa" />
+        <div className="text-center">
+          <div className="font-ui text-[9px] text-[#a78bfa] tracking-widest">SAU KHI THĂNG HOA</div>
+          <div className="font-display text-[30px] leading-none text-[#a78bfa]" style={{ textShadow: '0 0 20px #a78bfa66' }}>
+            ×{next.toFixed(2)}
+          </div>
+          <div className="num text-[10px] text-[#c9b6ff] mt-1">+{meta.sealsPending} Huyết Ấn</div>
+        </div>
+      </div>
+
+      <div className="rounded-md p-3 mb-3 font-body text-[11px] leading-relaxed text-[var(--color-bone-dim)]" style={{ background: 'rgba(167,139,250,.08)', border: '1px solid #a78bfa44' }}>
+        <p className="mb-2">
+          <b className="text-[#a78bfa]">Giữ nguyên:</b> toàn bộ đồng hành và cấp của họ, vũ khí, vật phẩm, skin, Ngọc, và số Vàng đang có.
+        </p>
+        <p className="mb-2">
+          <b className="text-[#a78bfa]">Đặt lại:</b> quay về tầng 1 để đi lại hành trình — nhưng lần này mọi sát thương, máu và vàng đều nhân với hệ số Huyết Ấn.
+        </p>
+        <p>
+          Số Huyết Ấn nhận được tính theo <b>tầng sâu nhất từng tới</b> (hiện tại: tầng {meta.bestFloor + 1}).
+          Càng xuống sâu trước khi Thăng Hoa, phần thưởng càng lớn — nhưng bạn có thể Thăng Hoa bất cứ lúc nào từ tầng {BAL.SEAL_MIN_FLOOR}.
+        </p>
+      </div>
+
+      <button
+        className="btn-blade primary w-full"
+        disabled={!meta.canPrestige}
+        onClick={() => { if (engine.prestige()) onClose(); }}
+      >
+        <Svg d={ICONS.seal} s={16} c="#a78bfa" />
+        {meta.canPrestige ? `THĂNG HOA — NHẬN ${meta.sealsPending} HUYẾT ẤN` : `CẦN XUỐNG SÂU HƠN TẦNG ${BAL.SEAL_MIN_FLOOR}`}
+      </button>
+    </Modal>
+  );
+}
+
+// ============ NGOẠI TUYẾN ============
+
+export function OfflineModal({ report, onClose }: { report: OfflineReport; onClose: () => void }): React.JSX.Element {
+  const h = Math.floor(report.seconds / 3600);
+  const m = Math.floor((report.seconds % 3600) / 60);
+  return (
+    <Modal title="ĐOÀN QUÂN VẪN HÀNH QUÂN" subtitle="Chiến lợi phẩm thu được khi bạn rời đi" accent="#ffd23c" onClose={onClose}>
+      <div className="text-center py-2">
+        <div className="font-ui text-[10px] text-[var(--color-bone-faint)] tracking-widest">THỜI GIAN VẮNG MẶT</div>
+        <div className="font-display text-[34px] leading-none text-[#ffd23c] mt-1">
+          {h > 0 ? `${h} giờ ` : ''}{m} phút
+        </div>
+        <div className="grid grid-cols-2 gap-3 mt-4">
+          <div className="hk-cut-sm p-3" style={{ background: 'rgba(255,210,60,.1)', border: '1px solid #ffd23c55' }}>
+            <Svg d={ICONS.coin} s={18} c="#ffd23c" />
+            <div className="font-display text-[22px] leading-none text-[#ffd23c] mt-1">+{fmt(report.gold)}</div>
+            <div className="font-ui text-[9px] text-[var(--color-bone-faint)] tracking-widest mt-0.5">VÀNG</div>
+          </div>
+          <div className="hk-cut-sm p-3" style={{ background: 'rgba(255,79,216,.1)', border: '1px solid #ff4fd855' }}>
+            <Svg d={ICONS.gem} s={18} c="#ff4fd8" />
+            <div className="font-display text-[22px] leading-none text-[#ff4fd8] mt-1">+{fmt(report.gems)}</div>
+            <div className="font-ui text-[9px] text-[var(--color-bone-faint)] tracking-widest mt-0.5">NGỌC</div>
+          </div>
+        </div>
+        <p className="font-body text-[10px] text-[var(--color-bone-faint)] mt-3">
+          Tính theo {Math.round(BAL.OFFLINE_RATE * 100)}% nhịp farm chủ động, tối đa {BAL.OFFLINE_CAP_H} giờ.
+        </p>
+        <button className="btn-blade primary w-full mt-4" onClick={onClose}>NHẬN THƯỞNG</button>
+      </div>
+    </Modal>
+  );
+}
+
+// ============ TẠM DỪNG ============
+
+export function PauseModal({ engine, meta, onTitle }: { engine: GameIdle; meta: MetaInfo; onTitle: () => void }): React.JSX.Element {
+  const mm = Math.floor(meta.playTime / 60);
+  const stats: Array<[string, string]> = [
+    ['TẦNG SÂU NHẤT', `${meta.bestFloor + 1}`],
+    ['QUỶ ĐÃ DIỆT', fmt(meta.kills)],
+    ['THỜI GIAN', `${mm} phút`],
+    ['HUYẾT ẤN', `${meta.seals} (×${meta.sealMul.toFixed(2)})`],
+  ];
   return (
     <Modal title="TẠM DỪNG" accent="#8fa3b8" onClose={() => engine.togglePause()}>
-      <div className="flex flex-col gap-2.5">
+      <div className="grid grid-cols-4 gap-2 mb-4">
+        {stats.map(([k, v]) => (
+          <div key={k} className="hk-cut-sm p-2 text-center" style={{ background: 'rgba(24,20,37,.8)', border: '1px solid #362c4d' }}>
+            <div className="font-ui text-[8px] text-[var(--color-bone-faint)] tracking-widest">{k}</div>
+            <div className="num text-[15px] text-[#ffd23c] mt-0.5">{v}</div>
+          </div>
+        ))}
+      </div>
+      <div className="flex flex-col gap-2">
         <button className="btn-blade primary" onClick={() => engine.togglePause()}>
           <Svg d={ICONS.play} s={15} c="#ff3b52" /> TIẾP TỤC CHIẾN ĐẤU
         </button>
-        <button className="btn-blade" onClick={() => engine.toggleMute()}>
-          <Svg d={ICONS.sound} s={15} c="#8fa3b8" /> ÂM THANH: {muted ? 'TẮT' : 'BẬT'}
-        </button>
-        <button className="btn-blade" onClick={() => { engine.togglePause(); dispatchOpen('skin'); }}>
-          <Svg d={ICONS.sword} s={15} c="#c2172f" /> TỦ ĐỒ SKIN
-        </button>
+        <div className="grid grid-cols-2 gap-2">
+          <button className="btn-blade" onClick={() => engine.toggleMute()}>
+            <Svg d={meta.muted ? ICONS.mute : ICONS.sound} s={15} c="#8fa3b8" /> ÂM THANH: {meta.muted ? 'TẮT' : 'BẬT'}
+          </button>
+          <button className="btn-blade" onClick={() => { engine.togglePause(); dispatchOpen('skin'); }}>
+            <Svg d={ICONS.flame} s={15} c="#c2172f" /> TỦ ĐỒ SKIN
+          </button>
+        </div>
         <button className="btn-blade" onClick={onTitle}>
           <Svg d={ICONS.close} s={14} c="#8fa3b8" /> VỀ MÀN HÌNH CHÍNH
         </button>
-        <p className="font-ui text-[10px] text-[#6a6378] text-center mt-1">P / Esc — tạm dừng · M — tắt tiếng · Tiến trình tự động lưu</p>
+        <p className="font-ui text-[10px] text-[var(--color-bone-faint)] text-center mt-1 leading-relaxed">
+          P / Esc — tạm dừng · M — tắt tiếng · F — đổi Trấn Giữ / Tiến Công · Tiến trình tự động lưu
+        </p>
       </div>
     </Modal>
   );

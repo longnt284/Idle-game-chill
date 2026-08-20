@@ -94,6 +94,7 @@ export interface ChibiLook {
 }
 
 export type Pos = 'front' | 'mid' | 'back';
+export const MAX_PARTY = 50; // tối đa đồng hành được chọn ra trận
 
 // ============ companions (20) ============
 export interface CompanionDef {
@@ -351,6 +352,7 @@ export const ITEMS: ItemDef[] = [
 export const GACHA_COST = 100;
 export const GACHA_X10_COST = 900;
 export const GACHA_X100_COST = 8500;
+export const GACHA_X500_COST = 40000;
 export const GACHA_X1000_COST = 80000;
 export const WGACHA_COST = 150;
 
@@ -459,6 +461,7 @@ export interface MetaInfo {
   floor: number; wave: number; kills: number; playTime: number; speed: number; muted: boolean; paused: boolean;
   ownedCompanions: Record<string, number>; party: CompanionSlot[];
   ownedSkins: string[]; equippedSkin: string; ownedItems: OwnedItem[]; equippedItems: string[];
+  deployedIds: string[] | null; legionCount: number;
   hud: HudState;
 }
 export type EngineEvent =
@@ -977,6 +980,8 @@ export class GameIdle {
   private legionAtk = 0;
   private legionCount = 0;
   private legionCd = 0;
+  // lựa chọn đồng hành ra trận (null = tự động triển khai tất cả)
+  private deployedIds: string[] | null = null;
 
   private shake = 0;
   private flash = 0;
@@ -1083,7 +1088,13 @@ export class GameIdle {
     for (const h of this.heroes) prevHp[h.uid] = h.hp / h.maxHp;
     const bonus = this.itemBonus();
     const wpn = this.weaponAtk();
-    const cands = COMPANIONS.filter((c) => (this.ownedCompanions[c.id] ?? 0) > 0);
+    let cands = COMPANIONS.filter((c) => (this.ownedCompanions[c.id] ?? 0) > 0);
+    // lọc theo lựa chọn của người chơi (tối đa MAX_PARTY)
+    if (this.deployedIds !== null) {
+      const set = new Set(this.deployedIds);
+      cands = cands.filter((c) => set.has(c.id));
+    }
+    cands = cands.sort((a, b) => this.compPower(b) - this.compPower(a)).slice(0, MAX_PARTY);
     // aura
     this.partyAtkAura = 1; this.partyGoldAura = 1; this.partyGemAura = 1;
     for (const c of cands) {
@@ -1160,6 +1171,75 @@ export class GameIdle {
   }
   private upgradeCost(lvl: number): number { return Math.round(60 + 45 * Math.pow(lvl, 2.05)); }
   upgradeCostOf(lvl: number): number { return this.upgradeCost(Math.max(1, lvl)); }
+  /** Tổng vàng cần để nâng n cấp từ lvl hiện tại */
+  upgradeBulkCost(id: string, n: number): number {
+    const lvl = this.ownedCompanions[id] ?? 1;
+    let total = 0;
+    for (let i = 0; i < n; i++) total += this.upgradeCost(lvl + i);
+    return total;
+  }
+  /** Nâng cấp hàng loạt (×10 / ×100) — dừng khi hết vàng hoặc đủ số lần */
+  upgradeCompanionTimes(id: string, n: number): number {
+    let lvl = this.ownedCompanions[id] ?? 0;
+    if (lvl <= 0) return 0;
+    let done = 0;
+    while (done < n) {
+      const cost = this.upgradeCost(lvl);
+      if (this.gold < cost) break;
+      this.gold -= cost;
+      lvl += 1; done += 1;
+    }
+    if (done > 0) {
+      this.ownedCompanions[id] = lvl;
+      const def = COMPANIONS.find((c) => c.id === id);
+      this.recomputeParty();
+      this.toast(`${def?.name ?? id} +${done} cấp → Lv ${lvl}!`, '#3fe0b0');
+      sfx.levelup();
+      this.save();
+      this.pushMeta();
+    } else {
+      this.toast('Không đủ Vàng để nâng cấp!', '#ff3b52');
+      sfx.warn();
+    }
+    return done;
+  }
+
+  // ---------- chọn đồng hành ra trận ----------
+  toggleDeploy(id: string): void {
+    if (!(id in this.ownedCompanions)) return;
+    const cur = this.deployedIds ?? COMPANIONS.filter((c) => (this.ownedCompanions[c.id] ?? 0) > 0).map((c) => c.id);
+    if (cur.includes(id)) {
+      this.deployedIds = cur.filter((x) => x !== id);
+    } else {
+      if (cur.length >= MAX_PARTY) { this.toast(`Tối đa ${MAX_PARTY} đồng hành ra trận!`, '#ff3b52'); sfx.warn(); return; }
+      this.deployedIds = [...cur, id];
+    }
+    this.recomputeParty();
+    sfx.click();
+    this.save();
+    this.pushMeta();
+  }
+  deployAll(): void {
+    this.deployedIds = COMPANIONS.filter((c) => (this.ownedCompanions[c.id] ?? 0) > 0)
+      .sort((a, b) => this.compPower(b) - this.compPower(a))
+      .slice(0, MAX_PARTY)
+      .map((c) => c.id);
+    this.recomputeParty();
+    sfx.click();
+    this.save();
+    this.pushMeta();
+  }
+  clearDeploy(): void {
+    this.deployedIds = [];
+    this.recomputeParty();
+    sfx.click();
+    this.save();
+    this.pushMeta();
+  }
+  deployedCount(): number {
+    if (this.deployedIds === null) return COMPANIONS.filter((c) => (this.ownedCompanions[c.id] ?? 0) > 0).length;
+    return this.deployedIds.length;
+  }
 
   // ---------- vũ khí ----------
   private weaponAtk(): number {
@@ -1503,8 +1583,8 @@ export class GameIdle {
     this.recomputeParty();
     return { kind: 'item', id: item.id, name: item.name, rarity, isNew: (this.ownedItems[item.id] ?? 0) === 1, dupeText: `Bản sao ×${this.ownedItems[item.id] ?? 1} — cộng dồn chỉ số` };
   }
-  gacha(times: 1 | 10 | 100 | 1000): GachaResult[] | null {
-    const cost = times === 1 ? GACHA_COST : times === 10 ? GACHA_X10_COST : times === 100 ? GACHA_X100_COST : GACHA_X1000_COST;
+  gacha(times: 1 | 10 | 100 | 500 | 1000): GachaResult[] | null {
+    const cost = times === 1 ? GACHA_COST : times === 10 ? GACHA_X10_COST : times === 100 ? GACHA_X100_COST : times === 500 ? GACHA_X500_COST : GACHA_X1000_COST;
     if (this.gems < cost) {
       this.toast('Không đủ Ngọc Huyết Nguyệt!', '#ff3b52');
       sfx.warn();
@@ -1584,6 +1664,9 @@ export class GameIdle {
         floor: this.floor, wave: this.wave, kills: this.kills, playTime: this.playTime,
         ownedCompanions: this.ownedCompanions, ownedSkins: this.ownedSkins, equippedSkin: this.equippedSkin,
         ownedItems: this.ownedItems, equippedItems: this.equippedItems, pullsSinceEpic: this.pullsSinceEpic,
+        ownedWeapons: this.ownedWeapons, equippedWeapon: this.equippedWeapon,
+        endlessUnlocked: this.endlessUnlocked, endless: this.endless,
+        deployedIds: this.deployedIds,
         savedAt: Date.now(),
       }));
     } catch { /* ignore */ }
@@ -1607,6 +1690,11 @@ export class GameIdle {
       if (d.ownedItems && typeof d.ownedItems === 'object') this.ownedItems = d.ownedItems as Record<string, number>;
       if (Array.isArray(d.equippedItems)) this.equippedItems = d.equippedItems as string[];
       if (typeof d.pullsSinceEpic === 'number') this.pullsSinceEpic = d.pullsSinceEpic;
+      if (d.ownedWeapons && typeof d.ownedWeapons === 'object') this.ownedWeapons = d.ownedWeapons as Record<string, number>;
+      if (typeof d.equippedWeapon === 'string' || d.equippedWeapon === null) this.equippedWeapon = d.equippedWeapon as string | null;
+      if (typeof d.endlessUnlocked === 'boolean') this.endlessUnlocked = d.endlessUnlocked;
+      if (typeof d.endless === 'boolean') this.endless = d.endless;
+      if (d.deployedIds === null || Array.isArray(d.deployedIds)) this.deployedIds = (d.deployedIds as string[] | null);
       // offline reward
       if (typeof d.savedAt === 'number') {
         const sec = clamp((Date.now() - d.savedAt) / 1000, 0, 8 * 3600);
@@ -1647,6 +1735,8 @@ export class GameIdle {
       ownedSkins: [...this.ownedSkins], equippedSkin: this.equippedSkin,
       ownedItems: Object.keys(this.ownedItems).map((id) => ({ id, name: ITEMS.find((i) => i.id === id)?.name ?? id, count: this.ownedItems[id] ?? 0 })),
       equippedItems: [...this.equippedItems],
+      deployedIds: this.deployedIds ? [...this.deployedIds] : null,
+      legionCount: this.legionCount,
       hud: { ...this.hudCache },
     };
   }

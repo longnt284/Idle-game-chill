@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { GameIdle, VIEW_W, VIEW_H } from './game/engine';
 import type { MetaInfo, EndStats, EngineEvent } from './game/engine';
 import { TitleScreen, StoryScreen, EndScreen } from './ui/screens';
-import { HudOverlay, SummonModal, PartyModal, EquipModal, SkinModal, PauseModal } from './ui/panels';
+import { HudOverlay, SummonModal, PartyModal, EquipModal, SkinModal, WeaponModal, PauseModal } from './ui/panels';
 
 type Screen = 'title' | 'story' | 'game' | 'victory';
-type Panel = 'none' | 'summon' | 'party' | 'equip' | 'skin' | 'pause';
+type Panel = 'none' | 'summon' | 'party' | 'equip' | 'skin' | 'weapon' | 'pause';
 
 export default function App(): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -95,6 +95,7 @@ export default function App(): React.JSX.Element {
         {inGame && eng && meta && panel === 'party' && <PartyModal meta={meta} engine={eng} onClose={() => setPanel('none')} />}
         {inGame && eng && meta && panel === 'equip' && <EquipModal meta={meta} engine={eng} onClose={() => setPanel('none')} />}
         {inGame && eng && meta && panel === 'skin' && <SkinModal meta={meta} engine={eng} onClose={() => setPanel('none')} />}
+        {inGame && eng && meta && panel === 'weapon' && <WeaponModal meta={meta} engine={eng} onClose={() => setPanel('none')} />}
         {inGame && eng && meta && panel === 'pause' && (
           <PauseModal engine={eng} muted={meta.muted} onTitle={() => { setPanel('none'); eng.toTitle(); setScreen('title'); setHasSave(true); }} />
         )}

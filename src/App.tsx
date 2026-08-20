@@ -1,168 +1,111 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { IdleEngine, HudSnapshot, EndStats, GameEvent, GACHA_COST } from './game/engine';
-import { TitleScreen, StoryScreen, VictoryScreen } from './ui/screens';
-import { GameHud, GachaModal, PartyModal, EquipModal, PauseOverlay } from './ui/panels';
+import { useEffect, useRef, useState } from 'react';
+import { GameIdle, VIEW_W, VIEW_H } from './game/engine';
+import type { MetaInfo, EndStats, EngineEvent } from './game/engine';
+import { TitleScreen, StoryScreen, EndScreen } from './ui/screens';
+import { HudOverlay, SummonModal, PartyModal, EquipModal, SkinModal, PauseModal } from './ui/panels';
 
-const SAVE_KEY = 'huyet-kiem-idle-v1';
+type Screen = 'title' | 'story' | 'game' | 'victory';
+type Panel = 'none' | 'summon' | 'party' | 'equip' | 'skin' | 'pause';
 
-type View = 'title' | 'story' | 'game' | 'victory';
-type Modal = null | 'gacha' | 'party' | 'equip';
-
-export default function App() {
+export default function App(): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const engineRef = useRef<IdleEngine | null>(null);
-  const [view, setView] = useState<View>('title');
+  const engineRef = useRef<GameIdle | null>(null);
+  const [screen, setScreen] = useState<Screen>('title');
   const [chapter, setChapter] = useState(0);
-  const [modal, setModal] = useState<Modal>(null);
-  const [paused, setPaused] = useState(false);
-  const [hud, setHud] = useState<HudSnapshot | null>(null);
+  const [meta, setMeta] = useState<MetaInfo | null>(null);
+  const [panel, setPanel] = useState<Panel>('none');
   const [stats, setStats] = useState<EndStats | null>(null);
-  const [hasSave] = useState(() => {
-    try { return !!localStorage.getItem(SAVE_KEY); } catch { return false; }
-  });
-  const [metaTick, setMetaTick] = useState(0);
-
-  const onEvent = useCallback((e: GameEvent) => {
-    if (e.type === 'story') {
-      setChapter(e.chapter);
-      setModal(null);
-      setPaused(false);
-      setView('story');
-    } else if (e.type === 'victory') {
-      setStats(e.stats);
-      setModal(null);
-      setView('victory');
-    }
-  }, []);
+  const [hasSave, setHasSave] = useState(false);
+  const screenRef = useRef<Screen>('title');
+  screenRef.current = screen;
 
   useEffect(() => {
-    const cv = canvasRef.current;
-    if (!cv) return;
-    const eng = new IdleEngine(cv, { onHud: setHud, onEvent });
-    engineRef.current = eng;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const engine = new GameIdle(canvas, (e: EngineEvent) => {
+      if (e.type === 'meta') {
+        const m = engineRef.current?.getMeta() ?? null;
+        if (m) {
+          setMeta(m);
+          // show pause modal when engine paused via keyboard
+          setPanel((p) => (m.paused && p === 'none' ? 'pause' as Panel : !m.paused && p === 'pause' ? 'none' : p));
+        }
+      } else if (e.type === 'story') {
+        setChapter(e.chapter);
+        setScreen('story');
+      } else if (e.type === 'victory') {
+        setStats(e.stats);
+        setScreen('victory');
+        setPanel('none');
+      }
+    });
+    engineRef.current = engine;
+    setHasSave(engine.hasSaveData());
+    setMeta(engine.getMeta());
+    const onOpen = (ev: Event): void => {
+      const detail = (ev as CustomEvent).detail as Panel;
+      setPanel(detail);
+    };
+    window.addEventListener('hk-open-panel', onOpen);
     return () => {
-      eng.destroy();
+      window.removeEventListener('hk-open-panel', onOpen);
+      engine.destroy();
       engineRef.current = null;
     };
-  }, [onEvent]);
+  }, []);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (view !== 'game') return;
-      const k = e.key.toLowerCase();
-      if (k === 'p' || k === 'escape') {
-        if (modal) { setModal(null); return; }
-        engineRef.current?.togglePause();
-        setPaused((p) => !p);
-      } else if (k === 'm') engineRef.current?.toggleMute();
-      else if (k === 'g' && !paused) setModal((m) => (m === 'gacha' ? null : 'gacha'));
-      else if (k === '1') engineRef.current?.setSpeed(1);
-      else if (k === '2') engineRef.current?.setSpeed(2);
-      else if (k === '3') engineRef.current?.setSpeed(3);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [view, modal, paused]);
-
-  const start = () => {
-    if (hasSave) {
-      engineRef.current?.continueFromStory();
-      setView('game');
+  const startGame = (): void => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    const continueSave = engine.hasSaveData();
+    engine.startGame();
+    if (continueSave) {
+      setScreen('game');
     } else {
-      engineRef.current?.startGame();
       setChapter(0);
-      setView('story');
+      setScreen('story');
     }
   };
 
-  const engine = engineRef.current;
-  const meta = engine ? engine.getMeta() : null;
-  const inGame = view === 'game' && hud;
+  const onStoryDone = (): void => {
+    engineRef.current?.continueFromStory();
+    setScreen('game');
+  };
+
+  const eng = engineRef.current;
+  const inGame = screen === 'game' && meta !== null && eng !== null;
 
   return (
-    <div className="relative w-screen h-screen bg-[#07060b] overflow-hidden font-body">
-      {/* battle layer — canvas always mounted */}
-      <div className="absolute inset-0 flex items-center justify-center bg-[#05040a]">
-        <div className="relative" style={{ width: 'min(100vw, calc(100vh * 2.0625))' }}>
-          <canvas ref={canvasRef} className="block w-full h-auto" />
+    <div className="w-screen h-screen grid place-items-center overflow-hidden" style={{ background: '#05040a' }}>
+      <div
+        className="relative overflow-hidden select-none"
+        style={{
+          width: 'min(100vw, calc(100vh * 16 / 9))',
+          aspectRatio: '16 / 9',
+          boxShadow: '0 0 120px rgba(194,23,47,0.15)',
+        }}
+      >
+        <canvas ref={canvasRef} width={VIEW_W} height={VIEW_H} className="absolute inset-0 w-full h-full" style={{ imageRendering: 'auto' }} />
 
-          {inGame && (
-            <>
-              <GameHud
-                hud={hud}
-                engine={engine}
-                onOpen={(m) => { setModal(m); setMetaTick((t) => t + 1); }}
-                onPause={() => { engineRef.current?.togglePause(); setPaused((p) => !p); }}
-              />
+        {/* game HUD */}
+        {inGame && eng && meta && <HudOverlay meta={meta} engine={eng} />}
 
-              {/* keyboard hints */}
-              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 hidden lg:flex items-center gap-3 text-[10px] font-display tracking-wider text-[#8a8172] pointer-events-none select-none">
-                <span><span className="kbd">G</span> Triệu hồi</span>
-                <span><span className="kbd">1·2·3</span> Tốc độ</span>
-                <span><span className="kbd">P</span> Tạm dừng</span>
-                <span><span className="kbd">M</span> Âm thanh</span>
-              </div>
+        {/* panels */}
+        {inGame && eng && meta && panel === 'summon' && <SummonModal meta={meta} engine={eng} onClose={() => setPanel('none')} />}
+        {inGame && eng && meta && panel === 'party' && <PartyModal meta={meta} engine={eng} onClose={() => setPanel('none')} />}
+        {inGame && eng && meta && panel === 'equip' && <EquipModal meta={meta} engine={eng} onClose={() => setPanel('none')} />}
+        {inGame && eng && meta && panel === 'skin' && <SkinModal meta={meta} engine={eng} onClose={() => setPanel('none')} />}
+        {inGame && eng && meta && panel === 'pause' && (
+          <PauseModal engine={eng} muted={meta.muted} onTitle={() => { setPanel('none'); eng.toTitle(); setScreen('title'); setHasSave(true); }} />
+        )}
 
-              {/* first-run tip */}
-              {hud.kills === 0 && hud.wave <= 1 && !modal && (
-                <div className="absolute bottom-24 right-4 anim-fade-up pointer-events-none" style={{ animationDelay: '1.5s' }}>
-                  <div className="panel-dark px-4 py-2.5 text-[12px] text-[#e8dfc8] max-w-[230px]" style={{ clipPath: 'polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px)' }}>
-                    <span className="text-pink-300 font-display font-bold">Mẹo:</span> nhấn <b className="text-pink-300">Triệu Hồi</b>, dùng <b className="text-pink-300">{GACHA_COST} Ngọc</b> để gọi đồng hành đầu tiên!
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
+        {/* screens */}
+        {screen === 'title' && <TitleScreen onStart={startGame} hasSave={hasSave} />}
+        {screen === 'story' && <StoryScreen chapter={chapter} onDone={onStoryDone} />}
+        {screen === 'victory' && stats && eng && (
+          <EndScreen stats={stats} onRestart={() => { eng.newGamePlus(); setScreen('game'); }} />
+        )}
       </div>
-
-      {/* modal layer */}
-      {inGame && modal === 'gacha' && engine && (
-        <GachaModal engine={engine} hud={hud} onClose={() => setModal(null)} />
-      )}
-      {inGame && modal === 'party' && engine && (
-        <PartyModal engine={engine} hud={hud} onClose={() => setModal(null)} />
-      )}
-      {inGame && modal === 'equip' && engine && meta && (
-        <EquipModal
-          key={metaTick}
-          engine={engine}
-          onClose={() => setModal(null)}
-          ownedSkins={meta.ownedSkins}
-          equippedSkin={meta.equippedSkin}
-          ownedItems={meta.ownedItems}
-          equipped={meta.equipped}
-        />
-      )}
-      {inGame && paused && !modal && (
-        <PauseOverlay
-          engine={engine}
-          onResume={() => { engineRef.current?.togglePause(); setPaused(false); }}
-        />
-      )}
-
-      {/* full-screen view layers */}
-      {view === 'title' && (
-        <div className="absolute inset-0 z-20">
-          <TitleScreen onStart={start} hasSave={hasSave} />
-        </div>
-      )}
-      {view === 'story' && (
-        <div className="absolute inset-0 z-20">
-          <StoryScreen
-            chapter={chapter}
-            onDone={() => {
-              engineRef.current?.continueFromStory();
-              setView('game');
-            }}
-          />
-        </div>
-      )}
-      {view === 'victory' && stats && (
-        <div className="absolute inset-0 z-20">
-          <VictoryScreen stats={stats} onRestart={() => engineRef.current?.hardReset()} />
-        </div>
-      )}
     </div>
   );
 }

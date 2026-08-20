@@ -1,379 +1,425 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
+import type { ReactNode, CSSProperties } from 'react';
+import type { MetaInfo, GachaResult, Rarity, Pos } from '../game/engine';
 import {
-  IdleEngine, HudSnapshot, GachaResult, Rarity, RARITY_COLOR, RARITY_LABEL,
-  COMPANIONS, SKINS, ITEMS, GACHA_COST, GACHA_COST_10, GACHA_ODDS,
-  heroCfgFor, renderPortrait, renderItemIcon,
+  COMPANIONS, RARITY, SKINS, SKIN_COST, ITEMS, GACHA_COST, GACHA_X10_COST, SPEEDS, fmt,
 } from '../game/engine';
+import type { GameIdle } from '../game/engine';
 
-/* ---------------- inline SVG icons ---------------- */
-const CoinIcon = ({ s = 18 }: { s?: number }) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
-    <circle cx="12" cy="12" r="9" fill="#ffd23c" stroke="#8a6a10" strokeWidth="2" />
-    <circle cx="12" cy="12" r="5.5" fill="none" stroke="#8a6a10" strokeWidth="1.6" />
-    <path d="M12 8.5v7M9.8 10.2h3.4a1.6 1.6 0 1 1 0 3.2H9.8" stroke="#8a6a10" strokeWidth="1.4" strokeLinecap="round" />
-  </svg>
+// ---------- tiny SVG icons ----------
+const Svg = ({ d, s = 15, c = 'currentColor' }: { d: string; s?: number; c?: string }) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" fill={c} aria-hidden="true"><path d={d} /></svg>
 );
-const GemIcon = ({ s = 18 }: { s?: number }) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
-    <path d="M7 4h10l4 5-9 12L3 9l4-5z" fill="#ff8fd0" stroke="#a03070" strokeWidth="1.8" strokeLinejoin="round" />
-    <path d="M3 9h18M12 21 8.5 9 12 4l3.5 5L12 21z" stroke="#a03070" strokeWidth="1.2" strokeLinejoin="round" />
-  </svg>
-);
-const SwordIcon = ({ s = 18 }: { s?: number }) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M14.5 3.5 20 3l-.5 5.5L8 20l-4-4L14.5 3.5z" />
-    <path d="m6 14 4 4M3 21l3-3" />
-  </svg>
-);
-const UsersIcon = ({ s = 18 }: { s?: number }) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="9" cy="8" r="3.5" />
-    <path d="M2.5 20c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5" />
-    <circle cx="17" cy="9" r="2.6" />
-    <path d="M16.5 14.6c2.4.3 4.3 1.9 5 4.4" />
-  </svg>
-);
-const ShieldIcon = ({ s = 18 }: { s?: number }) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 3 5 6v5c0 4.5 3 8.2 7 10 4-1.8 7-5.5 7-10V6l-7-3z" />
-    <path d="M12 8v5M9.5 10.5h5" />
-  </svg>
-);
-const StarIcon = ({ s = 18 }: { s?: number }) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="currentColor">
-    <path d="M12 2.5 14.6 9l6.9.4-5.3 4.4 1.7 6.7L12 16.8l-5.9 3.7 1.7-6.7-5.3-4.4L9.4 9 12 2.5z" />
-  </svg>
-);
+const ICONS = {
+  gem: 'M12 2 22 12 12 22 2 12 12 2z',
+  coin: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 15a5 5 0 1 1 0-10 5 5 0 0 1 0 10z',
+  sword: 'M6.9 17.1 3 21l1.4 1.4 3.9-3.9 1.4 1.4 1.4-1.4-2.8-2.8-1.4 1.4zm14.5-12.9L13 12.6l-1.6-1.6 8.4-8.4c1.2 1.2 1.6 1.6 1.6 1.6z',
+  squad: 'M16 11c1.7 0 3-1.3 3-3s-1.3-3-3-3-3 1.3-3 3 1.3 3 3 3zm-8 0c1.7 0 3-1.3 3-3S9.7 5 8 5 5 6.3 5 8s1.3 3 3 3zm0 2c-2.3 0-7 1.2-7 3.5V19h14v-2.5c0-2.3-4.7-3.5-7-3.5zm8 0c-.3 0-.6 0-1 .1 1.2.8 2 1.9 2 3.4V19h6v-2.5c0-2.3-4.7-3.5-7-3.5z',
+  bag: 'M19 7h-3V6a4 4 0 0 0-8 0v1H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2zm-9-1a2 2 0 0 1 4 0v1h-4V6z',
+  bolt: 'M13 2 4 14h6l-1 8 9-12h-6l1-8z',
+  pause: 'M7 5h4v14H7zM13 5h4v14h-4z',
+  play: 'M8 5v14l11-7z',
+  sound: 'M3 10v4h4l5 5V5L7 10H3zm13.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z',
+  mute: 'M3 10v4h4l5 5V5L7 10H3zm18.1 2 2.4-2.4-1.4-1.4-2.4 2.4-2.4-2.4-1.4 1.4 2.4 2.4-2.4 2.4 1.4 1.4 2.4-2.4 2.4 2.4 1.4-1.4-2.4-2.4z',
+  close: 'M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12 19 6.4z',
+  star: 'M12 2l2.9 6.6 7.1.7-5.4 4.8 1.6 7L12 17.4 5.8 21l1.6-7L2 9.3l7.1-.7L12 2z',
+};
 
-/* ---------------- portrait ---------------- */
-export function Portrait({ kind, id, size, ring }: { kind: 'companion' | 'skin'; id: string; size: number; ring?: Rarity }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    if (ref.current) renderPortrait(ref.current, heroCfgFor(kind, id), size);
-  }, [kind, id, size]);
+function RarityStars({ r }: { r: Rarity }) {
+  const n = RARITY[r].stars;
   return (
-    <canvas
-      ref={ref}
-      className="shrink-0 rounded-sm"
-      style={ring ? { boxShadow: `0 0 0 2px ${RARITY_COLOR[ring]}, 0 0 14px ${RARITY_COLOR[ring]}55` } : undefined}
-    />
+    <span className="inline-flex gap-[1px]" style={{ color: RARITY[r].color }}>
+      {Array.from({ length: n }).map((_, i) => <Svg key={i} d={ICONS.star} s={10} />)}
+    </span>
   );
 }
-export function ItemIconCv({ slot, rarity, size }: { slot: 'weapon' | 'armor' | 'charm'; rarity: Rarity; size: number }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    if (ref.current) renderItemIcon(ref.current, slot, RARITY_COLOR[rarity], size);
-  }, [slot, rarity, size]);
-  return <canvas ref={ref} className="shrink-0 rounded-sm" style={{ boxShadow: `0 0 0 2px ${RARITY_COLOR[rarity]}, 0 0 14px ${RARITY_COLOR[rarity]}55` }} />;
+function PosBadge({ pos }: { pos: Pos }) {
+  const label = pos === 'front' ? 'TIỀN PHONG' : pos === 'mid' ? 'TRUNG QUÂN' : 'HẬU QUÂN';
+  const color = pos === 'front' ? '#ff8a5a' : pos === 'mid' ? '#ffd23c' : '#8cdcff';
+  return (
+    <span className="font-ui text-[9px] font-bold tracking-wider px-1.5 py-px rounded-sm" style={{ color, border: `1px solid ${color}55`, background: `${color}14` }}>
+      {label}
+    </span>
+  );
+}
+function Avatar({ outfit, aura, letter, size = 40 }: { outfit: string; aura: string; letter: string; size?: number }) {
+  return (
+    <div className="relative shrink-0 rounded-full flex items-center justify-center font-display"
+      style={{
+        width: size, height: size,
+        background: `radial-gradient(circle at 35% 30%, ${outfit}, #14101c 130%)`,
+        border: `2px solid ${aura}`,
+        boxShadow: `0 0 14px ${aura}66, inset 0 -6px 12px rgba(0,0,0,.5)`,
+        color: '#f5efe0', fontSize: size * 0.46, textShadow: '0 2px 4px #000',
+      }}>
+      {letter}
+    </div>
+  );
 }
 
-const RarityTag = ({ r, small }: { r: Rarity; small?: boolean }) => (
-  <span
-    className={`font-display font-bold uppercase tracking-widest ${small ? 'text-[9px] px-1.5 py-px' : 'text-[10px] px-2 py-0.5'}`}
-    style={{ color: '#12080c', background: RARITY_COLOR[r], clipPath: 'polygon(6px 0,100% 0,calc(100% - 6px) 100%,0 100%)' }}
-  >
-    {RARITY_LABEL[r]}
-  </span>
-);
+function Modal({ title, accent = '#ff3b52', onClose, children, wide = false }: { title: string; accent?: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center p-4" style={{ background: 'rgba(5,4,10,0.78)' }} onClick={onClose}>
+      <div
+        className={`panel-dark relative w-full ${wide ? 'max-w-3xl' : 'max-w-xl'} max-h-[88vh] flex flex-col anim-fade-up`}
+        style={{ borderColor: `${accent}55`, clipPath: 'polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: `1px solid ${accent}33`, background: `linear-gradient(90deg, ${accent}1f, transparent)` }}>
+          <h2 className="font-display text-2xl tracking-wide" style={{ color: accent, textShadow: `0 0 16px ${accent}66` }}>{title}</h2>
+          <button onClick={onClose} className="text-[#9a917f] hover:text-[#ff3b52] transition-colors cursor-pointer" aria-label="Đóng"><Svg d={ICONS.close} s={18} /></button>
+        </div>
+        <div className="overflow-y-auto p-5 min-h-0">{children}</div>
+      </div>
+    </div>
+  );
+}
 
-/* ================= HUD ================= */
-export function GameHud({ hud, engine, onOpen, onPause }: {
-  hud: HudSnapshot; engine: IdleEngine | null;
-  onOpen: (m: 'gacha' | 'party' | 'equip') => void; onPause: () => void;
-}) {
-  const cycles = [1, 2, 3];
+// ============ HUD: Kael card + dock ============
+export function HudOverlay({ meta, engine }: { meta: MetaInfo; engine: GameIdle }) {
+  const xpPct = Math.min(100, (meta.kaelXp / meta.kaelXpNext) * 100);
   return (
     <>
-      {/* top bar */}
-      <div className="absolute top-0 left-0 right-0 flex items-start justify-between px-3 pt-2 pointer-events-none select-none">
-        <div className="flex flex-col gap-1.5 pointer-events-auto">
-          <div className="flex items-center gap-2 panel-chip">
-            <CoinIcon /> <span className="font-display font-bold text-amber-300 text-sm tabular-nums">{hud.gold.toLocaleString('vi')}</span>
+      {/* Kael card bottom-left */}
+      <div className="absolute bottom-3 left-3 flex items-center gap-2.5 pointer-events-none select-none">
+        <Avatar outfit={SKINS.find((s) => s.id === meta.equippedSkin)?.look.outfit ?? '#3a3a46'} aura="#c2172f" letter="K" size={52} />
+        <div>
+          <div className="font-display text-lg leading-none text-[#f0e8d8]" style={{ textShadow: '0 2px 8px #000' }}>
+            KAEL <span className="text-[#ffd23c] text-sm">Lv {meta.kaelLevel}</span>
           </div>
-          <div className="flex items-center gap-2 panel-chip">
-            <GemIcon /> <span className="font-display font-bold text-pink-300 text-sm tabular-nums">{hud.gems.toLocaleString('vi')}</span>
+          <div className="font-ui text-[10px] text-[#ff8a5a] font-bold tracking-wider mt-0.5">BẬC THĂNG HOA {meta.asc}</div>
+          <div className="w-40 h-2 mt-1 rounded-full overflow-hidden" style={{ background: '#1a1424', border: '1px solid #3a2f4a' }}>
+            <div className="h-full rounded-full transition-all duration-300" style={{ width: `${xpPct}%`, background: 'linear-gradient(90deg, #c2172f, #ff9a3c)' }} />
           </div>
-          <div className="flex items-center gap-1.5 panel-chip text-[10px] text-rose-200/80">
-            <StarIcon s={11} /> Bảo hiểm <b className="text-rose-100">{hud.pity}/10</b>
-          </div>
-        </div>
-
-        <div className="flex flex-col items-center gap-1 pt-0.5">
-          <div className="font-display text-[11px] tracking-[0.3em] text-amber-200/90 uppercase" style={{ textShadow: '0 2px 8px #000' }}>
-            Tầng {['I', 'II', 'III'][hud.floor]} — {hud.floorName}
-          </div>
-          <div className={`font-display font-extrabold text-xl leading-none flex items-center gap-2 ${hud.inBoss ? 'text-rose-400' : 'text-[#e8dfc8]'}`} style={{ textShadow: '0 2px 10px #000, 0 0 20px rgba(194,23,47,.4)' }}>
-            {hud.inBoss ? (<><SwordIcon s={17} /> BOSS CHIẾN</>) : `ĐỢT ${Math.max(1, hud.wave)}/${hud.wavesPerFloor}`}
-          </div>
-        </div>
-
-        <div className="flex gap-1.5 pointer-events-auto">
-          <button className="hud-btn" title="Tốc độ" onClick={() => engine?.setSpeed(cycles[(cycles.indexOf(hud.speed) + 1) % cycles.length] ?? 1)}>
-            ×{hud.speed}
-          </button>
-          <button className="hud-btn" title="Âm thanh" onClick={() => engine?.toggleMute()}>
-            {hud.muted ? 'TẮT' : 'BẬT'}
-          </button>
-          <button className="hud-btn flex items-center" title="Tạm dừng" onClick={onPause}>
-            <svg width="11" height="12" viewBox="0 0 11 12" fill="currentColor"><rect x="0" y="0" width="4" height="12" rx="1" /><rect x="7" y="0" width="4" height="12" rx="1" /></svg>
-          </button>
+          <div className="font-ui text-[9px] text-[#9a917f] mt-0.5">XP {fmt(meta.kaelXp)}/{fmt(meta.kaelXpNext)}</div>
         </div>
       </div>
-
-      {/* bottom action dock */}
-      <div className="absolute bottom-3 right-3 flex items-end gap-2 pointer-events-auto select-none">
-        <button className="dock-btn" onClick={() => onOpen('party')}>
-          <UsersIcon s={20} /> <span>Đội Hình</span>
-        </button>
-        <button className="dock-btn" onClick={() => onOpen('equip')}>
-          <ShieldIcon s={20} /> <span>Trang Bị</span>
-        </button>
-        <button className="dock-btn gacha-dock anim-pulse-glow" onClick={() => onOpen('gacha')}>
-          <GemIcon s={22} /> <span>Triệu Hồi</span>
-          <em className="not-italic text-[10px] font-body opacity-90 -mt-0.5">{GACHA_COST} ngọc</em>
-        </button>
-      </div>
-
-      {/* kill counter */}
-      <div className="absolute bottom-3 left-3 pointer-events-none select-none panel-chip text-[11px] text-amber-100/85 flex items-center gap-2">
-        <SwordIcon s={13} /> Hạ: <b className="text-amber-200">{hud.kills}</b>
-        <span className="opacity-40">|</span> Sát thương: <b className="text-amber-200">{hud.totalDmg.toLocaleString('vi')}</b>
-      </div>
+      <DockBar meta={meta} engine={engine} />
     </>
   );
 }
 
-/* ================= GACHA ================= */
-function ResultCard({ r, i }: { r: GachaResult; i: number }) {
-  const col = RARITY_COLOR[r.rarity];
+function DockBar({ meta, engine }: { meta: MetaInfo; engine: GameIdle }) {
+  const btn = 'group flex items-center gap-1.5 px-3 py-2 cursor-pointer transition-all duration-150 hover:-translate-y-0.5 font-display text-sm tracking-wide';
   return (
-    <div
-      className="card-in relative w-[124px] p-1.5 flex flex-col items-center gap-1 text-center"
-      style={{
-        animationDelay: `${i * 0.09}s`,
-        background: `linear-gradient(165deg, ${col}30, #14101c 55%)`,
-        border: `2px solid ${col}`,
-        boxShadow: r.rarity === 'legendary' ? `0 0 26px ${col}88` : r.rarity === 'epic' ? `0 0 16px ${col}66` : 'none',
-        clipPath: 'polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px)',
-      }}
-    >
-      {r.rarity === 'legendary' && <div className="card-shine pointer-events-none absolute inset-0" />}
-      {!r.isNew && (
-        <span className="absolute -top-0 -right-0 z-10 text-[9px] font-display font-bold bg-[#12080c] text-amber-300 px-1.5 py-0.5 border border-amber-400/60">
-          {r.kind === 'companion' ? '+2 CẤP' : '+NGỌC'}
-        </span>
-      )}
-      {r.kind === 'item' ? (
-        <ItemIconCv slot={(ITEMS.find((x) => x.id === r.id)?.slot ?? 'charm') as 'weapon' | 'armor' | 'charm'} rarity={r.rarity} size={88} />
-      ) : (
-        <Portrait kind={r.kind === 'skin' ? 'skin' : 'companion'} id={r.id} size={88} ring={r.rarity} />
-      )}
-      <div className="font-display font-bold text-[13px] leading-tight text-[#f2ead8]">{r.name}</div>
-      <div className="text-[10px] text-[#b8ad98] leading-tight font-body">{r.kind === 'skin' ? 'Skin Kael' : r.kind === 'companion' ? 'Đồng hành' : ITEMS.find((x) => x.id === r.id)?.desc}</div>
-      <RarityTag r={r.rarity} small />
-      {r.isNew && <div className="text-[9px] font-display text-emerald-300 tracking-wider">✦ MỚI</div>}
+    <div className="absolute bottom-3 right-3 flex items-stretch gap-1.5 select-none">
+      <button className={btn} style={dockStyle('#ff4fd8')} onClick={() => dispatchOpen('summon')}>
+        <Svg d={ICONS.gem} s={15} c="#ff4fd8" /> TRIỆU HỒI
+      </button>
+      <button className={btn} style={dockStyle('#3fb9ff')} onClick={() => dispatchOpen('party')}>
+        <Svg d={ICONS.squad} s={15} c="#3fb9ff" /> ĐỘI HÌNH
+      </button>
+      <button className={btn} style={dockStyle('#ffb43c')} onClick={() => dispatchOpen('equip')}>
+        <Svg d={ICONS.bag} s={15} c="#ffb43c" /> TRANG BỊ
+      </button>
+      <button className={btn} style={dockStyle('#ffd23c')} onClick={() => engine.cycleSpeed()} title="Tốc độ trận đấu">
+        <Svg d={ICONS.bolt} s={14} c="#ffd23c" /> ×{meta.speed}
+      </button>
+      <button className={btn} style={dockStyle('#8fa3b8')} onClick={() => engine.toggleMute()} title="Âm thanh (M)">
+        <Svg d={meta.muted ? ICONS.mute : ICONS.sound} s={15} c="#8fa3b8" />
+      </button>
+      <button className={btn} style={dockStyle('#ff3b52')} onClick={() => engine.togglePause()} title="Tạm dừng (P)">
+        <Svg d={ICONS.pause} s={13} c="#ff3b52" />
+      </button>
     </div>
   );
 }
+function dockStyle(accent: string): CSSProperties {
+  return {
+    color: '#e8dfc8',
+    background: 'linear-gradient(180deg, rgba(28,22,38,0.92), rgba(12,9,18,0.94))',
+    border: `1px solid ${accent}55`,
+    clipPath: 'polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px)',
+    textShadow: '0 2px 6px #000',
+  };
+}
 
-export function GachaModal({ engine, hud, onClose }: { engine: IdleEngine | null; hud: HudSnapshot; onClose: () => void }) {
+// dispatch custom event so App can open modals (keeps DockBar loosely coupled)
+export function dispatchOpen(which: 'summon' | 'party' | 'equip' | 'skin'): void {
+  window.dispatchEvent(new CustomEvent('hk-open-panel', { detail: which }));
+}
+
+// ============ SUMMON ============
+export function SummonModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }) {
   const [results, setResults] = useState<GachaResult[] | null>(null);
-  const [rolling, setRolling] = useState(false);
-  const pull = (n: number) => {
-    if (!engine || rolling) return;
-    setRolling(true);
+  const [spinning, setSpinning] = useState(false);
+  const roll = (times: 1 | 10): void => {
+    setSpinning(true);
     setResults(null);
     setTimeout(() => {
-      const res = engine.pullGacha(n);
-      setResults(res);
-      setRolling(false);
-    }, 650);
+      const r = engine.gacha(times);
+      setResults(r);
+      setSpinning(false);
+    }, times === 1 ? 500 : 900);
   };
   return (
-    <ModalShell title="ĐÀI TRIỆU HỒI" sub="Dùng Ngọc để triệu hồi đồng hành, skin và vật phẩm" onClose={onClose} accent="#ff8fd0">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex gap-2">
-          {GACHA_ODDS.map((o) => (
-            <div key={o.rarity} className="text-center px-2 py-1 border" style={{ borderColor: `${RARITY_COLOR[o.rarity]}66`, background: `${RARITY_COLOR[o.rarity]}14` }}>
-              <div className="text-[9px] font-display tracking-wider" style={{ color: RARITY_COLOR[o.rarity] }}>{RARITY_LABEL[o.rarity]}</div>
-              <div className="text-[11px] font-bold text-[#e8dfc8]">{o.pct}</div>
-            </div>
-          ))}
+    <Modal title="ĐÀI TRIỆU HỒI HUYẾT NGUYỆT" accent="#ff4fd8" onClose={onClose} wide>
+      <div className="flex flex-col items-center">
+        {/* summon circle */}
+        <div className="relative w-44 h-44 flex items-center justify-center mb-2">
+          <svg viewBox="0 0 200 200" className={`absolute inset-0 ${spinning ? 'anim-slow-spin' : ''}`} style={{ animationDuration: '3s' }}>
+            <circle cx="100" cy="100" r="92" fill="none" stroke="#ff4fd855" strokeWidth="2" strokeDasharray="14 8" />
+            <circle cx="100" cy="100" r="72" fill="none" stroke="#ff3b5277" strokeWidth="1.5" strokeDasharray="4 10" />
+            <path d="M100 12 188 100 100 188 12 100z" fill="none" stroke="#ffd23c44" strokeWidth="1.5" />
+          </svg>
+          <svg viewBox="0 0 100 100" className={`w-16 h-16 ${spinning ? 'animate-pulse' : ''}`}>
+            <path d="M50 4 66 38 98 50 66 62 50 96 34 62 2 50 34 38z" fill="#ff4fd8" opacity="0.9" />
+            <path d="M50 22 59 42 80 50 59 58 50 78 41 58 20 50 41 42z" fill="#fff" opacity="0.85" />
+          </svg>
+          {spinning && <div className="absolute inset-0 rounded-full anim-pulse-glow" />}
         </div>
-        <div className="flex items-center gap-1.5 text-pink-300 font-display font-bold text-sm"><GemIcon s={16} /> {hud.gems.toLocaleString('vi')}</div>
-      </div>
-
-      <div className="min-h-[190px] flex items-center justify-center">
-        {rolling ? (
-          <div className="summon-portal relative w-40 h-40 flex items-center justify-center">
-            <div className="absolute inset-0 rounded-full border-4 border-pink-400/70 anim-slow-spin" style={{ borderStyle: 'dashed' }} />
-            <div className="absolute inset-4 rounded-full border-2 border-amber-300/60 anim-slow-spin" style={{ animationDirection: 'reverse', animationDuration: '9s' }} />
-            <GemIcon s={44} />
-          </div>
-        ) : results ? (
-          <div className="flex flex-wrap justify-center gap-2.5 max-h-[300px] overflow-y-auto pr-1">
-            {results.map((r, i) => <ResultCard key={i} r={r} i={i} />)}
-          </div>
-        ) : (
-          <div className="text-center text-[#9a917f] font-body italic">
-            Ánh trăng máu soi xuống đài cổ... <br /> Vận mệnh của những đồng minh mới đang chờ được hé lộ.
-            <div className="mt-2 text-[11px] text-rose-200/70">Bảo hiểm: triệu hồi lần thứ 10 chắc chắn nhận Cực Hiếm trở lên.</div>
+        <p className="font-ui text-xs text-[#9a917f] text-center mb-4">
+          Huyền Thoại <span className="text-[#ff4fd8] font-bold">4%</span> · Cực Hiếm <span className="text-[#ffb43c] font-bold">12%</span> · Hiếm <span className="text-[#3fb9ff] font-bold">34%</span> · Thường <span className="text-[#8fa3b8] font-bold">50%</span>
+          <br />Lần 10 chắc chắn Cực Hiếm trở lên — x10 bảo hiểm 1 Cực Hiếm
+        </p>
+        {/* results */}
+        {results && (
+          <div className={`grid gap-2 mb-4 w-full ${results.length > 1 ? 'grid-cols-5' : 'grid-cols-1 max-w-[220px] mx-auto'}`}>
+            {results.map((r, i) => {
+              const rc = RARITY[r.rarity];
+              return (
+                <div key={i} className="anim-fade-up relative rounded-md p-2 flex flex-col items-center text-center"
+                  style={{
+                    animationDelay: `${i * 70}ms`,
+                    background: `linear-gradient(165deg, ${rc.color}26, #0e0a16 70%)`,
+                    border: `1.5px solid ${rc.color}`,
+                    boxShadow: r.rarity === 'legendary' || r.rarity === 'epic' ? `0 0 18px ${rc.color}88` : 'none',
+                  }}>
+                  <RarityStars r={r.rarity} />
+                  <div className="font-display text-[13px] leading-tight mt-1" style={{ color: rc.color }}>{r.name}</div>
+                  <div className="font-ui text-[9px] text-[#9a917f] mt-0.5 leading-snug">
+                    {r.kind === 'companion' ? 'Đồng hành' : r.kind === 'skin' ? 'Skin Kael' : 'Vật phẩm'}
+                  </div>
+                  <div className={`font-ui text-[9px] font-bold mt-1 ${r.isNew ? 'text-[#3fe0b0]' : 'text-[#ffd23c]'}`}>
+                    {r.isNew ? 'MỚI!' : r.dupeText}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
+        <div className="flex gap-3">
+          <button className="btn-blade primary" disabled={spinning || meta.gems < GACHA_COST} onClick={() => roll(1)} style={{ opacity: meta.gems < GACHA_COST ? 0.45 : 1 }}>
+            <Svg d={ICONS.gem} s={15} c="#ff4fd8" /> ×1 — {GACHA_COST} Ngọc
+          </button>
+          <button className="btn-blade primary" disabled={spinning || meta.gems < GACHA_X10_COST} onClick={() => roll(10)} style={{ opacity: meta.gems < GACHA_X10_COST ? 0.45 : 1 }}>
+            <Svg d={ICONS.gem} s={15} c="#ff4fd8" /> ×10 — {GACHA_X10_COST} Ngọc
+          </button>
+        </div>
+        <div className="font-ui text-sm text-[#ff4fd8] mt-2 font-bold flex items-center gap-1.5">
+          <Svg d={ICONS.gem} s={13} c="#ff4fd8" /> {fmt(meta.gems)} Ngọc trong túi
+        </div>
       </div>
-
-      <div className="flex justify-center gap-3 mt-4">
-        <button className="btn-blade primary" disabled={!engine?.canPull(1) || rolling} onClick={() => pull(1)} style={{ opacity: engine?.canPull(1) && !rolling ? 1 : 0.45 }}>
-          <GemIcon s={18} /> ×1 — {GACHA_COST} Ngọc
-        </button>
-        <button className="btn-blade primary" disabled={!engine?.canPull(10) || rolling} onClick={() => pull(10)} style={{ opacity: engine?.canPull(10) && !rolling ? 1 : 0.45 }}>
-          <GemIcon s={18} /> ×10 — {GACHA_COST_10} Ngọc
-        </button>
-      </div>
-    </ModalShell>
+    </Modal>
   );
 }
 
-/* ================= PARTY ================= */
-export function PartyModal({ engine, hud, onClose }: { engine: IdleEngine | null; hud: HudSnapshot; onClose: () => void }) {
+// ============ PARTY ============
+export function PartyModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }) {
+  const [filter, setFilter] = useState<Rarity | 'all'>('all');
+  const partyIds = meta.party.map((p) => p.id);
+  const list = COMPANIONS.filter((c) => filter === 'all' || c.rarity === filter);
   return (
-    <ModalShell title="ĐỘI HÌNH HUYẾT KIẾM" sub="Nâng cấp bằng Vàng — 3 đồng hành mạnh nhất sẽ ra trận cùng Kael" onClose={onClose} accent="#ffd23c">
-      <div className="flex items-center gap-3 mb-3 text-amber-300 font-display font-bold text-sm">
-        <CoinIcon s={18} /> {hud.gold.toLocaleString('vi')} Vàng
-      </div>
-      <div className="flex flex-col gap-2 max-h-[380px] overflow-y-auto pr-1">
-        {hud.party.map((p) => (
-          <div key={p.id} className="flex items-center gap-3 p-2 panel-row" style={{ borderColor: `${RARITY_COLOR[p.rarity]}44` }}>
-            <div className="relative">
-              <Portrait kind={p.isKael ? 'skin' : 'companion'} id={p.isKael ? (p.skinId ?? 'default') : p.id} size={62} ring={p.rarity} />
-              {p.active && (
-                <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[8px] font-display font-bold bg-emerald-500 text-emerald-950 px-1.5 rounded-sm tracking-wider">RA TRẬN</span>
-              )}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="font-display font-bold text-[15px] text-[#f2ead8]">{p.name}</span>
-                <span className="text-[10px] text-[#9a917f] font-body">{p.cls}</span>
-                <RarityTag r={p.rarity} small />
-              </div>
-              <div className="text-[11px] text-[#b8ad98] font-body">
-                Cấp <b className="text-amber-200">{p.level}</b> · Công <b className="text-rose-300">{p.atk}</b> · Máu <b className="text-emerald-300">{p.maxHp}</b>
-              </div>
-              <div className="mt-1 h-1.5 bg-black/60 rounded-sm overflow-hidden w-full max-w-[220px]">
-                <div className="h-full transition-all duration-300" style={{ width: `${Math.round(p.hpPct * 100)}%`, background: p.hpPct > 0.5 ? '#52e07a' : p.hpPct > 0.25 ? '#ffd23c' : '#ff3b52' }} />
-              </div>
-            </div>
-            <button
-              className="upgrade-btn"
-              disabled={hud.gold < p.upgradeCost}
-              onClick={() => { if (engine) { if (p.isKael) engine.upgradeKael(); else engine.upgradeCompanion(p.id); } }}
-              style={{ opacity: hud.gold >= p.upgradeCost ? 1 : 0.4 }}
-            >
-              <CoinIcon s={13} /> {p.upgradeCost.toLocaleString('vi')}
-              <em className="not-italic block text-[8px] tracking-widest">NÂNG CẤP</em>
-            </button>
-          </div>
+    <Modal title={`ĐỘI HÌNH — ${Object.keys(meta.ownedCompanions).length}/20 ĐỒNG HÀNH`} accent="#3fb9ff" onClose={onClose} wide>
+      <div className="flex flex-wrap gap-1.5 mb-4">
+        {(['all', 'legendary', 'epic', 'rare', 'common'] as const).map((f) => (
+          <button key={f} onClick={() => setFilter(f)}
+            className="font-ui text-[11px] font-bold px-2.5 py-1 cursor-pointer transition-colors"
+            style={{
+              color: filter === f ? '#0e0a16' : f === 'all' ? '#e8dfc8' : RARITY[f as Rarity].color,
+              background: filter === f ? (f === 'all' ? '#e8dfc8' : RARITY[f as Rarity].color) : 'transparent',
+              border: `1px solid ${f === 'all' ? '#e8dfc855' : RARITY[f as Rarity].color + '66'}`,
+              clipPath: 'polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px)',
+            }}>
+            {f === 'all' ? 'TẤT CẢ' : RARITY[f as Rarity].name.toUpperCase()}
+          </button>
         ))}
       </div>
-      <div className="mt-3 text-[11px] text-[#9a917f] font-body italic text-center">
-        Chưa có đồng hành? Ghé <b className="text-pink-300">Đài Triệu Hồi</b> để tìm kiếm những người bạn mới.
-      </div>
-    </ModalShell>
-  );
-}
-
-/* ================= EQUIPMENT ================= */
-export function EquipModal({ engine, onClose, ownedSkins, equippedSkin, ownedItems, equipped }: {
-  engine: IdleEngine | null; onClose: () => void;
-  ownedSkins: string[]; equippedSkin: string; ownedItems: string[];
-  equipped: { weapon: string | null; armor: string | null; charm: string | null };
-}) {
-  return (
-    <ModalShell title="TRANG BỊ & SKIN" sub="Skin thay đổi diện mạo Kael · Vật phẩm cộng chỉ số vĩnh viễn" onClose={onClose} accent="#7fd4ff">
-      <div className="text-[11px] font-display tracking-[0.2em] text-rose-300 mb-1.5">SKIN KAEL</div>
-      <div className="flex gap-2.5 mb-4 flex-wrap">
-        {SKINS.filter((s) => ownedSkins.includes(s.id)).map((s) => {
-          const on = equippedSkin === s.id;
+      <div className="grid grid-cols-2 gap-2.5">
+        {list.map((c) => {
+          const owned = meta.ownedCompanions[c.id] ?? 0;
+          const rc = RARITY[c.rarity];
+          const inParty = partyIds.includes(c.id);
+          const lvl = owned;
+          const g = Math.pow(1.095, Math.max(0, lvl - 1));
+          const atk = Math.round(c.atkBase * g);
+          const hp = Math.round(c.hpBase * g);
+          const cost = engine.upgradeCostOf(lvl);
           return (
-            <button key={s.id} className="skin-card" onClick={() => engine?.equipSkin(s.id)}
-              style={{ borderColor: on ? RARITY_COLOR[s.rarity] : `${RARITY_COLOR[s.rarity]}44`, boxShadow: on ? `0 0 16px ${RARITY_COLOR[s.rarity]}66` : 'none' }}>
-              <Portrait kind="skin" id={s.id} size={72} ring={s.rarity} />
-              <span className="font-display text-[11px] font-bold text-[#f2ead8]">{s.name}</span>
-              {on ? <span className="text-[9px] font-display text-emerald-300 tracking-widest">ĐANG DÙNG</span> : <RarityTag r={s.rarity} small />}
-            </button>
-          );
-        })}
-      </div>
-      <div className="text-[11px] font-display tracking-[0.2em] text-rose-300 mb-1.5">VẬT PHẨM</div>
-      <div className="flex flex-col gap-1.5 max-h-[220px] overflow-y-auto pr-1">
-        {ownedItems.length === 0 && <div className="text-[#9a917f] italic font-body text-sm">Chưa sở hữu vật phẩm nào — hãy triệu hồi!</div>}
-        {ownedItems.map((id) => {
-          const def = ITEMS.find((i) => i.id === id);
-          if (!def) return null;
-          const on = equipped[def.slot] === id;
-          return (
-            <button key={id} className="flex items-center gap-3 p-1.5 panel-row text-left" onClick={() => engine?.equipItem(id)}
-              style={{ borderColor: on ? RARITY_COLOR[def.rarity] : `${RARITY_COLOR[def.rarity]}33`, background: on ? `${RARITY_COLOR[def.rarity]}14` : undefined }}>
-              <ItemIconCv slot={def.slot} rarity={def.rarity} size={46} />
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-display font-bold text-[13px] text-[#f2ead8]">{def.name}</span>
-                  <RarityTag r={def.rarity} small />
+            <div key={c.id} className="relative rounded-md p-2.5 flex gap-2.5"
+              style={{
+                background: owned > 0 ? `linear-gradient(160deg, ${rc.color}1c, #0d0a14 75%)` : 'rgba(20,16,28,0.5)',
+                border: `1.5px solid ${owned > 0 ? rc.color : '#2c2738'}`,
+                opacity: owned > 0 ? 1 : 0.5,
+                boxShadow: inParty ? `0 0 14px ${rc.color}55` : 'none',
+              }}>
+              <Avatar outfit={c.look.outfit} aura={rc.color} letter={c.name[0]} size={46} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="font-display text-[15px] leading-none" style={{ color: owned ? rc.color : '#6a6378' }}>{c.name}</span>
+                  <RarityStars r={c.rarity} />
+                  {owned > 0 && <span className="font-ui text-[10px] text-[#ffd23c] font-bold">Lv {lvl}</span>}
                 </div>
-                <div className="text-[11px] text-[#b8ad98] font-body">{def.desc}</div>
+                <div className="font-ui text-[9px] text-[#9a917f] tracking-wide mt-0.5">
+                  {c.role} · {c.school} {inParty && <span className="text-[#3fe0b0] font-bold">· RA TRẬN</span>}
+                </div>
+                <div className="flex items-center gap-1 mt-1"><PosBadge pos={c.pos} /></div>
+                <div className="mt-1">
+                  <span className="font-ui text-[10px] font-bold" style={{ color: rc.color }}>✦ {c.skill.name}</span>
+                  <span className="font-body text-[10px] text-[#b8b0a0] ml-1 leading-tight">{c.skill.desc}</span>
+                </div>
+                {owned > 0 && (
+                  <div className="flex items-center justify-between mt-1.5">
+                    <span className="font-ui text-[10px] text-[#9a917f]">
+                      <span className="text-[#ff8a5a] font-bold">{fmt(atk)}</span> Công · <span className="text-[#3fe0b0] font-bold">{fmt(hp)}</span> Máu
+                    </span>
+                    <button onClick={() => engine.upgradeCompanion(c.id)}
+                      disabled={meta.gold < cost}
+                      className="font-ui text-[10px] font-bold px-2 py-0.5 cursor-pointer transition-all hover:brightness-125"
+                      style={{
+                        color: meta.gold >= cost ? '#0e0a16' : '#6a6378',
+                        background: meta.gold >= cost ? '#ffd23c' : '#2c2738',
+                        clipPath: 'polygon(4px 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%, 0 4px)',
+                      }}>
+                      +1 ▲ {fmt(cost)}
+                    </button>
+                  </div>
+                )}
+                {owned === 0 && <div className="font-ui text-[9px] text-[#6a6378] mt-1">Chưa sở hữu — hãy triệu hồi!</div>}
               </div>
-              <span className={`text-[9px] font-display tracking-widest ${on ? 'text-emerald-300' : 'text-[#9a917f]'}`}>{on ? 'ĐANG ĐEO' : 'ĐEO ▶'}</span>
-            </button>
+            </div>
           );
         })}
       </div>
-    </ModalShell>
+      <p className="font-ui text-[10px] text-[#6a6378] mt-3 text-center">
+        5 đồng hành mạnh nhất tự động ra trận · Diệt boss: toàn bộ đồng hành sở hữu +1 cấp miễn phí
+      </p>
+    </Modal>
   );
 }
 
-/* ================= PAUSE ================= */
-export function PauseOverlay({ engine, onResume }: { engine: IdleEngine | null; onResume: () => void }) {
-  const [confirm, setConfirm] = useState(false);
+// ============ EQUIP ============
+export function EquipModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }) {
   return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/60 backdrop-blur-[2px]">
-      <div className="panel-dark px-10 py-8 text-center anim-fade-up" style={{ clipPath: 'polygon(18px 0,100% 0,100% calc(100% - 18px),calc(100% - 18px) 100%,0 100%,0 18px)' }}>
-        <div className="kicker text-[11px] text-rose-400 mb-1">Tạm Dừng</div>
-        <div className="font-display font-extrabold text-3xl text-[#e8dfc8] mb-5">HƠI THỞ GIỮA TRẬN</div>
-        <div className="flex flex-col gap-2.5 items-center">
-          <button className="btn-blade primary" onClick={onResume}>Tiếp Tục Chiến Đấu</button>
-          <button className="btn-quiet" onClick={() => engine?.toggleMute()}>Bật / Tắt Tiếng</button>
-          {!confirm ? (
-            <button className="btn-quiet" onClick={() => setConfirm(true)}>Chơi Lại Từ Đầu</button>
-          ) : (
-            <button className="btn-quiet" style={{ color: '#ff3b52', borderColor: '#ff3b52' }} onClick={() => engine?.hardReset()}>
-              Chắc chắn? Xóa toàn bộ tiến trình!
-            </button>
-          )}
-        </div>
-        <div className="mt-4 text-[11px] text-[#9a917f] font-body italic">Trận chiến vẫn auto — nhưng đồng đội cần hơi ấm của ngươi.</div>
+    <Modal title="TÚ ĐỒ — VẬT PHẨM" accent="#ffb43c" onClose={onClose}>
+      <div className="grid grid-cols-3 gap-2 mb-4">
+        {[0, 1, 2].map((slot) => {
+          const id = meta.equippedItems[slot];
+          const def = ITEMS.find((i) => i.id === id);
+          return (
+            <div key={slot} className="rounded-md p-2.5 text-center min-h-[74px] flex flex-col items-center justify-center"
+              style={{ background: 'rgba(20,16,28,0.6)', border: '1.5px dashed #ffb43c55' }}>
+              {def ? (
+                <>
+                  <div className="font-display text-[13px] text-[#ffb43c] leading-tight">{def.name}</div>
+                  <div className="font-ui text-[9px] text-[#9a917f] mt-1">×{meta.ownedItems.find((o) => o.id === id)?.count ?? 1} bản sao</div>
+                </>
+              ) : (
+                <div className="font-ui text-[10px] text-[#6a6378]">Ô trống {slot + 1}</div>
+              )}
+            </div>
+          );
+        })}
       </div>
-    </div>
+      <div className="flex flex-col gap-2">
+        {ITEMS.map((it) => {
+          const owned = meta.ownedItems.find((o) => o.id === it.id);
+          const equipped = meta.equippedItems.includes(it.id);
+          const has = (owned?.count ?? 0) > 0;
+          const rowBg = has ? 'rgba(255,180,60,0.07)' : 'rgba(20,16,28,0.4)';
+          const rowBorder = has ? '1px solid rgba(255,180,60,0.4)' : '1px solid #2c2738';
+          const iconBg = has ? 'linear-gradient(160deg, rgba(255,180,60,0.27), #14101c)' : '#14101c';
+          return (
+            <div key={it.id} className="flex items-center gap-3 rounded-md px-3 py-2"
+              style={{ background: rowBg, border: rowBorder, opacity: has ? 1 : 0.5 }}>
+              <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
+                style={{ background: iconBg, border: '2px solid #ffb43c' }}>
+                <Svg d={ICONS.bag} s={16} c="#ffb43c" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-display text-[14px] text-[#f0e8d8] leading-none">{it.name} {has && <span className="font-ui text-[10px] text-[#ffd23c]">×{owned?.count}</span>}</div>
+                <div className="font-ui text-[10px] text-[#9a917f] mt-0.5">{it.desc}</div>
+              </div>
+              {has && (
+                <button onClick={() => engine.equipItem(it.id)}
+                  className="font-ui text-[10px] font-bold px-2.5 py-1 cursor-pointer"
+                  style={{
+                    color: equipped ? '#0e0a16' : '#ffb43c',
+                    background: equipped ? '#ffb43c' : 'transparent',
+                    border: '1px solid #ffb43c88',
+                    clipPath: 'polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px)',
+                  }}>
+                  {equipped ? 'THÁO' : 'TRANG BỊ'}
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <p className="font-ui text-[10px] text-[#6a6378] mt-3 text-center">Trang bị tối đa 3 vật phẩm · Bản sao cộng dồn chỉ số · Triệu Hồi để nhận thêm</p>
+    </Modal>
   );
 }
 
-/* ================= shell ================= */
-function ModalShell({ title, sub, onClose, accent, children }: {
-  title: string; sub: string; onClose: () => void; accent: string; children: React.ReactNode;
-}) {
+// ============ SKINS ============
+export function SkinModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }) {
   return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/65 backdrop-blur-[2px] p-4" onClick={onClose}>
-      <div
-        className="panel-dark relative w-full max-w-[620px] px-6 py-5 anim-fade-up"
-        style={{ clipPath: 'polygon(20px 0,100% 0,100% calc(100% - 20px),calc(100% - 20px) 100%,0 100%,0 20px)', borderTop: `3px solid ${accent}` }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <button className="absolute top-3 right-4 font-display text-xl text-[#9a917f] hover:text-rose-400 transition-colors cursor-pointer" onClick={onClose}>✕</button>
-        <div className="kicker text-[10px] mb-0.5" style={{ color: accent }}>{sub}</div>
-        <h2 className="font-display font-extrabold text-[26px] leading-tight text-[#f2ead8] mb-4" style={{ textShadow: `0 0 22px ${accent}44` }}>{title}</h2>
-        {children}
+    <Modal title="TỦ ĐỒ KAEL — SKIN" accent="#c2172f" onClose={onClose}>
+      <div className="grid grid-cols-2 gap-2.5">
+        {SKINS.map((s) => {
+          const owned = meta.ownedSkins.includes(s.id);
+          const equipped = meta.equippedSkin === s.id;
+          const cost = SKIN_COST[s.id] ?? 0;
+          return (
+            <div key={s.id} className="rounded-md p-3 flex gap-3 items-center"
+              style={{
+                background: equipped ? 'rgba(194,23,47,0.14)' : 'rgba(20,16,28,0.55)',
+                border: `1.5px solid ${equipped ? '#ff3b52' : owned ? '#7a688c66' : '#2c2738'}`,
+                boxShadow: equipped ? '0 0 16px rgba(255,59,82,0.4)' : 'none',
+              }}>
+              <Avatar outfit={s.look.outfit} aura={s.look.aura} letter="K" size={48} />
+              <div className="flex-1 min-w-0">
+                <div className="font-display text-[14px] leading-none" style={{ color: equipped ? '#ff3b52' : '#f0e8d8' }}>{s.name}</div>
+                <div className="font-body text-[10px] text-[#9a917f] mt-1 leading-snug">{s.desc}</div>
+                <div className="mt-1.5">
+                  {equipped ? (
+                    <span className="font-ui text-[10px] font-bold text-[#ff3b52]">ĐANG MẶC</span>
+                  ) : owned ? (
+                    <button onClick={() => engine.equipSkin(s.id)} className="font-ui text-[10px] font-bold px-2.5 py-0.5 cursor-pointer text-[#0e0a16]" style={{ background: '#e8dfc8', clipPath: 'polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px)' }}>MẶC</button>
+                  ) : (
+                    <button onClick={() => engine.buySkin(s.id)} className="font-ui text-[10px] font-bold px-2.5 py-0.5 cursor-pointer text-[#ff4fd8]" style={{ border: '1px solid #ff4fd888', clipPath: 'polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px)' }}>
+                      MUA · {cost} <Svg d={ICONS.gem} s={9} c="#ff4fd8" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
-    </div>
+    </Modal>
   );
 }
 
-export { COMPANIONS };
+// ============ PAUSE ============
+export function PauseModal({ engine, muted, onTitle }: { engine: GameIdle; muted: boolean; onTitle: () => void }) {
+  return (
+    <Modal title="TẠM DỪNG" accent="#8fa3b8" onClose={() => engine.togglePause()}>
+      <div className="flex flex-col gap-2.5">
+        <button className="btn-blade primary" onClick={() => engine.togglePause()}>
+          <Svg d={ICONS.play} s={15} c="#ff3b52" /> TIẾP TỤC CHIẾN ĐẤU
+        </button>
+        <button className="btn-blade" onClick={() => engine.toggleMute()}>
+          <Svg d={ICONS.sound} s={15} c="#8fa3b8" /> ÂM THANH: {muted ? 'TẮT' : 'BẬT'}
+        </button>
+        <button className="btn-blade" onClick={() => { engine.togglePause(); dispatchOpen('skin'); }}>
+          <Svg d={ICONS.sword} s={15} c="#c2172f" /> TỦ ĐỒ SKIN
+        </button>
+        <button className="btn-blade" onClick={onTitle}>
+          <Svg d={ICONS.close} s={14} c="#8fa3b8" /> VỀ MÀN HÌNH CHÍNH
+        </button>
+        <p className="font-ui text-[10px] text-[#6a6378] text-center mt-1">P / Esc — tạm dừng · M — tắt tiếng · Tiến trình tự động lưu</p>
+      </div>
+    </Modal>
+  );
+}

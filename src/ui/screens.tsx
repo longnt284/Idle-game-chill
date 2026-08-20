@@ -1,183 +1,196 @@
-import { useEffect, useRef, useState } from 'react';
-import { CHAPTERS, ENDING, IMG, StoryChapter } from '../story';
+import { useEffect, useMemo, useState } from 'react';
+import { CHAPTERS, ENDING, IMG } from '../story';
 import type { EndStats } from '../game/engine';
+import { fmt } from '../game/engine';
 
 function Embers({ n = 16 }: { n?: number }) {
-  const dots = Array.from({ length: n }, (_, i) => i);
+  const embers = useMemo(
+    () =>
+      Array.from({ length: n }).map((_, i) => ({
+        left: `${(i * 61) % 100}%`,
+        delay: `${(i * 0.7) % 6}s`,
+        dur: `${5 + ((i * 1.3) % 6)}s`,
+        scale: 0.6 + ((i * 0.37) % 1),
+      })),
+    [n],
+  );
   return (
-    <div className="absolute inset-0 overflow-hidden pointer-events-none">
-      {dots.map((i) => (
-        <span
-          key={i}
-          className="ember-dot"
-          style={{
-            left: `${(i * 61) % 100}%`,
-            animationDuration: `${7 + (i % 5) * 2.4}s`,
-            animationDelay: `${(i * 0.83) % 7}s`,
-            opacity: 0.7,
-            transform: `scale(${0.6 + (i % 4) * 0.3})`,
-          }}
-        />
+    <>
+      {embers.map((e, i) => (
+        <span key={i} className="ember-dot" style={{ left: e.left, animationDelay: e.delay, animationDuration: e.dur, transform: `scale(${e.scale})` }} />
       ))}
-    </div>
+    </>
   );
 }
 
-function Bg({ src, children }: { src: string; children: React.ReactNode }) {
+function TypePanel({ text, speed = 14, onDone }: { text: string; speed?: number; onDone?: () => void }) {
+  const [len, setLen] = useState(0);
+  useEffect(() => {
+    setLen(0);
+    const iv = window.setInterval(() => {
+      setLen((l) => {
+        if (l >= text.length) {
+          window.clearInterval(iv);
+          return l;
+        }
+        return l + 1;
+      });
+    }, speed);
+    return () => window.clearInterval(iv);
+  }, [text, speed]);
+  useEffect(() => {
+    const h = (e: KeyboardEvent): void => {
+      if (e.code === 'Enter' || e.code === 'Space') setLen(text.length);
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [text]);
+  const done = len >= text.length;
+  useEffect(() => {
+    if (done && onDone) onDone();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [done]);
   return (
-    <div className="absolute inset-0 overflow-hidden">
-      <img src={src} alt="" className="anim-kenburns absolute inset-0 w-full h-full object-cover" />
-      <div className="absolute inset-0 scanline-vignette" />
-      <div className="absolute inset-0 bg-gradient-to-t from-[#07060b] via-transparent to-[#07060b]/70" />
-      <Embers />
-      {children}
-    </div>
+    <p className={`font-body text-[15px] leading-relaxed text-[#d8cfba] ${done ? '' : 'caret'}`}>{text.slice(0, len)}</p>
   );
 }
 
-const Diamond = ({ className = '' }: { className?: string }) => (
-  <svg viewBox="0 0 20 20" className={`w-3.5 h-3.5 ${className}`} fill="currentColor">
-    <path d="M10 1 L19 10 L10 19 L1 10 Z" />
-  </svg>
-);
-
-/* ================= TITLE ================= */
+// ============ TITLE ============
 export function TitleScreen({ onStart, hasSave }: { onStart: () => void; hasSave: boolean }) {
   return (
-    <div className="relative w-full h-full overflow-hidden bg-[#07060b]">
-      <Bg src={IMG.title}>
-        <div className="absolute inset-0 flex flex-col items-center justify-end pb-[7vh] px-6">
-          <div className="anim-fade-up flex flex-col items-center" style={{ animationDelay: '0.15s' }}>
-            <div className="flex items-center gap-3 text-rose-400 anim-flicker">
-              <Diamond />
-              <span className="kicker text-[12px]">Berserk-inspired · Idle Dungeon RPG</span>
-              <Diamond />
-            </div>
-            <h1 className="font-display font-extrabold text-[clamp(44px,8vw,92px)] leading-[0.95] text-center mt-2 anim-drip">
-              <span className="title-bone">HUYẾT</span>{' '}
-              <span className="title-blood">KIẾM CA</span>
-            </h1>
-            <p className="font-body italic text-[#c9bfa8] text-[15px] mt-3 max-w-xl text-center">
-              Đêm nguyệt thực, dấu ấn rỉ máu. Kael cùng những đồng hành mới
-              <br className="hidden md:block" /> tiến vào Hầm Ngục Vĩnh Cửu — và lần này, không ai bước đi đơn độc.
-            </p>
-          </div>
-
-          <div className="anim-fade-up mt-7 flex flex-col items-center gap-3" style={{ animationDelay: '0.4s' }}>
-            <button className="btn-blade primary text-lg px-12 py-4 anim-pulse-glow" onClick={onStart}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M14.5 3.5 20 3l-.5 5.5L8 20l-4-4L14.5 3.5z" /><path d="m6 14 4 4" />
-              </svg>
-              {hasSave ? 'Tiếp Tục Hành Trình' : 'Bắt Đầu Chinh Phạt'}
-            </button>
-            <div className="flex gap-5 text-[11px] font-display tracking-[0.18em] text-[#9a917f] uppercase">
-              <span className="flex items-center gap-1.5"><Diamond className="text-amber-400" /> Tự động chiến đấu</span>
-              <span className="flex items-center gap-1.5"><Diamond className="text-pink-400" /> Triệu hồi đồng hành</span>
-              <span className="flex items-center gap-1.5"><Diamond className="text-sky-400" /> 3 Boss · 27 đợt</span>
-            </div>
-            <div className="anim-blink text-[12px] font-display tracking-[0.3em] text-[#c9bfa8]/70 mt-1">▲ NHẤN ĐỂ XUỐNG HẦM NGỤC ▲</div>
-          </div>
+    <div className="absolute inset-0 z-30 overflow-hidden">
+      <img src={IMG.title} alt="" className="absolute inset-0 w-full h-full object-cover anim-kenburns" />
+      <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg, rgba(7,6,11,0.55) 0%, rgba(7,6,11,0.25) 40%, rgba(7,6,11,0.92) 100%)' }} />
+      <div className="absolute inset-0 scanline-vignette" />
+      <Embers />
+      <div className="relative h-full flex flex-col items-center justify-end pb-[8vh] px-6 text-center">
+        <div className="kicker text-[11px] text-[#ff9a3c] anim-flicker mb-3">IDLE DUNGEON RPG · 30 TẦNG · 30 BOSS</div>
+        <h1 className="font-display title-blood anim-drip leading-none" style={{ fontSize: 'clamp(56px, 10vw, 110px)' }}>
+          HUYẾT KIẾM CA
+        </h1>
+        <p className="font-body italic text-[#b8ae98] mt-3 max-w-xl text-[15px]">
+          Đêm nguyệt thực, đoàn quân của Kael tiến vào vực sâu — không dừng, không quay đầu.
+        </p>
+        <div className="flex flex-col items-center gap-3 mt-7">
+          <button className="btn-blade primary anim-pulse-glow text-lg" onClick={onStart}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="#ff3b52"><path d="M8 5v14l11-7z" /></svg>
+            {hasSave ? 'TIẾP TỤC HÀNH QUÂN' : 'BẮT ĐẦU HUYỀN THOẠI'}
+          </button>
+          {hasSave && <span className="font-ui text-[10px] text-[#9a917f] tracking-widest">TIẾN TRÌNH ĐÃ LƯU · THƯỞNG NGOẠI TUYẾN ĐANG CHỜ</span>}
         </div>
-      </Bg>
+        <div className="grid grid-cols-3 gap-x-8 gap-y-1.5 mt-8 font-ui text-[11px] text-[#9a917f]">
+          <span>⚔ Tự động chiến đấu · tốc độ ×6</span>
+          <span>✦ Triệu Hồi 20 đồng hành</span>
+          <span>⚡ Skin & vật phẩm gacha</span>
+        </div>
+      </div>
     </div>
   );
 }
 
-/* ================= STORY ================= */
+// ============ STORY ============
 export function StoryScreen({ chapter, onDone }: { chapter: number; onDone: () => void }) {
-  const ch: StoryChapter = CHAPTERS[Math.min(chapter, CHAPTERS.length - 1)];
+  const ch = CHAPTERS[Math.min(chapter, CHAPTERS.length - 1)];
   const [panel, setPanel] = useState(0);
-  const [typed, setTyped] = useState('');
-  const [full, setFull] = useState(false);
-  const skipRef = useRef(false);
-
+  const [ready, setReady] = useState(false);
   useEffect(() => {
-    setPanel(0); setTyped(''); setFull(false);
+    setPanel(0);
+    setReady(false);
   }, [chapter]);
-
-  useEffect(() => {
-    const text = ch.panels[panel] ?? '';
-    setTyped(''); setFull(false); skipRef.current = false;
-    let i = 0;
-    const iv = setInterval(() => {
-      i += 1;
-      setTyped(text.slice(0, i));
-      if (i >= text.length) { clearInterval(iv); setFull(true); }
-    }, 24);
-    return () => clearInterval(iv);
-  }, [panel, ch]);
-
-  const advance = () => {
-    if (!full) { skipRef.current = true; setTyped(ch.panels[panel]); setFull(true); return; }
-    if (panel < ch.panels.length - 1) setPanel(panel + 1);
-    else onDone();
+  const isLast = panel >= ch.panels.length - 1;
+  const next = (): void => {
+    if (!ready) return;
+    if (isLast) onDone();
+    else {
+      setPanel((p) => p + 1);
+      setReady(false);
+    }
   };
-
+  useEffect(() => {
+    const h = (e: KeyboardEvent): void => {
+      if (e.code === 'Enter') next();
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, panel, chapter]);
   return (
-    <div className="relative w-full h-full bg-[#07060b]" onClick={advance}>
-      <Bg src={ch.img}>
-        <div className="absolute inset-0 flex flex-col justify-end p-6 md:p-12">
-          <div className="max-w-2xl">
-            <div className="flex items-center gap-2 mb-1" style={{ color: ch.accent }}>
-              <Diamond />
-              <span className="kicker text-[11px] anim-flicker">{ch.kicker} · {panel + 1}/{ch.panels.length}</span>
-            </div>
-            <h2 className="font-display font-extrabold text-[clamp(28px,4.5vw,52px)] leading-tight anim-fade-up" style={{ color: '#f2ead8', textShadow: `0 0 30px ${ch.accent}55, 0 3px 0 #140a10` }}>
-              {ch.title}
-            </h2>
-            <div className="mt-4 panel-dark px-5 py-4 cursor-pointer" style={{ borderLeft: `3px solid ${ch.accent}`, clipPath: 'polygon(0 0,100% 0,100% calc(100% - 14px),calc(100% - 14px) 100%,0 100%)' }}>
-              <p className={`font-body text-[15px] md:text-[16px] leading-relaxed text-[#dcd3bd] min-h-[84px] ${full ? '' : 'caret'}`}>
-                {typed}
-              </p>
-              <div className="mt-2 flex justify-end">
-                <span className={`text-[11px] font-display tracking-[0.25em] uppercase ${full ? 'anim-blink' : 'opacity-40'}`} style={{ color: ch.accent }}>
-                  {full ? (panel < ch.panels.length - 1 ? 'Tiếp tục ▸' : 'Tiến vào hầm ngục ▸') : 'Chạm để lướt nhanh'}
-                </span>
-              </div>
-            </div>
-          </div>
+    <div className="absolute inset-0 z-30 overflow-hidden" style={{ background: '#07060b' }}>
+      <img src={ch.img} alt="" className="absolute inset-0 w-full h-full object-cover anim-kenburns opacity-60" />
+      <div className="absolute inset-0" style={{ background: `linear-gradient(100deg, rgba(7,6,11,0.97) 0%, rgba(7,6,11,0.82) 45%, rgba(7,6,11,0.4) 100%)` }} />
+      <div className="absolute inset-0 scanline-vignette" />
+      <Embers n={10} />
+      <div className="relative h-full flex flex-col justify-center px-[6vw] max-w-3xl">
+        <div className="kicker text-[11px] mb-2 anim-flicker" style={{ color: ch.accent }}>{ch.kicker}</div>
+        <h2 className="font-display text-5xl leading-tight mb-6 title-bone">{ch.title}</h2>
+        <div className="panel-dark p-6" style={{ borderLeft: `4px solid ${ch.accent}` }}>
+          <TypePanel key={`${chapter}-${panel}`} text={ch.panels[panel]} onDone={() => setReady(true)} />
         </div>
-      </Bg>
-    </div>
-  );
-}
-
-/* ================= VICTORY ================= */
-export function VictoryScreen({ stats, onRestart }: { stats: EndStats; onRestart: () => void }) {
-  const mm = Math.floor(stats.time / 60);
-  const ss = Math.floor(stats.time % 60).toString().padStart(2, '0');
-  return (
-    <div className="relative w-full h-full bg-[#07060b]">
-      <Bg src={IMG.dawn}>
-        <div className="absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
-          <div className="anim-fade-up">
-            <div className="kicker text-[12px] text-amber-300 mb-2 anim-flicker">{ENDING.kicker}</div>
-            <h2 className="font-display font-extrabold text-[clamp(36px,6vw,72px)] leading-tight" style={{ color: '#ffe9b8', textShadow: '0 0 40px rgba(255,176,32,0.5), 0 3px 0 #3a2408' }}>
-              {ENDING.title}
-            </h2>
-          </div>
-          <div className="anim-fade-up max-w-2xl mt-5 flex flex-col gap-3" style={{ animationDelay: '0.25s' }}>
-            {ENDING.text.map((t, i) => (
-              <p key={i} className="font-body text-[15px] leading-relaxed text-[#efe6cf]" style={{ textShadow: '0 2px 8px #000' }}>{t}</p>
+        <div className="flex items-center justify-between mt-6">
+          <div className="flex gap-2">
+            {ch.panels.map((_, i) => (
+              <span key={i} className="w-6 h-1.5 rounded-full transition-colors" style={{ background: i <= panel ? ch.accent : '#2c2738' }} />
             ))}
           </div>
-          <div className="anim-fade-up mt-6 flex gap-3 flex-wrap justify-center" style={{ animationDelay: '0.45s' }}>
-            {[
-              { l: 'Thời gian', v: `${mm}:${ss}` },
-              { l: 'Quái đã hạ', v: stats.kills.toLocaleString('vi') },
-              { l: 'Tổng sát thương', v: stats.totalDmg.toLocaleString('vi') },
-            ].map((s) => (
-              <div key={s.l} className="panel-dark px-6 py-3" style={{ clipPath: 'polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px)' }}>
-                <div className="kicker text-[9px] text-amber-300/80">{s.l}</div>
-                <div className="font-display font-extrabold text-2xl text-[#ffe9b8]">{s.v}</div>
-              </div>
-            ))}
-          </div>
-          <button className="btn-blade primary anim-fade-up mt-7 px-10" style={{ animationDelay: '0.6s' }} onClick={onRestart}>
-            Bắt Đầu Truyền Thuyết Mới
+          <button className={`btn-blade ${ready ? '' : 'opacity-40 pointer-events-none'}`} onClick={next}>
+            {isLast ? 'TIẾN VÀO HẦM NGỤC' : 'TIẾP TỤC'}
+            <span className="anim-blink">▸</span>
           </button>
         </div>
-      </Bg>
+        <div className="font-ui text-[10px] text-[#6a6378] mt-3 tracking-widest">ENTER — LẬT TRANG</div>
+      </div>
+    </div>
+  );
+}
+
+// ============ ENDING ============
+export function EndScreen({ stats, onRestart }: { stats: EndStats; onRestart: () => void }) {
+  const [page, setPage] = useState(0);
+  const [ready, setReady] = useState(false);
+  const mm = Math.floor(stats.playTime / 60);
+  const ss = Math.floor(stats.playTime % 60);
+  const isLast = page >= ENDING.text.length - 1;
+  const next = (): void => {
+    if (!ready) return;
+    if (isLast) return;
+    setPage((p) => p + 1);
+    setReady(false);
+  };
+  return (
+    <div className="absolute inset-0 z-30 overflow-hidden">
+      <img src={IMG.dawn} alt="" className="absolute inset-0 w-full h-full object-cover anim-kenburns" />
+      <div className="absolute inset-0" style={{ background: 'linear-gradient(90deg, rgba(7,6,11,0.96) 0%, rgba(7,6,11,0.75) 50%, rgba(7,6,11,0.25) 100%)' }} />
+      <div className="relative h-full flex flex-col justify-center px-[6vw] max-w-2xl">
+        <div className="kicker text-[11px] text-[#ffd23c] mb-2 anim-flicker">{ENDING.kicker}</div>
+        <h2 className="font-display text-5xl leading-tight mb-6" style={{ color: '#ffe9a8', textShadow: '0 0 30px rgba(255,210,60,0.4)' }}>{ENDING.title}</h2>
+        <div className="panel-dark p-6" style={{ borderLeft: '4px solid #ffd23c' }}>
+          <TypePanel key={page} text={ENDING.text[page]} onDone={() => setReady(true)} />
+        </div>
+        {!isLast ? (
+          <button className={`btn-blade mt-6 self-start ${ready ? '' : 'opacity-40 pointer-events-none'}`} onClick={next}>
+            TIẾP <span className="anim-blink">▸</span>
+          </button>
+        ) : (
+          <div className="anim-fade-up mt-6">
+            <div className="grid grid-cols-3 gap-3 mb-5">
+              {[
+                ['TẦNG SÂU', '30/30'],
+                ['QUỶ ĐÃ DIỆT', fmt(stats.kills)],
+                ['THỜI GIAN', `${mm}p ${ss}s`],
+              ].map(([k, v]) => (
+                <div key={k} className="panel-dark p-3 text-center">
+                  <div className="font-ui text-[9px] text-[#9a917f] tracking-widest">{k}</div>
+                  <div className="font-display text-2xl text-[#ffd23c]">{v}</div>
+                </div>
+              ))}
+            </div>
+            <button className="btn-blade primary" onClick={onRestart}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="#ff3b52"><path d="M12 5V1L7 6l5 5V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z" /></svg>
+              NEW GAME+ — GIỮ SỨC MẠNH, ĐI LẠI TỪ ĐẦU
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

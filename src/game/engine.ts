@@ -1,2549 +1,2089 @@
 import { sfx, initAudio, setMuted as setAudioMuted, getMuted } from './audio';
 import { IMG } from '../story';
 
-/* ============================================================
-   HUYẾT KIẾM CA — IDLE ENGINE v2 (anime chibi auto-battle)
-   30 boss · 20 đồng hành · gacha · lực chiến · tốc độ ×6
-   ============================================================ */
-
-const W = 1320;
-const H = 640;
-const GROUND = 540;
-const TAU = Math.PI * 2;
-const SAVE_KEY = 'huyet-kiem-idle-v2';
-export const WAVES_PER_FLOOR = 8; // 7 đợt lính + đợt 8 = BOSS
-export const REGULAR_WAVES = WAVES_PER_FLOOR - 1;
+export const VIEW_W = 960;
+export const VIEW_H = 540;
+const GROUND = 476;
 export const TOTAL_FLOORS = 30;
+export const WAVES_PER_FLOOR = 7; // đợt 7 = boss
+export const SPEEDS = [1, 2, 3, 4, 6];
+const SAVE_KEY = 'huyet-kiem-ca-idle-v2';
+const CLASH_X = 640;
 
-const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-const rand = (a: number, b: number) => a + Math.random() * (b - a);
-const irand = (a: number, b: number) => Math.floor(rand(a, b + 1));
+// ============ utils ============
+const clamp = (v: number, a: number, b: number): number => Math.max(a, Math.min(b, v));
+const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+const rand = (a: number, b: number): number => a + Math.random() * (b - a);
+const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
 
-const BIG = ['K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc'];
 export function fmt(n: number): string {
-  if (!isFinite(n)) return '∞';
-  if (n < 1000) return String(Math.floor(n));
-  const tier = Math.floor(Math.log10(n) / 3);
-  if (tier - 1 >= BIG.length) return n.toExponential(2).replace('e+', 'e');
-  const v = n / Math.pow(10, tier * 3);
-  return (v >= 100 ? v.toFixed(0) : v.toFixed(1)) + BIG[tier - 1];
+  const u: Array<[number, string]> = [
+    [1e18, 'Qi'], [1e15, 'Qa'], [1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'K'],
+  ];
+  for (const [v, s] of u) {
+    if (n >= v) {
+      const x = n / v;
+      return (x >= 100 ? Math.floor(x).toString() : x.toFixed(1)) + s;
+    }
+  }
+  return Math.floor(n).toString();
 }
 
+function shade(hex: string, amt: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const r = clamp(((n >> 16) & 255) + amt, 0, 255);
+  const g = clamp(((n >> 8) & 255) + amt, 0, 255);
+  const b = clamp((n & 255) + amt, 0, 255);
+  return `rgb(${r},${g},${b})`;
+}
+function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// ============ rarity / skills ============
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary';
-export const RARITY_LABEL: Record<Rarity, string> = {
-  common: 'Thường', rare: 'Hiếm', epic: 'Cực Hiếm', legendary: 'Huyền Thoại',
-};
-export const RARITY_COLOR: Record<Rarity, string> = {
-  common: '#9aa3b2', rare: '#3fa9ff', epic: '#c05cff', legendary: '#ffb020',
-};
-
-/* ---------------- schools & positions ---------------- */
-export type SchoolId = 'kiem' | 'huyet' | 'phong' | 'hoa' | 'bang' | 'loi' | 'am' | 'quang' | 'son' | 'thiet';
-export type PosId = 'front' | 'mid' | 'back' | 'far';
-export const SCHOOL_INFO: Record<SchoolId, { label: string; color: string; skill: string }> = {
-  kiem: { label: 'Kiếm', color: '#e8dfc8', skill: '+12% chí mạng' },
-  huyet: { label: 'Huyết', color: '#ff3b52', skill: 'Hút 25% sát thương thành máu' },
-  phong: { label: 'Phong', color: '#7fd4a0', skill: '25% tung đòn kép' },
-  hoa: { label: 'Hỏa', color: '#ff9a3c', skill: 'Nổ lan 35% sát thương' },
-  bang: { label: 'Băng', color: '#7fd4ff', skill: 'Làm chậm địch 1.5s' },
-  loi: { label: 'Lôi', color: '#ffe14d', skill: 'Sét chain sang 2 mục tiêu' },
-  am: { label: 'Ám', color: '#c05cff', skill: 'Gây chảy máu + hút máu nhẹ' },
-  quang: { label: 'Quang', color: '#ffd23c', skill: 'Hồi máu đồng đội thấp máu nhất' },
-  son: { label: 'Sơn', color: '#d9a03f', skill: '18% làm choáng 0.9s' },
-  thiet: { label: 'Thiết', color: '#9aa3b2', skill: 'Phản 35% sát thương khi bị đánh' },
-};
-export const POS_INFO: Record<PosId, { label: string; short: string }> = {
-  front: { label: 'Tiền Phong', short: 'Trước' },
-  mid: { label: 'Trung Quân', short: 'Giữa' },
-  back: { label: 'Hậu Quân', short: 'Sau' },
-  far: { label: 'Chi Viện', short: 'Viện' },
+export const RARITY: Record<Rarity, { name: string; color: string; glow: string; stars: number }> = {
+  common: { name: 'Thường', color: '#8fa3b8', glow: '#4a5a6e', stars: 1 },
+  rare: { name: 'Hiếm', color: '#3fb9ff', glow: '#1868a8', stars: 2 },
+  epic: { name: 'Cực Hiếm', color: '#ffb43c', glow: '#a86414', stars: 3 },
+  legendary: { name: 'Huyền Thoại', color: '#ff4fd8', glow: '#8a1e6e', stars: 4 },
 };
 
-/* ---------------- hero visual config ---------------- */
-export interface HeroCfg {
-  hair: string; outfit: string; outfitDark: string; accent: string;
-  skinTone: string; eye: string;
-  hairStyle: 'spiky' | 'long' | 'bun' | 'short' | 'wild' | 'angel' | 'twin';
-  weapon: 'great' | 'sword' | 'bow' | 'staff' | 'dagger' | 'spear' | 'axe' | 'hammer' | 'orb' | 'scythe';
-  cape?: string; aura?: string; scale: number;
+export type SkillId =
+  | 'skinwall' | 'double' | 'pierce' | 'splash' | 'stun' | 'heal'
+  | 'crit' | 'lifesteal' | 'buff' | 'thorns'
+  | 'meteor' | 'execute' | 'strongheal' | 'berserk' | 'freeze'
+  | 'holysplash' | 'flurry' | 'annihilate';
+
+export interface CompanionSkill { id: SkillId; name: string; desc: string; }
+
+// ============ chibi look ============
+export interface ChibiLook {
+  hair: string; outfit: string; outfit2: string; skin: string; eyes: string;
+  hairStyle: 'spiky' | 'long' | 'bun' | 'hood' | 'wild' | 'pony' | 'twin' | 'short' | 'mohawk' | 'none';
+  weapon: 'sword' | 'bow' | 'staff' | 'daggers' | 'orb' | 'shield' | 'spear' | 'none';
+  accessory: 'none' | 'halo' | 'horns' | 'crown' | 'mask' | 'ears' | 'headband';
+  cape?: string;
+  aura: string;
 }
 
-/* ---------------- definitions ---------------- */
+export type Pos = 'front' | 'mid' | 'back';
+
+// ============ companions (20) ============
 export interface CompanionDef {
-  id: string; name: string; cls: string;
-  role: 'melee' | 'ranged' | 'healer' | 'tank';
-  pos: PosId; school: SchoolId;
-  rarity: Rarity; desc: string; hp: number; atk: number; spd: number; cfg: HeroCfg;
-}
-export interface SkinDef { id: string; name: string; rarity: Rarity; desc: string; cfg: HeroCfg; }
-export interface ItemDef {
-  id: string; name: string; slot: 'weapon' | 'armor' | 'charm'; rarity: Rarity;
-  desc: string; atk: number; hp: number; crit: number; goldBonus: number;
+  id: string; name: string; title: string;
+  role: string; school: string; pos: Pos; rarity: Rarity;
+  atkBase: number; hpBase: number; atkSpd: number; ranged: boolean;
+  crit: number;
+  skill: CompanionSkill;
+  look: ChibiLook;
 }
 
-export const KAEL_BASE: HeroCfg = {
-  hair: '#1d1a24', outfit: '#2c2733', outfitDark: '#1a1622', accent: '#c2172f',
-  skinTone: '#f2d5b8', eye: '#e11d2e', hairStyle: 'spiky', weapon: 'great',
-  cape: '#3d1220', scale: 1.06,
-};
-
-export const SKINS: SkinDef[] = [
-  { id: 'default', name: 'Hắc Kiếm Sĩ', rarity: 'common', desc: 'Bộ giáp đen ám khói của Đoàn Kiếm Ưng.', cfg: KAEL_BASE },
-  {
-    id: 'silver', name: 'Bạch Ngân Hiệp', rarity: 'rare', desc: 'Giáp bạc trăng non, nhẹ như lời hứa.',
-    cfg: { ...KAEL_BASE, hair: '#e9e6f2', outfit: '#c9d2e4', outfitDark: '#8b96b0', accent: '#5f8fd9', eye: '#3f6fd1', cape: '#aab8d6' },
-  },
-  {
-    id: 'crimson', name: 'Huyết Nguyệt', rarity: 'epic', desc: 'Giáp nhuộm máu nguyệt thực, sát khí ngút trời.',
-    cfg: { ...KAEL_BASE, hair: '#4a0d18', outfit: '#7a1225', outfitDark: '#43091a', accent: '#ff3b52', eye: '#ff2233', cape: '#5c0e1e', aura: 'rgba(255,59,82,0.5)' },
-  },
-  {
-    id: 'dragon', name: 'Hắc Long Vương', rarity: 'legendary', desc: 'Vảy hắc long dát vàng — vương giả của vực sâu.',
-    cfg: { ...KAEL_BASE, hair: '#101018', outfit: '#191521', outfitDark: '#0c0a12', accent: '#ffb020', eye: '#ffcf4d', cape: '#241a33', aura: 'rgba(255,176,32,0.55)' },
-  },
-];
-
-/* ---------------- 19 đồng hành (+ Kael = 20) ---------------- */
 export const COMPANIONS: CompanionDef[] = [
-  // ----- THƯỜNG -----
+  // ---- THƯỜNG ----
   {
-    id: 'lyra', name: 'Lyra', cls: 'Cung Thủ', role: 'ranged', pos: 'back', school: 'phong', rarity: 'common',
-    desc: 'Thợ săn làng cháy, bắn trăm phát trăm trúng.', hp: 85, atk: 10, spd: 1.0,
-    cfg: { hair: '#e8c66a', outfit: '#3f7d4e', outfitDark: '#2a5636', accent: '#a8e06a', skinTone: '#f6dcc0', eye: '#2f9e5f', hairStyle: 'long', weapon: 'bow', scale: 0.96 },
+    id: 'bram', name: 'Bram', title: 'Bức Tường Thép', role: 'Đấu Sĩ', school: 'Cuồng Nộ', pos: 'front', rarity: 'common',
+    atkBase: 7, hpBase: 130, atkSpd: 0.85, ranged: false, crit: 0.05,
+    skill: { id: 'skinwall', name: 'Bì Thạch', desc: 'Mình đồng da sắt — nhận ít hơn 30% sát thương.' },
+    look: { hair: '#7a5230', outfit: '#8a4a3a', outfit2: '#5e3226', skin: '#e8b48a', eyes: '#4a2e1a', hairStyle: 'short', weapon: 'shield', accessory: 'none', aura: '#8fa3b8' },
   },
   {
-    id: 'finn', name: 'Finn', cls: 'Kiếm Sĩ Tập Sự', role: 'melee', pos: 'mid', school: 'kiem', rarity: 'common',
-    desc: 'Cậu nhóc ôm mộng anh hùng, chém chưa trúng nhưng rất nhiệt tình.', hp: 110, atk: 9, spd: 1.0,
-    cfg: { hair: '#7a5a3a', outfit: '#5a7a9a', outfitDark: '#3d566e', accent: '#ffd23c', skinTone: '#f2d5b8', eye: '#5a8ad9', hairStyle: 'short', weapon: 'sword', scale: 0.9 },
+    id: 'finn', name: 'Finn', title: 'Song Kiếm Gió', role: 'Kiếm Sĩ', school: 'Phong', pos: 'front', rarity: 'common',
+    atkBase: 9, hpBase: 95, atkSpd: 1.1, ranged: false, crit: 0.08,
+    skill: { id: 'double', name: 'Song Kiếm', desc: 'Mỗi đòn đánh chém thêm một nhát (70% sát thương).' },
+    look: { hair: '#5aa0d0', outfit: '#3a6e5a', outfit2: '#274e40', skin: '#f0c49a', eyes: '#1e5a8a', hairStyle: 'spiky', weapon: 'daggers', accessory: 'headband', aura: '#8fa3b8' },
   },
   {
-    id: 'mila', name: 'Mila', cls: 'Pháp Sư Học Việc', role: 'ranged', pos: 'back', school: 'hoa', rarity: 'common',
-    desc: 'Ném cầu lửa to hơn cả người mình.', hp: 80, atk: 11, spd: 0.9,
-    cfg: { hair: '#e07050', outfit: '#a04a2a', outfitDark: '#6e3018', accent: '#ff9a3c', skinTone: '#f6dcc0', eye: '#e07050', hairStyle: 'twin', weapon: 'staff', scale: 0.9 },
+    id: 'toto', name: 'Tô Tô', title: 'Mũi Tên Xuyên', role: 'Cung Thủ', school: 'Xuyên Tâm', pos: 'back', rarity: 'common',
+    atkBase: 9, hpBase: 70, atkSpd: 1.15, ranged: true, crit: 0.1,
+    skill: { id: 'pierce', name: 'Xuyên Phá', desc: 'Mũi tên xuyên qua, trúng thêm 1 mục tiêu phía sau.' },
+    look: { hair: '#e8a04a', outfit: '#a86428', outfit2: '#6e4218', skin: '#f5d0a8', eyes: '#8a5a1e', hairStyle: 'twin', weapon: 'bow', accessory: 'ears', aura: '#8fa3b8' },
   },
   {
-    id: 'bo', name: 'Bo', cls: 'Vệ Binh Mũm Mĩm', role: 'tank', pos: 'front', school: 'thiet', rarity: 'common',
-    desc: 'Bụng bự đỡ đòn cực tốt, cười hiền như đất.', hp: 240, atk: 7, spd: 0.75,
-    cfg: { hair: '#3a3a44', outfit: '#7a8a56', outfitDark: '#525e38', accent: '#d9a03f', skinTone: '#e8bf9a', eye: '#5a6a3a', hairStyle: 'short', weapon: 'hammer', scale: 1.12 },
+    id: 'momo', name: 'Momo', title: 'Đóm Lửa Nhỏ', role: 'Pháp Sư', school: 'Viên Hỏa', pos: 'back', rarity: 'common',
+    atkBase: 11, hpBase: 65, atkSpd: 0.9, ranged: true, crit: 0.05,
+    skill: { id: 'splash', name: 'Bùng Cháy', desc: 'Phép nổ lan, gây 60% sát thương lên kẻ địch xung quanh.' },
+    look: { hair: '#ff8a5a', outfit: '#c8452e', outfit2: '#7e2c1c', skin: '#ffe0c0', eyes: '#d0452a', hairStyle: 'bun', weapon: 'staff', accessory: 'none', aura: '#8fa3b8' },
   },
   {
-    id: 'nia', name: 'Nia', cls: 'Tiểu Vu Nữ', role: 'healer', pos: 'far', school: 'quang', rarity: 'common',
-    desc: 'Cô bé chữa lành bằng ánh trăng non.', hp: 90, atk: 9, spd: 0.7,
-    cfg: { hair: '#d8e8f6', outfit: '#e8ecf6', outfitDark: '#b9c2da', accent: '#7fd4ff', skinTone: '#fbe8d8', eye: '#4aa8e0', hairStyle: 'bun', weapon: 'staff', scale: 0.88 },
-  },
-  // ----- HIẾM -----
-  {
-    id: 'bram', name: 'Bram', cls: 'Đại Kiếm Sĩ', role: 'tank', pos: 'front', school: 'son', rarity: 'rare',
-    desc: 'Lính đánh thuê khổng lồ, lấy thân mình che đồng đội.', hp: 300, atk: 12, spd: 0.8,
-    cfg: { hair: '#8a4a2a', outfit: '#7a5230', outfitDark: '#4e341d', accent: '#d9a03f', skinTone: '#e8bf9a', eye: '#a05a20', hairStyle: 'wild', weapon: 'great', scale: 1.16 },
+    id: 'gau', name: 'Gấu Nhỏ', title: 'Thiết Quyền', role: 'Đấu Sĩ', school: 'Thiết Quyền', pos: 'front', rarity: 'common',
+    atkBase: 8, hpBase: 110, atkSpd: 0.9, ranged: false, crit: 0.05,
+    skill: { id: 'stun', name: 'Choáng Váng', desc: '25% cơ hội đấm choáng kẻ địch 0.8s.' },
+    look: { hair: '#6a4a2e', outfit: '#9a7a4a', outfit2: '#5e4a2a', skin: '#e0a878', eyes: '#3a2412', hairStyle: 'mohawk', weapon: 'none', accessory: 'ears', aura: '#8fa3b8' },
   },
   {
-    id: 'yuki', name: 'Yuki', cls: 'Vu Nữ Trăng', role: 'healer', pos: 'far', school: 'quang', rarity: 'rare',
-    desc: 'Vu nữ cuối cùng của đền trăng, chữa lành mọi vết thương.', hp: 105, atk: 12, spd: 0.75,
-    cfg: { hair: '#f4f2fa', outfit: '#e8ecf6', outfitDark: '#b9c2da', accent: '#7fd4ff', skinTone: '#fbe8d8', eye: '#4aa8e0', hairStyle: 'bun', weapon: 'staff', scale: 0.94 },
+    id: 'pip', name: 'Pip', title: 'Ngọn Đèn Nhỏ', role: 'Hỗ Trợ', school: 'Thánh Quang', pos: 'back', rarity: 'common',
+    atkBase: 6, hpBase: 75, atkSpd: 1.0, ranged: true, crit: 0.03,
+    skill: { id: 'heal', name: 'Hồi Máu', desc: 'Mỗi đòn đánh hồi máu cho đồng đội thấp máu nhất (40% sát thương).' },
+    look: { hair: '#ffe9a8', outfit: '#e8e0c8', outfit2: '#a89e80', skin: '#ffe8d0', eyes: '#7a9a3a', hairStyle: 'bun', weapon: 'orb', accessory: 'halo', aura: '#8fa3b8' },
+  },
+  // ---- HIẾM ----
+  {
+    id: 'lyra', name: 'Lyra', title: 'Cung Thủ Lôi Điện', role: 'Cung Thủ', school: 'Lôi Điện', pos: 'back', rarity: 'rare',
+    atkBase: 15, hpBase: 95, atkSpd: 1.2, ranged: true, crit: 0.12,
+    skill: { id: 'crit', name: 'Lôi Tiễn', desc: '+15% chí mạng, mũi tên xuyên thêm 1 mục tiêu.' },
+    look: { hair: '#ffd76e', outfit: '#4a7aa8', outfit2: '#2e4e70', skin: '#f5cfa8', eyes: '#2a7ad0', hairStyle: 'pony', weapon: 'bow', accessory: 'none', cape: '#2e4e70', aura: '#3fb9ff' },
   },
   {
-    id: 'rex', name: 'Rex', cls: 'Song Kiếm', role: 'melee', pos: 'mid', school: 'phong', rarity: 'rare',
-    desc: 'Hai thanh đoản kiếm, một cơn lốc.', hp: 125, atk: 14, spd: 1.35,
-    cfg: { hair: '#2a4a6a', outfit: '#3a5a7a', outfitDark: '#243a52', accent: '#7fd4a0', skinTone: '#f2d5b8', eye: '#3fa9ff', hairStyle: 'spiky', weapon: 'dagger', scale: 0.98 },
+    id: 'rhea', name: 'Rhea', title: 'Nữ Hoàng Băng', role: 'Pháp Sư', school: 'Băng Giá', pos: 'back', rarity: 'rare',
+    atkBase: 15, hpBase: 85, atkSpd: 0.95, ranged: true, crit: 0.06,
+    skill: { id: 'freeze', name: 'Đóng Băng', desc: '30% cơ hội đóng băng kẻ địch 0.8s.' },
+    look: { hair: '#a8d8f0', outfit: '#5a8ac8', outfit2: '#38588a', skin: '#f0e0e8', eyes: '#3a8ad0', hairStyle: 'long', weapon: 'staff', accessory: 'crown', aura: '#3fb9ff' },
   },
   {
-    id: 'tara', name: 'Tara', cls: 'Cung Băng', role: 'ranged', pos: 'back', school: 'bang', rarity: 'rare',
-    desc: 'Mũi tên băng xuyên qua cả cơn gió.', hp: 95, atk: 14, spd: 1.0,
-    cfg: { hair: '#a8d8f0', outfit: '#4a7a9a', outfitDark: '#315268', accent: '#7fd4ff', skinTone: '#fbe8d8', eye: '#4aa8e0', hairStyle: 'long', weapon: 'bow', scale: 0.96 },
+    id: 'kuro', name: 'Kuro', title: 'Bóng Đêm Cười', role: 'Sát Thủ', school: 'Ảnh Sát', pos: 'mid', rarity: 'rare',
+    atkBase: 18, hpBase: 80, atkSpd: 1.4, ranged: false, crit: 0.15,
+    skill: { id: 'crit', name: 'Điểm Yếu', desc: '+18% chí mạng, đòn chí mạng nhân 2.5 sát thương.' },
+    look: { hair: '#3a3a4a', outfit: '#2a2a3a', outfit2: '#181824', skin: '#e8c8a8', eyes: '#d0303a', hairStyle: 'wild', weapon: 'daggers', accessory: 'mask', aura: '#3fb9ff' },
   },
   {
-    id: 'orin', name: 'Orin', cls: 'Lôi Đồng', role: 'ranged', pos: 'back', school: 'loi', rarity: 'rare',
-    desc: 'Thằng nhóc bị sét đánh... ba lần mà vẫn sống.', hp: 92, atk: 15, spd: 1.05,
-    cfg: { hair: '#f0e05a', outfit: '#5a5a2a', outfitDark: '#3c3c1a', accent: '#ffe14d', skinTone: '#f2d5b8', eye: '#d9b400', hairStyle: 'spiky', weapon: 'orb', scale: 0.9 },
+    id: 'fenrir', name: 'Fenrir', title: 'Sói Xám', role: 'Đấu Sĩ', school: 'Huyết Nguyệt', pos: 'front', rarity: 'rare',
+    atkBase: 14, hpBase: 120, atkSpd: 1.0, ranged: false, crit: 0.1,
+    skill: { id: 'lifesteal', name: 'Hút Máu', desc: 'Hồi máu bằng 30% sát thương gây ra.' },
+    look: { hair: '#9aa0b0', outfit: '#5a6070', outfit2: '#3a3e4a', skin: '#d8b898', eyes: '#e8c83a', hairStyle: 'wild', weapon: 'spear', accessory: 'ears', cape: '#3a3e4a', aura: '#3fb9ff' },
   },
   {
-    id: 'hex', name: 'Hex', cls: 'Quỷ Đồng Ám', role: 'melee', pos: 'mid', school: 'am', rarity: 'rare',
-    desc: 'Nửa người nửa bóng tối, cắn trộm cực đau.', hp: 115, atk: 16, spd: 1.3,
-    cfg: { hair: '#4a2a5a', outfit: '#3a2448', outfitDark: '#241630', accent: '#c05cff', skinTone: '#e8d0e0', eye: '#c05cff', hairStyle: 'wild', weapon: 'scythe', scale: 0.92 },
-  },
-  // ----- CỰC HIẾM -----
-  {
-    id: 'mira', name: 'Mira', cls: 'Phù Thủy Lửa', role: 'ranged', pos: 'back', school: 'hoa', rarity: 'epic',
-    desc: 'Phù thủy lưu vong, niệm chú bằng ngọn lửa tím.', hp: 115, atk: 24, spd: 0.95,
-    cfg: { hair: '#9a4ae0', outfit: '#4a2a7a', outfitDark: '#2f1a52', accent: '#d05cff', skinTone: '#f2d8c4', eye: '#b44ae0', hairStyle: 'long', weapon: 'staff', aura: 'rgba(192,92,255,0.4)', scale: 0.98 },
+    id: 'aria', name: 'Aria', title: 'Tiếng Hát Chiến Trường', role: 'Hỗ Trợ', school: 'Thánh Quang', pos: 'back', rarity: 'rare',
+    atkBase: 12, hpBase: 90, atkSpd: 1.0, ranged: true, crit: 0.05,
+    skill: { id: 'buff', name: 'Phúc Lành', desc: 'Tăng 12% Công cho TOÀN ĐỘI (cộng dồn).' },
+    look: { hair: '#f0b8d8', outfit: '#e8d8f0', outfit2: '#a888c0', skin: '#ffe8e0', eyes: '#8a4ac0', hairStyle: 'long', weapon: 'orb', accessory: 'halo', aura: '#3fb9ff' },
   },
   {
-    id: 'kuro', name: 'Kuro', cls: 'Sát Thủ Bóng Đêm', role: 'melee', pos: 'mid', school: 'am', rarity: 'epic',
-    desc: 'Bóng đen không tên, ra đòn nhanh hơn cả ánh trăng.', hp: 125, atk: 28, spd: 1.6,
-    cfg: { hair: '#2a2438', outfit: '#232030', outfitDark: '#141220', accent: '#c05cff', skinTone: '#ead2bc', eye: '#c05cff', hairStyle: 'spiky', weapon: 'dagger', cape: '#1a1526', aura: 'rgba(192,92,255,0.35)', scale: 0.98 },
+    id: 'rocky', name: 'Rocky', title: 'Gai Nham Thạch', role: 'Đấu Sĩ', school: 'Nham Thạch', pos: 'front', rarity: 'rare',
+    atkBase: 11, hpBase: 150, atkSpd: 0.75, ranged: false, crit: 0.04,
+    skill: { id: 'thorns', name: 'Phản Đòn', desc: 'Kẻ đánh trúng Rocky nhận lại 60% sát thương.' },
+    look: { hair: '#7a7a6a', outfit: '#8a7a5a', outfit2: '#5a5040', skin: '#c8a888', eyes: '#e8783a', hairStyle: 'mohawk', weapon: 'none', accessory: 'horns', aura: '#3fb9ff' },
+  },
+  // ---- CỰC HIẾM ----
+  {
+    id: 'mira', name: 'Mira', title: 'Pháp Sư Thiên Thạch', role: 'Pháp Sư', school: 'Lôi Điện', pos: 'back', rarity: 'epic',
+    atkBase: 26, hpBase: 110, atkSpd: 1.0, ranged: true, crit: 0.1,
+    skill: { id: 'meteor', name: 'Thiên Thạch', desc: 'Cứ 4 đòn gọi thiên thạch nổ diện rộng ×2.5 sát thương.' },
+    look: { hair: '#b878e8', outfit: '#6a3aa8', outfit2: '#42246e', skin: '#f0d8c0', eyes: '#c84ae8', hairStyle: 'long', weapon: 'staff', accessory: 'crown', cape: '#42246e', aura: '#ffb43c' },
   },
   {
-    id: 'goro', name: 'Goro', cls: 'Thiết Chùy', role: 'tank', pos: 'front', school: 'son', rarity: 'epic',
-    desc: 'Núi biết đi. Búa của hắn nện vỡ cả cổng thành.', hp: 380, atk: 18, spd: 0.7,
-    cfg: { hair: '#5a5a64', outfit: '#565e6e', outfitDark: '#383e4c', accent: '#d9a03f', skinTone: '#e8bf9a', eye: '#8a6a30', hairStyle: 'wild', weapon: 'hammer', scale: 1.2 },
+    id: 'hana', name: 'Hana', title: 'Lưỡi Hái Trăng Máu', role: 'Sát Thủ', school: 'Huyết Nguyệt', pos: 'mid', rarity: 'epic',
+    atkBase: 30, hpBase: 100, atkSpd: 1.35, ranged: false, crit: 0.18,
+    skill: { id: 'execute', name: 'Tử Hình', desc: 'Gấp đôi sát thương lên kẻ địch dưới 30% máu.' },
+    look: { hair: '#e85a7a', outfit: '#8a1e3a', outfit2: '#4e1222', skin: '#f5d8c8', eyes: '#e81e4a', hairStyle: 'pony', weapon: 'daggers', accessory: 'none', cape: '#4e1222', aura: '#ffb43c' },
   },
   {
-    id: 'sable', name: 'Sable', cls: 'Huyết Pháp Sư', role: 'ranged', pos: 'back', school: 'am', rarity: 'epic',
-    desc: 'Đọc cấm chú bằng chính máu của kẻ địch.', hp: 110, atk: 26, spd: 1.0,
-    cfg: { hair: '#3a1020', outfit: '#4a1228', outfitDark: '#2c0a18', accent: '#ff3b52', skinTone: '#e8d0c4', eye: '#e11d2e', hairStyle: 'long', weapon: 'orb', cape: '#2c0a18', aura: 'rgba(255,59,82,0.35)', scale: 0.98 },
+    id: 'yuki', name: 'Yuki', title: 'Hiền Nhân Tuyết', role: 'Hiền Nhân', school: 'Băng Tuyết', pos: 'back', rarity: 'epic',
+    atkBase: 18, hpBase: 120, atkSpd: 0.95, ranged: true, crit: 0.05,
+    skill: { id: 'strongheal', name: 'Cứu Thương', desc: 'Mỗi đòn đánh hồi 90% sát thương thành máu cho đồng đội.' },
+    look: { hair: '#f0f4ff', outfit: '#a8c8e8', outfit2: '#6a8ab0', skin: '#fff0e8', eyes: '#4a9ad8', hairStyle: 'bun', weapon: 'staff', accessory: 'halo', aura: '#ffb43c' },
   },
   {
-    id: 'wren', name: 'Wren', cls: 'Lôi Pháp Sư', role: 'ranged', pos: 'back', school: 'loi', rarity: 'epic',
-    desc: 'Cả bầu trời sấm sét nằm gọn trong lòng bàn tay.', hp: 112, atk: 25, spd: 1.05,
-    cfg: { hair: '#e8e050', outfit: '#4a4a20', outfitDark: '#303014', accent: '#ffe14d', skinTone: '#f2d5b8', eye: '#d9b400', hairStyle: 'short', weapon: 'staff', aura: 'rgba(255,225,77,0.35)', scale: 0.98 },
-  },
-  // ----- HUYỀN THOẠI -----
-  {
-    id: 'seraph', name: 'Seraphina', cls: 'Thiên Sứ', role: 'ranged', pos: 'back', school: 'quang', rarity: 'legendary',
-    desc: 'Thiên sứ sa ngã, ánh sáng của nàng thiêu rụi bóng tối.', hp: 180, atk: 36, spd: 1.15,
-    cfg: { hair: '#ffe9a8', outfit: '#f6f0dc', outfitDark: '#d4c8a4', accent: '#ffb020', skinTone: '#fbe9d2', eye: '#e8a020', hairStyle: 'angel', weapon: 'spear', aura: 'rgba(255,210,90,0.5)', scale: 1.02 },
+    id: 'orin', name: 'Orin', title: 'Kiếm Cuồng Nộ', role: 'Kiếm Sĩ', school: 'Cuồng Nộ', pos: 'front', rarity: 'epic',
+    atkBase: 28, hpBase: 130, atkSpd: 1.1, ranged: false, crit: 0.12,
+    skill: { id: 'berserk', name: 'Cuồng Chiến', desc: 'Dưới 50% máu: sát thương ×1.6.' },
+    look: { hair: '#d05a2a', outfit: '#a83a1e', outfit2: '#642212', skin: '#e8b090', eyes: '#e8a01e', hairStyle: 'spiky', weapon: 'sword', accessory: 'horns', aura: '#ffb43c' },
   },
   {
-    id: 'varg', name: 'Varg', cls: 'Cuồng Chiến Huyết', role: 'melee', pos: 'mid', school: 'huyet', rarity: 'legendary',
-    desc: 'Càng chảy máu càng mạnh — chiến thần của bộ tộc sói.', hp: 220, atk: 38, spd: 1.4,
-    cfg: { hair: '#c9c2b2', outfit: '#5c0e1e', outfitDark: '#3a0812', accent: '#ff3b52', skinTone: '#e8bf9a', eye: '#ff2233', hairStyle: 'wild', weapon: 'axe', cape: '#3a0812', aura: 'rgba(255,59,82,0.45)', scale: 1.1 },
+    id: 'vex', name: 'Vex', title: 'Ấn Phong Ấn', role: 'Pháp Sư', school: 'Phong Ấn', pos: 'back', rarity: 'epic',
+    atkBase: 24, hpBase: 105, atkSpd: 1.0, ranged: true, crit: 0.08,
+    skill: { id: 'freeze', name: 'Trọng Lực', desc: '35% cơ hội đè bẹp — kẻ địch bất động 0.9s, nổ lan 50%.' },
+    look: { hair: '#5a5a7a', outfit: '#3a3a5e', outfit2: '#22223a', skin: '#d8c8b8', eyes: '#a8a8e8', hairStyle: 'hood', weapon: 'orb', accessory: 'mask', aura: '#ffb43c' },
+  },
+  // ---- HUYỀN THOẠI ----
+  {
+    id: 'seraphina', name: 'Seraphina', title: 'Thiên Sứ Giáng Lâm', role: 'Thiên Sứ', school: 'Thần Phạt', pos: 'back', rarity: 'legendary',
+    atkBase: 42, hpBase: 150, atkSpd: 1.15, ranged: true, crit: 0.15,
+    skill: { id: 'holysplash', name: 'Thánh Vực', desc: 'Nổ thánh quang diện rộng + tăng 12% Công đội + hồi máu đồng đội.' },
+    look: { hair: '#fff4c8', outfit: '#fffaf0', outfit2: '#d8c888', skin: '#fff0e0', eyes: '#e8b83a', hairStyle: 'long', weapon: 'orb', accessory: 'halo', cape: '#f0e8c8', aura: '#ff4fd8' },
   },
   {
-    id: 'zephyr', name: 'Zephyr', cls: 'Phong Thần Xạ', role: 'ranged', pos: 'back', school: 'phong', rarity: 'legendary',
-    desc: 'Bắn ba mũi tên trước khi gió kịp tới.', hp: 165, atk: 34, spd: 1.3,
-    cfg: { hair: '#a8f0d0', outfit: '#2a6a52', outfitDark: '#1a4636', accent: '#7fd4a0', skinTone: '#f6dcc0', eye: '#2f9e5f', hairStyle: 'long', weapon: 'bow', aura: 'rgba(127,212,160,0.4)', scale: 1.0 },
+    id: 'kagerou', name: 'Kagerou', title: 'Vô Ảnh Sát Thủ', role: 'Sát Thủ', school: 'Vô Ảnh', pos: 'mid', rarity: 'legendary',
+    atkBase: 48, hpBase: 120, atkSpd: 1.7, ranged: false, crit: 0.25,
+    skill: { id: 'flurry', name: 'Loạn Trảm', desc: 'Chém 2 nhát liên hoàn, +25% chí mạng, tốc đánh +20%.' },
+    look: { hair: '#2a2e3a', outfit: '#3a4258', outfit2: '#1e2230', skin: '#e8d0b8', eyes: '#3ae8c8', hairStyle: 'wild', weapon: 'daggers', accessory: 'mask', cape: '#1e2230', aura: '#ff4fd8' },
+  },
+  {
+    id: 'vulcan', name: 'Vulcan', title: 'Chiến Thần Viêm Vương', role: 'Chiến Thần', school: 'Viêm Vương', pos: 'front', rarity: 'legendary',
+    atkBase: 44, hpBase: 200, atkSpd: 1.0, ranged: false, crit: 0.15,
+    skill: { id: 'annihilate', name: 'Diệt Thế', desc: 'Chém lan diện rộng + Tử Hình kẻ dưới 30% máu + phản đòn 60%.' },
+    look: { hair: '#ff5a1e', outfit: '#8a2a12', outfit2: '#4a160a', skin: '#e0a878', eyes: '#ffd23a', hairStyle: 'spiky', weapon: 'sword', accessory: 'horns', cape: '#4a160a', aura: '#ff4fd8' },
   },
 ];
 
+// ============ Kael skins ============
+export interface SkinDef { id: string; name: string; desc: string; look: ChibiLook; }
+export const SKINS: SkinDef[] = [
+  {
+    id: 'default', name: 'Kiếm Sĩ Đen', desc: 'Bộ giáp ám đen nhuốm máu trận mạc.',
+    look: { hair: '#2a2a33', outfit: '#3a3a46', outfit2: '#22222c', skin: '#e8bd93', eyes: '#4a3520', hairStyle: 'spiky', weapon: 'sword', accessory: 'none', cape: '#2a1520', aura: '#c2172f' },
+  },
+  {
+    id: 'crimson', name: 'Huyết Nguyệt Cuồng Chiến', desc: 'Giáp đỏ rực như trăng máu đêm thực nhật.',
+    look: { hair: '#f0f0f5', outfit: '#8a1626', outfit2: '#4e0c16', skin: '#e8bd93', eyes: '#e81e3a', hairStyle: 'spiky', weapon: 'sword', accessory: 'horns', cape: '#3a0a12', aura: '#ff3b52' },
+  },
+  {
+    id: 'gold', name: 'Thánh Kỵ Sĩ', desc: 'Giáp vàng ánh kim của đoàn kỵ sĩ vương đô.',
+    look: { hair: '#e8c25a', outfit: '#d8b848', outfit2: '#8a7428', skin: '#e8bd93', eyes: '#2a5a8a', hairStyle: 'short', weapon: 'sword', accessory: 'crown', cape: '#c83030', aura: '#ffd23c' },
+  },
+  {
+    id: 'shadow', name: 'Ảnh Sát Giả', desc: 'Tan vào bóng tối — chỉ còn ánh mắt đỏ.',
+    look: { hair: '#1a1a24', outfit: '#24243a', outfit2: '#12121e', skin: '#d8b898', eyes: '#e81e3a', hairStyle: 'hood', weapon: 'daggers', accessory: 'mask', aura: '#8a4ae8' },
+  },
+];
+export const SKIN_COST: Record<string, number> = { crimson: 500, gold: 800, shadow: 800 };
+
+// ============ items ============
+export interface ItemDef { id: string; name: string; desc: string; bonus: { hp?: number; atk?: number; crit?: number; aspd?: number }; }
 export const ITEMS: ItemDef[] = [
-  { id: 'w1', name: 'Kiếm Sắt Gai', slot: 'weapon', rarity: 'rare', desc: '+90 Công kích', atk: 90, hp: 0, crit: 0, goldBonus: 0 },
-  { id: 'w2', name: 'Lưỡi Quỷ Huyết', slot: 'weapon', rarity: 'epic', desc: '+190 Công kích', atk: 190, hp: 0, crit: 0, goldBonus: 0 },
-  { id: 'w3', name: 'Trảm Long Chân Giải', slot: 'weapon', rarity: 'legendary', desc: '+360 Công, +10% Chí mạng', atk: 360, hp: 0, crit: 10, goldBonus: 0 },
-  { id: 'a1', name: 'Giáp Da Sói', slot: 'armor', rarity: 'rare', desc: '+900 Máu', atk: 0, hp: 900, crit: 0, goldBonus: 0 },
-  { id: 'a2', name: 'Giáp Xương Rồng', slot: 'armor', rarity: 'epic', desc: '+1900 Máu', atk: 0, hp: 1900, crit: 0, goldBonus: 0 },
-  { id: 'a3', name: 'Vảy Hắc Long', slot: 'armor', rarity: 'legendary', desc: '+3600 Máu', atk: 0, hp: 3600, crit: 0, goldBonus: 0 },
-  { id: 'c1', name: 'Bùa Máu', slot: 'charm', rarity: 'rare', desc: '+8% Chí mạng', atk: 0, hp: 0, crit: 8, goldBonus: 0 },
-  { id: 'c2', name: 'Nhẫn Hút Hồn', slot: 'charm', rarity: 'epic', desc: '+25% Vàng nhận được', atk: 0, hp: 0, crit: 0, goldBonus: 25 },
-  { id: 'c3', name: 'Mắt Quỷ', slot: 'charm', rarity: 'legendary', desc: '+120 Công, +15% Chí mạng', atk: 120, hp: 0, crit: 15, goldBonus: 0 },
-];
-
-interface PoolEntry { kind: 'companion' | 'skin' | 'item'; id: string; rarity: Rarity; weight: number; }
-const COMP_W: Record<Rarity, number> = { common: 13, rare: 9, epic: 5.5, legendary: 2.4 };
-const POOL: PoolEntry[] = [
-  ...COMPANIONS.map((c) => ({ kind: 'companion' as const, id: c.id, rarity: c.rarity, weight: COMP_W[c.rarity] })),
-  { kind: 'skin', id: 'silver', rarity: 'rare', weight: 7 },
-  { kind: 'skin', id: 'crimson', rarity: 'epic', weight: 5 },
-  { kind: 'skin', id: 'dragon', rarity: 'legendary', weight: 2.2 },
-  { kind: 'item', id: 'w1', rarity: 'rare', weight: 5 },
-  { kind: 'item', id: 'a1', rarity: 'rare', weight: 5 },
-  { kind: 'item', id: 'c1', rarity: 'rare', weight: 5 },
-  { kind: 'item', id: 'w2', rarity: 'epic', weight: 3.6 },
-  { kind: 'item', id: 'a2', rarity: 'epic', weight: 3.6 },
-  { kind: 'item', id: 'c2', rarity: 'epic', weight: 3.6 },
-  { kind: 'item', id: 'w3', rarity: 'legendary', weight: 1.5 },
-  { kind: 'item', id: 'a3', rarity: 'legendary', weight: 1.5 },
-  { kind: 'item', id: 'c3', rarity: 'legendary', weight: 1.5 },
+  { id: 'sword', name: 'Kiếm Huyết Nguyệt', desc: '+12% Công mỗi bản sao', bonus: { atk: 0.12 } },
+  { id: 'fang', name: 'Nanh Quỷ', desc: '+3% Chí mạng mỗi bản sao', bonus: { crit: 0.03 } },
+  { id: 'armor', name: 'Giáp Xương Rồng', desc: '+12% Máu mỗi bản sao', bonus: { hp: 0.12 } },
+  { id: 'boots', name: 'Ủng Gió Đêm', desc: '+6% Tốc đánh mỗi bản sao', bonus: { aspd: 0.06 } },
+  { id: 'ring', name: 'Nhẫn Dấu Ấn', desc: '+8% Công & Máu', bonus: { atk: 0.08, hp: 0.08 } },
+  { id: 'cloak', name: 'Áo Choàng Thực Nhật', desc: '+5% Chí mạng & 6% Máu', bonus: { crit: 0.05, hp: 0.06 } },
+  { id: 'talisman', name: 'Bùa Hộ Mệnh', desc: '+15% Máu mỗi bản sao', bonus: { hp: 0.15 } },
+  { id: 'orb', name: 'Ngọc Cuồng Nộ', desc: '+10% Công & 5% Tốc đánh', bonus: { atk: 0.1, aspd: 0.05 } },
+  { id: 'crown', name: 'Vương Miện Sọ Người', desc: '+10% Công & 4% Chí mạng', bonus: { atk: 0.1, crit: 0.04 } },
 ];
 export const GACHA_COST = 100;
-export const GACHA_COST_10 = 900;
-export const GACHA_ODDS: { rarity: Rarity; pct: string }[] = (() => {
-  const total = POOL.reduce((s, p) => s + p.weight, 0);
-  const by: Record<Rarity, number> = { common: 0, rare: 0, epic: 0, legendary: 0 };
-  POOL.forEach((p) => { by[p.rarity] += p.weight; });
-  return (['common', 'rare', 'epic', 'legendary'] as Rarity[]).map((r) => ({
-    rarity: r, pct: ((by[r] / total) * 100).toFixed(1) + '%',
-  }));
-})();
+export const GACHA_X10_COST = 900;
 
-/* ---------------- enemies ---------------- */
-type FoeType = 'slime' | 'bat' | 'skeleton' | 'imp' | 'wisp' | 'brute';
-const FOE_STATS: Record<FoeType, { hp: number; atk: number; spd: number; speed: number; gold: number; name: string }> = {
-  slime: { hp: 1, atk: 0.8, spd: 0.8, speed: 155, gold: 1, name: 'Slime' },
-  bat: { hp: 0.7, atk: 0.7, spd: 1.2, speed: 265, gold: 0.9, name: 'Dơi Máu' },
-  skeleton: { hp: 1.4, atk: 1.1, spd: 0.9, speed: 120, gold: 1.3, name: 'Cốt Binh' },
-  imp: { hp: 1.1, atk: 1.3, spd: 1.05, speed: 185, gold: 1.4, name: 'Tiểu Quỷ' },
-  wisp: { hp: 0.8, atk: 1.2, spd: 1.3, speed: 220, gold: 1.2, name: 'Ma Trơi' },
-  brute: { hp: 2.6, atk: 1.6, spd: 0.6, speed: 95, gold: 2.2, name: 'Quỷ Khổng Lồ' },
-};
-const FLOOR_FOES: FoeType[][] = [
-  ['slime', 'bat', 'skeleton'],
-  ['skeleton', 'imp', 'slime', 'bat'],
-  ['imp', 'wisp', 'brute'],
-];
-
+// ============ 30 tầng & boss ============
 export const FLOOR_NAMES = [
-  'Cổng Xương', 'Hầm Máu', 'Điện Thực Nhật', 'Rừng Gai Đen', 'Sông Than Thở',
-  'Hang Nhện Chúa', 'Điện Gương Vỡ', 'Lò Rèn Tội Lỗi', 'Vườn Máu Trắng', 'Thư Viện Câm',
-  'Mộ Gió', 'Hành Lang Răng', 'Giếng Sâu', 'Thành Ngầm Chìm', 'Đền Quên Lãng',
-  'Chợ Quỷ', 'Hầm Rượu Máu', 'Cầu Xương Sống', 'Ngục Băng Đen', 'Tháp Ngược',
-  'Biển Tro', 'Ruột Thú', 'Đền Nhật Thực', 'Cửa Bạch Cốt', 'Rãnh Sét',
-  'Phòng Gương Mù', 'Điện Đồng Hồ Chết', 'Thang Vô Tận', 'Cổng Cuối', 'Ngai Huyết Nhật',
+  'Cổng Xương', 'Hầm Rêu', 'Điện Gãy', 'Hang Dơi', 'Hành Lang Tro', 'Giếng Sâu', 'Vườn Gai', 'Cầu Than Thở', 'Ngục Rỉ Sét', 'Điện Phản Thệ',
+  'Bờ Máu', 'Nhà Thờ Đắm', 'Hầm Gai', 'Đầm Lầy Dạ Quang', 'Thư Viện Cháy', 'Phòng Gương', 'Chuông Vỡ', 'Lò Mổ Cũ', 'Vực Than Khóc', 'Điện Đói Khát',
+  'Thềm Thực Nhật', 'Rừng Treo Ngược', 'Sa Mạc Xương', 'Biển Tĩnh Lặng', 'Thành Phố Chìm', 'Cổng Sao Rơi', 'Điện Gió Gào', 'Lối Đi Không Tên', 'Bậc Thang Cuối', 'Ngai Vĩnh Cửu',
 ];
-const FLOOR_IMGS = [IMG.floor1, IMG.floor2, IMG.floor3];
-export function floorImg(idx: number): string { return FLOOR_IMGS[idx % 3]; }
-
-/* ---------------- 30 boss ---------------- */
-export type BossArch = 'charger' | 'spitter' | 'trickster' | 'warlock' | 'titan';
-export interface BossDef {
-  name: string; title: string; arch: BossArch;
-  hpMul: number; atkMul: number; spd: number; scale: number;
-  armor: string; armorDark: string; accent: string; eye: string;
-  cape?: string; wings?: boolean; mask?: boolean;
-}
-const B = (name: string, title: string, arch: BossArch, i: number, armor: string, armorDark: string, accent: string, eye: string, extra?: Partial<BossDef>): BossDef => ({
-  name, title, arch,
-  hpMul: 12 + i * 0.5, atkMul: 1.9 + i * 0.05, spd: arch === 'titan' ? 0.5 : 0.62,
-  scale: 2.0 + (i % 5) * 0.12 + (i === 29 ? 0.7 : 0),
-  armor, armorDark, accent, eye, ...extra,
-});
+const BOSS_KINDS = ['knight', 'ogre', 'lich', 'demon', 'queen'] as const;
+export interface BossDef { name: string; kind: (typeof BOSS_KINDS)[number]; }
 export const BOSSES: BossDef[] = [
-  B('MORGRIM', 'Kị Sĩ Phản Thệ', 'charger', 0, '#5a6272', '#333844', '#c2172f', '#ff5a20', { cape: '#5c0e1e' }),
-  B('ISHVARA', 'Sứ Đồ Đói Khát', 'spitter', 1, '#7a2438', '#4a1220', '#8dff9a', '#c2172f', { cape: '#3a1a2a' }),
-  B('VÔ DIỆN THẦN', 'Bàn Tay Trái', 'trickster', 2, '#f0ecf6', '#8a84a0', '#c2172f', '#c2172f', { mask: true }),
-  B('HUYẾT HẦU TƯỚC', 'Bá Tước Đêm', 'warlock', 3, '#4a1228', '#2c0a18', '#ff3b52', '#ff3b52', { cape: '#2c0a18', wings: true }),
-  B('CỐT ĐẾ', 'Vua Xương', 'titan', 4, '#c9c2b2', '#8f887a', '#d9a03f', '#ff3b52'),
-  B('ĐỘC NHA', 'Xà Chúa Ngàn Nanh', 'spitter', 5, '#2a6a3a', '#183f22', '#8dff9a', '#ffe14d'),
-  B('ẢNH CHỦ', 'Chúa Tể Bóng Ma', 'trickster', 6, '#3a3550', '#221f33', '#c9b8ff', '#c9b8ff', { mask: true, cape: '#221f33' }),
-  B('LÔI NGỤC', 'Tướng Quân Sét Đỏ', 'charger', 7, '#6a5a20', '#453b12', '#ffe14d', '#ffe14d'),
-  B('THỰC MỘNG', 'Kẻ Ăn Giấc Mơ', 'warlock', 8, '#4a2a6a', '#2d1a42', '#d05cff', '#d05cff', { wings: true }),
-  B('ĐOẠN ĐẦU ĐÀI', 'Đao Phủ Không Đầu', 'charger', 9, '#4a4f5c', '#2c303a', '#ff9a3c', '#ff9a3c', { cape: '#3a0812' }),
-  B('GIÁP TRÙNG', 'Pháo Đài Sống', 'titan', 10, '#56604a', '#363e2e', '#a8e06a', '#ff5a20'),
-  B('DẠ XOA', 'Nữ Hoàng Đêm Trắng', 'trickster', 11, '#e8ecf6', '#9aa4c0', '#7fd4ff', '#4aa8e0', { mask: true }),
-  B('VIÊM MA', 'Trái Tim Lò Luyện', 'spitter', 12, '#6a2a12', '#421a0a', '#ff9a3c', '#ff5a20'),
-  B('KHÔ CỐT VƯƠNG', 'Chúa Sa Mạc Chết', 'warlock', 13, '#b0a080', '#7a6e52', '#d9a03f', '#ffe14d'),
-  B('BĂNG QUAN', 'Lãnh Chúa Tuyết Đen', 'spitter', 14, '#6a8aa0', '#42596b', '#7fd4ff', '#7fd4ff', { cape: '#223544' }),
-  B('THIẾT TRƯ', 'Heo Rừng Sắt Nung', 'charger', 15, '#6e5646', '#453629', '#d9a03f', '#ff3b52'),
-  B('U MINH NGƯ', 'Cá Vực Thẳm', 'titan', 16, '#2a4a5a', '#182e3a', '#7fd4ff', '#8dff9a'),
-  B('HUYẾT NGUYỆT', 'Sói Chúa Trăng Máu', 'charger', 17, '#5c0e1e', '#3a0812', '#ff3b52', '#ffd23c', { cape: '#3a0812' }),
-  B('CỔ ĐỘC MẪU', 'Mẹ Trăm Độc', 'spitter', 18, '#4a2a5a', '#2d1a38', '#c05cff', '#8dff9a'),
-  B('VONG LINH ĐẾ', 'Hoàng Đế Tro Tàn', 'warlock', 19, '#5a5a64', '#38383f', '#c9b8ff', '#c2172f', { cape: '#22222a', wings: true }),
-  B('SONG DIỆN', 'Kẻ Hai Mặt', 'trickster', 20, '#d8d2c4', '#8f887a', '#c2172f', '#c2172f', { mask: true }),
-  B('PHÁ THÀNH CHÙY', 'Cỗ Máy Thịt', 'titan', 21, '#7a5230', '#4e341d', '#d9a03f', '#ff5a20'),
-  B('TẬT PHONG QUỶ', 'Cơn Gió Cắt', 'charger', 22, '#3a6a5a', '#22423a', '#7fd4a0', '#7fd4a0'),
-  B('HỎA NGỤC TRƯỞNG', 'Cai Ngục Lửa', 'spitter', 23, '#7a2412', '#4a1508', '#ff9a3c', '#ffe14d'),
-  B('BẠCH CỐT TIÊN', 'Tiên Xương', 'warlock', 24, '#e8e2d4', '#a89f8c', '#7fd4ff', '#4aa8e0', { wings: true }),
-  B('HẮC NHẬT', 'Mặt Trời Đen', 'titan', 25, '#22202c', '#121019', '#ffb020', '#ffb020', { wings: true }),
-  B('SÁT LỤC HẦU', 'Hầu Tước Chiến Tranh', 'charger', 26, '#7a1225', '#4b0a16', '#ff3b52', '#ff5a20', { cape: '#43091a' }),
-  B('ÁM ẢNH', 'Nỗi Sợ Vô Hình', 'trickster', 27, '#2a2438', '#171325', '#c05cff', '#c05cff', { mask: true }),
-  B('THẨM PHÁN', 'Quan Tòa Địa Ngục', 'warlock', 28, '#333844', '#1f232c', '#ffd23c', '#ff3b52', { cape: '#1f232c' }),
-  B('HUYẾT NHẬT ĐẾ', 'Chúa Tể Hầm Ngục', 'titan', 29, '#4a0d18', '#2a060e', '#ff3b52', '#ffd23c', { cape: '#2a060e', wings: true }),
+  { name: 'Zogma Kẻ Nghiền Xương', kind: 'ogre' }, { name: 'Nyx Dơi Chúa', kind: 'demon' }, { name: 'Marrow Cốt Tướng', kind: 'knight' },
+  { name: 'Umbra Hầu Bóng', kind: 'lich' }, { name: 'Grimm Thợ Gặt Nhí', kind: 'knight' }, { name: 'Slaug Chúa Tể Gai', kind: 'ogre' },
+  { name: 'Vexxa Góa Phụ Đen', kind: 'queen' }, { name: 'Drowner Quỷ Đầm Lầy', kind: 'demon' }, { name: 'Karzeth Hiệp Sĩ Tro', kind: 'knight' },
+  { name: 'MORGRIM — Kị Sĩ Phản Thệ', kind: 'knight' },
+  { name: 'Huyết Hầu Tước Varnek', kind: 'demon' }, { name: 'Ozzie Hàm Thép', kind: 'ogre' }, { name: 'Crypta Nữ Tu Máu', kind: 'queen' },
+  { name: 'Fenwick Kẻ Đói', kind: 'ogre' }, { name: 'Skraal Chúa Đàn Dơi', kind: 'demon' }, { name: 'Lillith Búp Bê Gương', kind: 'queen' },
+  { name: 'Thane Chuông Tử', kind: 'lich' }, { name: 'Bolgath Đao Phủ', kind: 'ogre' }, { name: 'Morgatha Mụ Phù Thủy', kind: 'lich' },
+  { name: 'ISHVARA — Sứ Đồ Đói Khát', kind: 'queen' },
+  { name: 'Azkel Thiên Sứ Sa Ngã', kind: 'demon' }, { name: 'Root Vua Rừng Treo', kind: 'ogre' }, { name: 'Xol Chúa Tể Sa Mạc', kind: 'lich' },
+  { name: 'Thủy Quái Leviar', kind: 'queen' }, { name: 'Dusk Bóng Đèn Tắt', kind: 'lich' }, { name: 'Astraeus Kẻ Ăn Sao', kind: 'demon' },
+  { name: 'Zephyr Linh Hồn Gió', kind: 'lich' }, { name: 'Null Kẻ Vô Danh', kind: 'knight' }, { name: 'Omega Hộ Vệ Ngai', kind: 'knight' },
+  { name: 'VÔ DIỆN THẦN — Bàn Tay Trái', kind: 'demon' },
 ];
 
-/* ---------------- runtime types ---------------- */
-interface Fighter {
-  uid: string; defId: string; name: string; cls: string; role: string;
-  pos: PosId; school: SchoolId;
-  rarity: Rarity; level: number; isKael: boolean; cfg: HeroCfg;
-  maxHp: number; hp: number; atk: number; spd: number; crit: number;
-  x: number; homeX: number; state: 'idle' | 'dash' | 'strike' | 'return' | 'cast' | 'dead';
-  stateT: number; cd: number; target: number; reviveT: number; flashT: number;
-  attackAnim: number; animT: number; buffT: number;
+// ============ types ============
+export interface HeroUnit {
+  uid: string; isKael: boolean; defId: string; level: number;
+  atk: number; maxHp: number; hp: number; aspd: number; crit: number;
+  ranged: boolean; pos: Pos;
+  x: number; slotY: number; atkCd: number; swing: number; hurtT: number; frozenT: number; hitCount: number; dead: boolean;
+  look: ChibiLook; skill: SkillId; def: CompanionDef | null;
 }
-interface Foe {
-  uid: number; type: FoeType | 'boss'; bossIdx?: number;
-  name: string; hp: number; maxHp: number; atk: number; spd: number; speed: number;
-  gold: number; x: number; scale: number; state: 'walk' | 'fight' | 'tele' | 'die';
-  t: number; cd: number; flashT: number; animT: number;
-  specialT: number; specialPhase: number; returnX: number;
-  slowT: number; stunT: number; bleedDps: number; bleedT: number;
+export interface Enemy {
+  uid: number; kind: string; boss: boolean; bossIdx: number;
+  hp: number; maxHp: number; atk: number; atkCd: number; swing: number;
+  x: number; hover: number; stunT: number; hurtT: number; scale: number; walk: number;
+  skillCd: number; telegraph: number; dead: boolean; tint: string; eye: string;
 }
-interface Proj { x: number; y: number; target: number | string; speed: number; dmg: number; kind: 'arrow' | 'magic' | 'light' | 'acid' | 'bolt' | 'ice' | 'blood'; t: number; splash: number; crit: number; school?: SchoolId; from?: string; }
-interface Particle { x: number; y: number; vx: number; vy: number; life: number; maxLife: number; size: number; color: string; grav: number; kind: 'spark' | 'blood' | 'soul' | 'coin' | 'star' | 'poof' | 'ring'; }
-interface FloatText { x: number; y: number; text: string; color: string; life: number; maxLife: number; size: number; vy: number; }
-interface Zap { x1: number; y1: number; x2: number; y2: number; t: number; color: string; }
+interface Proj { x: number; y: number; tx: number; ty: number; target: string; speed: number; dmg: number; kind: 'arrow' | 'magic' | 'light' | 'acid' | 'bolt' | 'meteor'; t: number; splash: number; crit: number; ally: boolean; }
+interface Particle { x: number; y: number; vx: number; vy: number; g: number; life: number; maxLife: number; size: number; color: string; shape: 'spark' | 'ember' | 'slash' | 'smoke' | 'ice'; rot: number; vr: number; }
+interface FloatText { x: number; y: number; text: string; color: string; life: number; size: number; }
+interface Toast { text: string; color: string; life: number; }
+interface Pickup { x: number; y: number; vy: number; vx: number; kind: 'gold' | 'gem' | 'scroll'; val: number; life: number; }
+interface SpawnReq { kind: string; delay: number; }
 
-export interface PartyView {
-  id: string; name: string; cls: string; role: string; pos: PosId; school: SchoolId;
-  rarity: Rarity; level: number; hpPct: number; atk: number; maxHp: number;
-  active: boolean; isKael: boolean; upgradeCost: number; skinId?: string; power: number;
+export interface EndStats { kills: number; gold: number; playTime: number; }
+export interface CompanionSlot { id: string; name: string; rarity: Rarity; level: number; power: number; pos: Pos; }
+export interface OwnedItem { id: string; name: string; count: number; }
+export interface HudState {
+  floor: number; wave: number; inBoss: boolean; bossName: string; bossHpPct: number;
+  gold: number; gems: number; kaelLevel: number; asc: number; power: number; floorName: string;
 }
-export interface HudSnapshot {
-  gold: number; gems: number; floor: number; floorName: string; wave: number;
-  wavesPerFloor: number; inBoss: boolean; bossName: string; bossHpPct: number;
-  kills: number; speed: number; muted: boolean; party: PartyView[]; pity: number;
-  totalDmg: number; power: number; bossIdx: number;
+export interface MetaInfo {
+  gold: number; gems: number; kaelLevel: number; kaelXp: number; kaelXpNext: number; asc: number;
+  floor: number; wave: number; kills: number; playTime: number; speed: number; muted: boolean; paused: boolean;
+  ownedCompanions: Record<string, number>; party: CompanionSlot[];
+  ownedSkins: string[]; equippedSkin: string; ownedItems: OwnedItem[]; equippedItems: string[];
+  hud: HudState;
 }
-export interface GachaResult { kind: 'companion' | 'skin' | 'item'; id: string; name: string; rarity: Rarity; isNew: boolean; note: string; }
-export interface EndStats { time: number; kills: number; totalDmg: number; floor: number; }
-
-export type GameEvent =
+export type EngineEvent =
   | { type: 'story'; chapter: number }
   | { type: 'victory'; stats: EndStats }
-  | { type: 'toast'; text: string; rarity: Rarity }
-  | { type: 'wipe' };
+  | { type: 'toast'; text: string; color?: string }
+  | { type: 'meta' };
 
-export interface EngineCallbacks {
-  onHud: (s: HudSnapshot) => void;
-  onEvent: (e: GameEvent) => void;
+export interface GachaResult { kind: 'companion' | 'skin' | 'item'; id: string; name: string; rarity: Rarity; isNew: boolean; dupeText: string; }
+
+// ============ chibi draw ============
+function chibiLegs(ctx: CanvasRenderingContext2D, outfit2: string, walk: number, airborne: number): void {
+  ctx.strokeStyle = 'rgba(20,10,25,0.9)';
+  ctx.lineWidth = 2.5;
+  for (const side of [-1, 1]) {
+    const sw = Math.sin(walk + (side > 0 ? 0 : Math.PI)) * (1 - airborne);
+    ctx.save();
+    ctx.translate(side * 8, -32);
+    ctx.rotate(sw * 0.55);
+    ctx.fillStyle = outfit2;
+    rr(ctx, -6, 0, 12, 24, 6);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#2c2028';
+    rr(ctx, -7, 18, 14, 9, 4);
+    ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
 }
 
-/* ============================================================
-   ENGINE
-   ============================================================ */
-export class IdleEngine {
-  private cv: HTMLCanvasElement;
+function chibiHead(ctx: CanvasRenderingContext2D, look: ChibiLook, mouthOpen: number, t: number): void {
+  const hy = -92 + Math.sin(t * 2) * 1.2;
+  ctx.strokeStyle = 'rgba(20,10,25,0.95)';
+  ctx.lineWidth = 3;
+  // hair back
+  ctx.fillStyle = look.hair;
+  if (look.hairStyle === 'long' || look.hairStyle === 'pony') {
+    ctx.beginPath();
+    ctx.ellipse(-4, hy + 8, 26, 34, 0.15, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (look.hairStyle === 'twin') {
+    for (const s of [-1, 1]) { ctx.beginPath(); ctx.ellipse(s * 24, hy + 12, 9, 20, s * 0.2, 0, Math.PI * 2); ctx.fill(); }
+  }
+  if (look.hairStyle === 'pony') {
+    ctx.beginPath(); ctx.ellipse(-26, hy + 14, 8, 22, -0.3, 0, Math.PI * 2); ctx.fill();
+  }
+  // head
+  ctx.fillStyle = look.skin;
+  ctx.beginPath(); ctx.arc(0, hy, 25, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  // hair front by style
+  ctx.fillStyle = look.hair;
+  ctx.beginPath();
+  if (look.hairStyle === 'spiky' || look.hairStyle === 'wild' || look.hairStyle === 'mohawk') {
+    ctx.moveTo(-25, hy - 4);
+    const spikes = look.hairStyle === 'mohawk' ? 4 : 7;
+    for (let i = 0; i <= spikes; i++) {
+      const px = -25 + (50 / spikes) * i;
+      const up = look.hairStyle === 'mohawk' ? (i > 0 && i < spikes ? 20 : 4) : (i % 2 === 0 ? 16 : 10) + Math.sin(i * 7) * 3;
+      ctx.lineTo(px, hy - 12 - up);
+      ctx.lineTo(px + 50 / spikes / 2, hy - 14);
+    }
+    ctx.lineTo(25, hy - 2);
+    ctx.quadraticCurveTo(0, hy - 22, -25, hy - 4);
+  } else if (look.hairStyle === 'hood') {
+    ctx.arc(0, hy - 2, 27, Math.PI * 0.95, Math.PI * 2.05);
+    ctx.lineTo(26, hy + 6); ctx.lineTo(-26, hy + 6);
+  } else if (look.hairStyle === 'bun') {
+    ctx.arc(0, hy - 6, 25, Math.PI * 1.05, Math.PI * 1.95);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(2, hy - 30, 10, 0, Math.PI * 2);
+  } else if (look.hairStyle === 'long' || look.hairStyle === 'pony') {
+    ctx.arc(0, hy - 4, 25, Math.PI * 1.0, Math.PI * 2.0);
+    ctx.quadraticCurveTo(26, hy + 2, 20, hy + 10);
+    ctx.lineTo(-24, hy + 4);
+  } else if (look.hairStyle === 'short') {
+    ctx.arc(0, hy - 4, 25, Math.PI * 1.02, Math.PI * 1.98);
+    ctx.quadraticCurveTo(14, hy - 10, -25, hy - 2);
+  } else if (look.hairStyle === 'twin') {
+    ctx.arc(0, hy - 4, 25, Math.PI * 1.0, Math.PI * 2.0);
+    ctx.quadraticCurveTo(20, hy - 4, 24, hy + 4);
+    ctx.lineTo(-24, hy + 4);
+  } else {
+    ctx.arc(0, hy - 6, 25, Math.PI, Math.PI * 2);
+  }
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  if (look.hairStyle === 'bun') { ctx.beginPath(); ctx.arc(2, hy - 30, 10, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+  // eyes
+  for (const ex of [7, 17]) {
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.ellipse(ex, hy - 1, 5.4, 7.2, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(20,10,25,0.8)'; ctx.lineWidth = 1.6; ctx.stroke();
+    ctx.fillStyle = look.eyes;
+    ctx.beginPath(); ctx.ellipse(ex + 1.2, hy, 3.4, 4.8, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#151018';
+    ctx.beginPath(); ctx.ellipse(ex + 1.6, hy + 1, 1.8, 2.8, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(ex + 2.6, hy - 2.4, 1.4, 0, Math.PI * 2); ctx.fill();
+  }
+  // mouth
+  ctx.strokeStyle = '#5e2a30'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  if (mouthOpen > 0.4) { ctx.fillStyle = '#7e3242'; ctx.ellipse(12, hy + 11, 4, 4.5 * mouthOpen, 0, 0, Math.PI * 2); ctx.fill(); }
+  else ctx.arc(12, hy + 9, 4, 0.15, Math.PI - 0.5);
+  ctx.stroke();
+  // accessory
+  if (look.accessory === 'halo') {
+    ctx.strokeStyle = '#ffe98a'; ctx.lineWidth = 3.5;
+    ctx.beginPath(); ctx.ellipse(0, hy - 34 + Math.sin(t * 3) * 2, 16, 5, 0, 0, Math.PI * 2); ctx.stroke();
+  }
+  if (look.accessory === 'horns') {
+    ctx.fillStyle = '#e8e0d0'; ctx.strokeStyle = 'rgba(20,10,25,0.9)'; ctx.lineWidth = 2;
+    for (const s of [-1, 1]) {
+      ctx.beginPath(); ctx.moveTo(s * 14, hy - 20); ctx.lineTo(s * 22, hy - 34); ctx.lineTo(s * 8, hy - 24); ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+  }
+  if (look.accessory === 'crown') {
+    ctx.fillStyle = '#ffd23c'; ctx.strokeStyle = 'rgba(20,10,25,0.9)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-14, hy - 22); ctx.lineTo(-14, hy - 32); ctx.lineTo(-6, hy - 24); ctx.lineTo(0, hy - 35); ctx.lineTo(6, hy - 24); ctx.lineTo(14, hy - 32); ctx.lineTo(14, hy - 22); ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  if (look.accessory === 'mask') {
+    ctx.fillStyle = 'rgba(20,16,28,0.92)';
+    rr(ctx, -6, hy + 4, 28, 12, 5); ctx.fill();
+  }
+  if (look.accessory === 'ears') {
+    ctx.fillStyle = look.hair; ctx.strokeStyle = 'rgba(20,10,25,0.9)'; ctx.lineWidth = 2;
+    for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(s * 12, hy - 18); ctx.lineTo(s * 22, hy - 36); ctx.lineTo(s * 2, hy - 24); ctx.closePath(); ctx.fill(); ctx.stroke(); }
+  }
+  if (look.accessory === 'headband') {
+    ctx.fillStyle = '#c83030';
+    rr(ctx, -24, hy - 16, 48, 7, 3); ctx.fill();
+    ctx.strokeStyle = 'rgba(20,10,25,0.8)'; ctx.lineWidth = 1.6; ctx.stroke();
+  }
+}
+
+export function drawChibiHero(ctx: CanvasRenderingContext2D, look: ChibiLook, t: number, walk: number, lunge: number, scale: number, facing: number, frozen: number): void {
+  ctx.save();
+  ctx.scale(scale * facing, scale);
+  if (frozen > 0) { ctx.globalAlpha = 0.75; }
+  const mouth = lunge;
+  // aura
+  ctx.globalAlpha *= 0.5 + 0.2 * Math.sin(t * 4);
+  ctx.fillStyle = look.aura;
+  ctx.beginPath(); ctx.ellipse(0, 2, 34, 9, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = frozen > 0 ? 0.75 : 1;
+  // cape
+  if (look.cape) {
+    ctx.fillStyle = look.cape;
+    ctx.strokeStyle = 'rgba(20,10,25,0.9)'; ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(-14, -66);
+    ctx.quadraticCurveTo(-34 - Math.sin(t * 6) * 5, -40, -26 - Math.sin(t * 5) * 6, -8);
+    ctx.lineTo(-8, -34);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  chibiLegs(ctx, look.outfit2, walk, 0);
+  // body
+  ctx.strokeStyle = 'rgba(20,10,25,0.95)'; ctx.lineWidth = 3;
+  ctx.fillStyle = look.outfit;
+  rr(ctx, -17, -68, 34, 38, 10); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = look.outfit2;
+  rr(ctx, -17, -42, 34, 9, 4); ctx.fill(); ctx.stroke();
+  // back arm
+  ctx.fillStyle = look.outfit;
+  ctx.save(); ctx.translate(-12, -60); ctx.rotate(0.5 + Math.sin(walk) * 0.2);
+  rr(ctx, -5, 0, 10, 22, 5); ctx.fill(); ctx.stroke(); ctx.restore();
+  // head
+  chibiHead(ctx, look, mouth, t);
+  // front arm + weapon
+  ctx.save();
+  ctx.translate(12, -60);
+  const swingAng = lunge > 0 ? lerp(-2.5, 0.75, lunge) : -0.55 + Math.sin(walk) * 0.12;
+  ctx.rotate(swingAng);
+  ctx.fillStyle = look.outfit;
+  rr(ctx, -5, 0, 10, 24, 5); ctx.fill(); ctx.stroke();
+  drawWeapon(ctx, look.weapon, lunge, look.aura);
+  ctx.restore();
+  if (frozen > 0) {
+    ctx.fillStyle = 'rgba(120,200,255,0.45)';
+    ctx.beginPath(); ctx.ellipse(0, -55, 30, 58, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#a8e0ff'; ctx.lineWidth = 2; ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawWeapon(ctx: CanvasRenderingContext2D, w: ChibiLook['weapon'], lunge: number, aura: string): void {
+  ctx.strokeStyle = 'rgba(20,10,25,0.95)';
+  ctx.lineWidth = 2.5;
+  if (w === 'sword') {
+    ctx.save(); ctx.translate(0, 22); ctx.rotate(-0.25);
+    ctx.fillStyle = '#3a2e28'; rr(ctx, -4, 0, 8, 14, 3); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#ffd23c'; rr(ctx, -10, -5, 20, 7, 3); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#d8dce8';
+    ctx.beginPath(); ctx.moveTo(-8, -5); ctx.lineTo(-5, -78); ctx.lineTo(0, -88); ctx.lineTo(5, -78); ctx.lineTo(8, -5); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    if (lunge > 0.3) { ctx.fillStyle = aura; ctx.globalAlpha = lunge * 0.6; ctx.fill(); ctx.globalAlpha = 1; }
+    ctx.restore();
+  } else if (w === 'daggers') {
+    for (const s of [-1, 1]) {
+      ctx.save(); ctx.translate(s * 6, 20); ctx.rotate(s * 0.35);
+      ctx.fillStyle = '#d8dce8';
+      ctx.beginPath(); ctx.moveTo(-4, 0); ctx.lineTo(0, -34); ctx.lineTo(4, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#3a2e28'; rr(ctx, -3, 0, 6, 8, 2); ctx.fill(); ctx.stroke();
+      ctx.restore();
+    }
+  } else if (w === 'bow') {
+    ctx.save(); ctx.translate(2, 16);
+    ctx.strokeStyle = '#7a5230'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(0, 0, 26, -1.2, 1.2); ctx.stroke();
+    ctx.strokeStyle = '#e8e0d0'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(26 * Math.cos(-1.2), 26 * Math.sin(-1.2)); ctx.lineTo(26 * Math.cos(1.2), 26 * Math.sin(1.2)); ctx.stroke();
+    if (lunge > 0.2) { ctx.strokeStyle = aura; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, -20); ctx.lineTo(16 * lunge, 0); ctx.lineTo(0, 20); ctx.stroke(); }
+    ctx.restore();
+  } else if (w === 'staff') {
+    ctx.save(); ctx.translate(2, 18); ctx.rotate(-0.3);
+    ctx.strokeStyle = 'rgba(20,10,25,0.95)'; ctx.lineWidth = 2.5;
+    ctx.fillStyle = '#6a4a30'; rr(ctx, -3, -52, 6, 70, 3); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = aura;
+    ctx.beginPath(); ctx.arc(0, -58, 9, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(-3, -61, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  } else if (w === 'orb') {
+    ctx.save(); ctx.translate(8, 14);
+    ctx.fillStyle = aura; ctx.globalAlpha = 0.85;
+    ctx.beginPath(); ctx.arc(0, -6 + Math.sin(lunge * 9) * 2, 10, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = 'rgba(20,10,25,0.8)'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(-3, -9, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  } else if (w === 'spear') {
+    ctx.save(); ctx.translate(0, 20); ctx.rotate(-0.4);
+    ctx.fillStyle = '#6a4a30'; rr(ctx, -2.5, -64, 5, 84, 2.5); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#d8dce8';
+    ctx.beginPath(); ctx.moveTo(-6, -62); ctx.lineTo(0, -84); ctx.lineTo(6, -62); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  } else if (w === 'shield') {
+    ctx.save(); ctx.translate(-4, 16);
+    ctx.fillStyle = '#8a8a98';
+    ctx.beginPath(); ctx.ellipse(0, 0, 16, 20, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#c83030'; ctx.beginPath(); ctx.ellipse(0, 0, 7, 9, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ============ monster chibi ============
+function drawMonsterChibi(ctx: CanvasRenderingContext2D, kind: string, tint: string, eye: string, t: number, walk: number, swing: number, scale: number, stun: number, boss: boolean): void {
+  ctx.save();
+  ctx.scale(-scale, scale); // face left
+  ctx.strokeStyle = 'rgba(20,10,25,0.95)';
+  ctx.lineWidth = boss ? 4 : 2.8;
+  const dark = shade(tint.startsWith('#') ? tint : '#888888', -46);
+  const bobY = Math.sin(t * (kind === 'bat' || kind === 'wraith' ? 6 : 9)) * 3;
+  if (kind === 'slime') {
+    const sq = 1 + Math.sin(t * 9) * 0.12;
+    ctx.fillStyle = tint;
+    ctx.beginPath(); ctx.ellipse(0, -24 + bobY * 0.4, 26 * sq, 26 / sq, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = dark;
+    ctx.beginPath(); ctx.ellipse(-8, -12, 8, 5, 0.4, 0, Math.PI * 2); ctx.fill();
+    slimeFace(ctx, eye, -24 + bobY * 0.4, swing);
+  } else if (kind === 'bat') {
+    const flap = Math.sin(t * 18) * 0.9;
+    ctx.fillStyle = dark;
+    for (const s of [-1, 1]) {
+      ctx.save(); ctx.translate(s * 14, -46); ctx.rotate(s * flap);
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(s * 26, -10); ctx.lineTo(s * 18, 4); ctx.lineTo(s * 8, 2); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.restore();
+    }
+    ctx.fillStyle = tint;
+    ctx.beginPath(); ctx.ellipse(0, -46 + bobY, 16, 15, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-10, -58); ctx.lineTo(-14, -70); ctx.lineTo(-2, -60); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(10, -58); ctx.lineTo(14, -70); ctx.lineTo(2, -60); ctx.closePath(); ctx.fill(); ctx.stroke();
+    batFace(ctx, eye, -46 + bobY, swing);
+  } else if (kind === 'skeleton') {
+    chibiLegs(ctx, '#b8b0a0', walk, 0);
+    ctx.fillStyle = '#d8d0c0';
+    rr(ctx, -13, -62 + bobY * 0.4, 26, 32, 8); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = dark; ctx.lineWidth = 2;
+    for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(-9, -54 + i * 9 + bobY * 0.4); ctx.lineTo(9, -54 + i * 9 + bobY * 0.4); ctx.stroke(); }
+    ctx.strokeStyle = 'rgba(20,10,25,0.95)'; ctx.lineWidth = boss ? 4 : 2.8;
+    // skull
+    ctx.fillStyle = '#e8e0d0';
+    ctx.beginPath(); ctx.arc(0, -84 + bobY * 0.4, 20, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    rr(ctx, -9, -72 + bobY * 0.4, 18, 10, 4); ctx.fill(); ctx.stroke();
+    for (const s of [-1, 1]) {
+      ctx.fillStyle = '#181018';
+      ctx.beginPath(); ctx.ellipse(s * 8, -86 + bobY * 0.4, 5.5, 6.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = eye;
+      ctx.beginPath(); ctx.arc(s * 8 + 1, -86 + bobY * 0.4, 2.2, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.strokeStyle = '#181018'; ctx.lineWidth = 1.6;
+    for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.moveTo(i * 5, -70 + bobY * 0.4); ctx.lineTo(i * 5, -64 + bobY * 0.4); ctx.stroke(); }
+    ctx.strokeStyle = 'rgba(20,10,25,0.95)'; ctx.lineWidth = boss ? 4 : 2.8;
+    // sword arm
+    ctx.save(); ctx.translate(12, -54); ctx.rotate(swing > 0 ? lerp(-2.2, 0.6, swing) : -0.4);
+    ctx.fillStyle = '#b8b0a0';
+    ctx.beginPath(); ctx.moveTo(-3, -2); ctx.lineTo(0, -30); ctx.lineTo(3, -2); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  } else if (kind === 'imp') {
+    chibiLegs(ctx, dark, walk, 0);
+    ctx.fillStyle = tint;
+    rr(ctx, -15, -66 + bobY * 0.4, 30, 36, 10); ctx.fill(); ctx.stroke();
+    // wings
+    ctx.fillStyle = dark;
+    for (const s of [-1, 1]) {
+      ctx.save(); ctx.translate(s * 14, -56); ctx.rotate(s * (0.5 + Math.sin(t * 10) * 0.25));
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(s * 20, -14); ctx.lineTo(s * 14, 2); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.restore();
+    }
+    ctx.fillStyle = tint;
+    ctx.beginPath(); ctx.arc(0, -86 + bobY * 0.4, 19, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#e8e0d0';
+    for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(s * 10, -100 + bobY * 0.4); ctx.lineTo(s * 16, -112 + bobY * 0.4); ctx.lineTo(s * 4, -102 + bobY * 0.4); ctx.closePath(); ctx.fill(); ctx.stroke(); }
+    for (const s of [-1, 1]) {
+      ctx.fillStyle = '#fff8e0';
+      ctx.beginPath(); ctx.ellipse(s * 7, -88 + bobY * 0.4, 5, 6, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = eye;
+      ctx.beginPath(); ctx.arc(s * 7 - 1, -87 + bobY * 0.4, 2.6, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.strokeStyle = '#3a1018'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(0, -78 + bobY * 0.4, 6, 0.3, Math.PI - 0.3); ctx.stroke();
+    ctx.fillStyle = '#fff8e0';
+    ctx.beginPath(); ctx.moveTo(-4, -74 + bobY * 0.4); ctx.lineTo(-2, -69 + bobY * 0.4); ctx.lineTo(0, -74 + bobY * 0.4); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(4, -74 + bobY * 0.4); ctx.lineTo(2, -69 + bobY * 0.4); ctx.lineTo(0, -74 + bobY * 0.4); ctx.closePath(); ctx.fill();
+  } else if (kind === 'wraith') {
+    const fy = -50 + bobY;
+    ctx.fillStyle = tint;
+    ctx.beginPath();
+    ctx.moveTo(-20, fy - 20);
+    ctx.quadraticCurveTo(-24, fy + 20, -14 + Math.sin(t * 5) * 4, fy + 42);
+    ctx.quadraticCurveTo(-4, fy + 30, 0, fy + 44);
+    ctx.quadraticCurveTo(6, fy + 30, 14 + Math.sin(t * 5 + 2) * 4, fy + 40);
+    ctx.quadraticCurveTo(24, fy + 18, 20, fy - 20);
+    ctx.quadraticCurveTo(0, fy - 44, -20, fy - 20);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = dark;
+    ctx.beginPath(); ctx.ellipse(0, fy - 16, 14, 16, 0, 0, Math.PI * 2); ctx.fill();
+    for (const s of [-1, 1]) {
+      ctx.fillStyle = eye;
+      ctx.beginPath(); ctx.ellipse(s * 6, fy - 18, 3.4, 5, s * 0.2, 0, Math.PI * 2); ctx.fill();
+    }
+  } else if (kind === 'ogre') {
+    chibiLegs(ctx, dark, walk, 0);
+    ctx.fillStyle = tint;
+    rr(ctx, -24, -74 + bobY * 0.4, 48, 46, 14); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = dark;
+    rr(ctx, -24, -44, 48, 12, 5); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = tint;
+    ctx.beginPath(); ctx.arc(0, -92 + bobY * 0.4, 17, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#e8e0d0';
+    for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(s * 9, -104 + bobY * 0.4); ctx.lineTo(s * 13, -114 + bobY * 0.4); ctx.lineTo(s * 4, -105 + bobY * 0.4); ctx.closePath(); ctx.fill(); ctx.stroke(); }
+    for (const s of [-1, 1]) {
+      ctx.fillStyle = '#fff8e0';
+      ctx.beginPath(); ctx.ellipse(s * 6, -94 + bobY * 0.4, 4.4, 5.4, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = eye;
+      ctx.beginPath(); ctx.arc(s * 6 - 1, -93 + bobY * 0.4, 2.4, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.strokeStyle = '#3a1018'; ctx.lineWidth = 2.4;
+    ctx.beginPath(); ctx.arc(0, -84 + bobY * 0.4, 6, 0.4, Math.PI - 0.4); ctx.stroke();
+    // club
+    ctx.save(); ctx.translate(22, -58); ctx.rotate(swing > 0 ? lerp(-2.0, 0.8, swing) : -0.3);
+    ctx.fillStyle = '#7a5230';
+    rr(ctx, -4, -46, 8, 52, 4); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = dark;
+    ctx.beginPath(); ctx.ellipse(0, -52, 13, 16, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  } else {
+    // knight (boss mặc định)
+    chibiLegs(ctx, dark, walk, 0);
+    ctx.fillStyle = tint;
+    rr(ctx, -20, -72 + bobY * 0.4, 40, 42, 12); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = dark;
+    rr(ctx, -20, -44, 40, 11, 4); ctx.fill(); ctx.stroke();
+    // pauldrons
+    ctx.fillStyle = dark;
+    for (const s of [-1, 1]) { ctx.beginPath(); ctx.arc(s * 20, -64 + bobY * 0.4, 10, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+    // horned helm
+    ctx.fillStyle = tint;
+    ctx.beginPath(); ctx.arc(0, -90 + bobY * 0.4, 19, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#181018';
+    rr(ctx, -12, -94 + bobY * 0.4, 24, 8, 3); ctx.fill();
+    ctx.fillStyle = eye;
+    for (const s of [-1, 1]) { ctx.beginPath(); ctx.ellipse(s * 6, -90 + bobY * 0.4, 3, 2.4, 0, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = '#e8e0d0';
+    for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(s * 12, -102 + bobY * 0.4); ctx.lineTo(s * 20, -118 + bobY * 0.4); ctx.lineTo(s * 6, -104 + bobY * 0.4); ctx.closePath(); ctx.fill(); ctx.stroke(); }
+    // big sword
+    ctx.save(); ctx.translate(20, -56); ctx.rotate(swing > 0 ? lerp(-2.4, 0.7, swing) : -0.5);
+    ctx.fillStyle = '#3a2e28'; rr(ctx, -4, 0, 8, 12, 3); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = dark; rr(ctx, -11, -6, 22, 7, 3); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#c8ccd8';
+    ctx.beginPath(); ctx.moveTo(-8, -6); ctx.lineTo(-5, -70); ctx.lineTo(0, -80); ctx.lineTo(5, -70); ctx.lineTo(8, -6); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+  if (stun > 0) {
+    ctx.fillStyle = 'rgba(140,220,255,0.5)';
+    ctx.beginPath(); ctx.ellipse(0, -45, 30, 52, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#a8e0ff'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-12, -70); ctx.lineTo(-4, -56); ctx.lineTo(-12, -56); ctx.lineTo(-2, -38); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(10, -66); ctx.lineTo(16, -52); ctx.lineTo(8, -50); ctx.lineTo(14, -36); ctx.stroke();
+  }
+  ctx.restore();
+}
+function slimeFace(ctx: CanvasRenderingContext2D, eye: string, cy: number, swing: number): void {
+  for (const s of [-1, 1]) {
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.ellipse(s * 8, cy - 4, 5.4, 6.4, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = eye;
+    ctx.beginPath(); ctx.arc(s * 8 - 1, cy - 3, 3, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.strokeStyle = '#2a1020'; ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  if (swing > 0.2) { ctx.ellipse(0, cy + 8, 6, 5, 0, 0, Math.PI * 2); }
+  else ctx.arc(0, cy + 6, 7, 0.3, Math.PI - 0.3);
+  ctx.stroke();
+}
+function batFace(ctx: CanvasRenderingContext2D, eye: string, cy: number, swing: number): void {
+  for (const s of [-1, 1]) {
+    ctx.fillStyle = '#fff8e0';
+    ctx.beginPath(); ctx.ellipse(s * 6, cy - 2, 4.6, 5.6, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = eye;
+    ctx.beginPath(); ctx.arc(s * 6 - 1, cy - 1, 2.6, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.fillStyle = '#fff8e0';
+  if (swing > 0.2) {
+    ctx.beginPath(); ctx.moveTo(-4, cy + 6); ctx.lineTo(-2, cy + 11); ctx.lineTo(0, cy + 6); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(4, cy + 6); ctx.lineTo(2, cy + 11); ctx.lineTo(0, cy + 6); ctx.closePath(); ctx.fill();
+  }
+}
+
+// ============ zone palettes ============
+const ZONES = [
+  { bg: IMG.floor1, sky: ['#0c0a12', '#1e1420'], tint: '#6a6a78', accent: '#ff9a3c', eye: '#ffd23c', pillar: '#241f2e' },
+  { bg: IMG.floor2, sky: ['#100810', '#2a0e18'], tint: '#7a4a58', accent: '#8dff9a', eye: '#ff3b52', pillar: '#2a1420' },
+  { bg: IMG.floor3, sky: ['#160a14', '#3a1020'], tint: '#5a4a7a', accent: '#c9b8ff', eye: '#ff3b52', pillar: '#241228' },
+];
+const MONSTER_KINDS = [
+  ['slime', 'bat', 'skeleton'],
+  ['imp', 'skeleton', 'wraith'],
+  ['wraith', 'imp', 'ogre'],
+];
+
+// ============ engine ============
+export class GameIdle {
   private ctx: CanvasRenderingContext2D;
-  private cb: EngineCallbacks;
+  private onEvent: (e: EngineEvent) => void;
   private raf = 0;
   private last = 0;
-  private destroyed = false;
+  private globalT = 0;
+  private speedIdx = 0;
+  private state: 'title' | 'playing' | 'story' | 'victory' = 'title';
+  private paused = false;
 
-  state: 'idle' | 'playing' | 'story' | 'victory' = 'idle';
-  paused = false;
+  private gold = 0;
+  private gems = 0;
+  private kaelLevel = 1;
+  private kaelXp = 0;
+  private kaelAsc(): number { return Math.pow(1.3, Math.floor(this.kaelLevel / 10)); }
 
-  private gold = 1200;
-  private gems = 1500;
   private floor = 0;
   private wave = 0;
   private kills = 0;
-  private totalDmg = 0;
   private playTime = 0;
-  private speed = 1;
-  private kaelLevel = 1;
+  private waveDelay = 1;
+  private spawnQueue: SpawnReq[] = [];
+  private scrollX = 0;
+
+  private heroes: HeroUnit[] = [];
+  private enemies: Enemy[] = [];
+  private projs: Proj[] = [];
+  private parts: Particle[] = [];
+  private texts: FloatText[] = [];
+  private toasts: Toast[] = [];
+  private pickups: Pickup[] = [];
 
   private ownedCompanions: Record<string, number> = {};
   private ownedSkins: string[] = ['default'];
   private equippedSkin = 'default';
-  private ownedItems: string[] = [];
-  private equippedItems: Record<'weapon' | 'armor' | 'charm', string | null> = { weapon: null, armor: null, charm: null };
-  private pity = 0;
+  private ownedItems: Record<string, number> = {};
+  private equippedItems: string[] = [];
+  private pullsSinceEpic = 0;
 
-  private fighters: Fighter[] = [];
-  private foes: Foe[] = [];
-  private projs: Proj[] = [];
-  private parts: Particle[] = [];
-  private texts: FloatText[] = [];
-  private zaps: Zap[] = [];
-  private pending: { t: number; type: FoeType }[] = [];
-
-  private globalT = 0;
-  private scrollX = 0;
-  private waveDelay = 0.8;
-  private bossActive = false;
-  private banner: { main: string; sub: string; t: number; life: number; color: string } | null = null;
   private shake = 0;
   private flash = 0;
-  private flashColor = '#ffffff';
+  private flashColor = '#ff3b52';
   private slowmo = 0;
-  private hudT = 0;
-  private saveT = 0;
-  private uidSeq = 1;
-
+  private freeze = 0;
+  private banner: { main: string; sub: string; t: number; life: number; color: string } | null = null;
+  private bossActive = false;
+  private uid = 1;
+  private lastMetaPush = 0;
+  private pendingStart = false;
   private bgImgs: Record<string, HTMLImageElement> = {};
-  private bgLoaded: Record<string, boolean> = {};
 
-  constructor(canvas: HTMLCanvasElement, cb: EngineCallbacks) {
-    this.cv = canvas;
-    this.cb = cb;
-    const c = canvas.getContext('2d');
-    if (!c) throw new Error('no 2d context');
-    this.ctx = c;
-    this.fit();
-    this.loadBg();
-    this.load();
-    this.rebuildParty();
+  private partyAtkAura = 1;
+  private partyGoldAura = 1;
+  private partyGemAura = 1;
+  private hudCache: HudState = { floor: 0, wave: 0, inBoss: false, bossName: '', bossHpPct: 0, gold: 0, gems: 0, kaelLevel: 1, asc: 1, power: 0, floorName: FLOOR_NAMES[0] };
+
+  constructor(canvas: HTMLCanvasElement, onEvent: (e: EngineEvent) => void) {
+    canvas.width = VIEW_W;
+    canvas.height = VIEW_H;
+    this.ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
+    this.onEvent = onEvent;
+    if (document.fonts) {
+      void document.fonts.load('20px "Bangers"');
+      void document.fonts.load('700 12px "Chakra Petch"');
+      void document.fonts.load('600 12px "Be Vietnam Pro"');
+    }
+    for (const key of Object.keys(IMG)) {
+      const img = new Image();
+      img.src = (IMG as Record<string, string>)[key];
+      this.bgImgs[key] = img;
+    }
+    this.recomputeParty();
     this.last = performance.now();
-    const loop = (t: number) => {
-      if (this.destroyed) return;
-      const dt = clamp((t - this.last) / 1000, 0, 0.05);
-      this.last = t;
+    const loop = (now: number): void => {
+      const dt = Math.min(0.05, (now - this.last) / 1000);
+      this.last = now;
+      this.globalT += dt;
       this.tick(dt);
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
-    window.addEventListener('resize', this.fit);
+    window.addEventListener('keydown', this.onKey);
+    window.addEventListener('beforeunload', this.save);
   }
 
   destroy(): void {
-    this.destroyed = true;
     cancelAnimationFrame(this.raf);
-    window.removeEventListener('resize', this.fit);
+    window.removeEventListener('keydown', this.onKey);
+    window.removeEventListener('beforeunload', this.save);
     this.save();
   }
 
-  private fit = (): void => {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    this.cv.width = W * dpr;
-    this.cv.height = H * dpr;
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  private onKey = (e: KeyboardEvent): void => {
+    if (e.code === 'Space') e.preventDefault();
+    if (e.code === 'KeyP' || e.code === 'Escape') {
+      if (this.state === 'playing') this.setPaused(!this.paused);
+    }
+    if (e.code === 'KeyM') {
+      setAudioMuted(!getMuted());
+      this.pushMeta();
+    }
   };
 
-  private loadBg(): void {
-    [IMG.title, IMG.floor1, IMG.floor2, IMG.floor3].forEach((u) => {
-      const im = new Image();
-      im.onload = () => { this.bgLoaded[u] = true; };
-      im.src = u;
-      this.bgImgs[u] = im;
-    });
-  }
-
-  /* ---------------- persistence ---------------- */
-  private save(): void {
-    try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify({
-        v: 2, gold: this.gold, gems: this.gems, floor: this.floor, wave: this.wave,
-        kills: this.kills, totalDmg: this.totalDmg, playTime: this.playTime, kaelLevel: this.kaelLevel,
-        ownedCompanions: this.ownedCompanions, ownedSkins: this.ownedSkins,
-        equippedSkin: this.equippedSkin, ownedItems: this.ownedItems,
-        equippedItems: this.equippedItems, pity: this.pity,
-      }));
-    } catch { /* ignore */ }
-  }
-  private load(): void {
-    try {
-      const raw = localStorage.getItem(SAVE_KEY);
-      if (!raw) return;
-      const d = JSON.parse(raw) as Record<string, unknown>;
-      if (typeof d.gold === 'number') this.gold = d.gold;
-      if (typeof d.gems === 'number') this.gems = d.gems;
-      if (typeof d.floor === 'number') this.floor = clamp(d.floor as number, 0, TOTAL_FLOORS - 1);
-      if (typeof d.wave === 'number') this.wave = clamp(d.wave as number, 0, WAVES_PER_FLOOR - 1);
-      if (typeof d.kills === 'number') this.kills = d.kills;
-      if (typeof d.totalDmg === 'number') this.totalDmg = d.totalDmg;
-      if (typeof d.playTime === 'number') this.playTime = d.playTime;
-      if (typeof d.kaelLevel === 'number') this.kaelLevel = Math.max(1, d.kaelLevel);
-      if (d.ownedCompanions && typeof d.ownedCompanions === 'object') this.ownedCompanions = d.ownedCompanions as Record<string, number>;
-      if (Array.isArray(d.ownedSkins)) this.ownedSkins = d.ownedSkins as string[];
-      if (typeof d.equippedSkin === 'string' && this.ownedSkins.includes(d.equippedSkin)) this.equippedSkin = d.equippedSkin;
-      if (Array.isArray(d.ownedItems)) this.ownedItems = d.ownedItems as string[];
-      if (d.equippedItems && typeof d.equippedItems === 'object') {
-        const e = d.equippedItems as Record<string, string | null>;
-        this.equippedItems = { weapon: e.weapon ?? null, armor: e.armor ?? null, charm: e.charm ?? null };
-      }
-      if (typeof d.pity === 'number') this.pity = d.pity;
-    } catch { /* ignore */ }
-  }
-  hardReset(): void {
-    try { localStorage.removeItem(SAVE_KEY); } catch { /* ignore */ }
-    location.reload();
-  }
-  hasSave(): boolean {
-    try { return !!localStorage.getItem(SAVE_KEY); } catch { return false; }
-  }
-
-  /* ---------------- party / stats ---------------- */
-  private kaelSkinCfg(): HeroCfg {
-    const s = SKINS.find((k) => k.id === this.equippedSkin);
-    return s ? s.cfg : KAEL_BASE;
-  }
-  private itemBonus(): { atk: number; hp: number; crit: number; goldBonus: number } {
-    const b = { atk: 0, hp: 0, crit: 0, goldBonus: 0 };
-    (['weapon', 'armor', 'charm'] as const).forEach((slot) => {
-      const id = this.equippedItems[slot];
-      if (!id) return;
+  // ---------- economy ----------
+  private gw(): number { return this.floor * WAVES_PER_FLOOR + this.wave + 1; }
+  private zone(): number { return this.floor < 10 ? 0 : this.floor < 20 ? 1 : 2; }
+  private foeHpBase(): number { return 5 * Math.pow(this.gw(), 2.45); }
+  private foeAtkBase(): number { return 3.2 * Math.pow(this.gw(), 2.1); }
+  private goldPerKill(): number { return Math.round((5 + this.gw() * 1.5) * Math.pow(this.gw(), 1.15) * 10 * this.partyGoldAura); }
+  private itemBonus(): { atk: number; hp: number; crit: number; aspd: number } {
+    const b = { atk: 0, hp: 0, crit: 0, aspd: 0 };
+    for (const id of this.equippedItems) {
       const def = ITEMS.find((i) => i.id === id);
-      if (def) { b.atk += def.atk; b.hp += def.hp; b.crit += def.crit; b.goldBonus += def.goldBonus; }
-    });
+      if (!def) continue;
+      const c = this.ownedItems[id] ?? 1;
+      b.atk += (def.bonus.atk ?? 0) * c;
+      b.hp += (def.bonus.hp ?? 0) * c;
+      b.crit += (def.bonus.crit ?? 0) * c;
+      b.aspd += (def.bonus.aspd ?? 0) * c;
+    }
     return b;
   }
-  private growth(level: number): number { return 1 + 0.13 * (level - 1); }
-  upgradeCost(level: number): number { return Math.round(200 * Math.pow(level, 1.55)); }
-
-  private estPower(defId: string, isKael: boolean, level: number): number {
-    const g = this.growth(level);
-    if (isKael) return Math.round((15 * g + this.itemBonus().atk) * 10 + 150 * g + this.itemBonus().hp);
-    const def = COMPANIONS.find((c) => c.id === defId);
-    if (!def) return 0;
-    return Math.round(def.atk * g * 10 + def.hp * g);
+  private power(): number {
+    let p = 0;
+    for (const h of this.heroes) p += h.atk * 2 + h.maxHp * 0.25;
+    return Math.round(p);
   }
 
-  /** Chọn 5 đồng đội mạnh nhất theo đội hình: 2 trước / 1 giữa / 1 sau / 1 viện. */
-  private activePartyDefs(): { defId: string; isKael: boolean; level: number; pos: PosId; school: SchoolId }[] {
-    type Cand = { defId: string; isKael: boolean; level: number; pos: PosId; school: SchoolId; power: number };
-    const cands: Cand[] = [{
-      defId: 'kael', isKael: true, level: this.kaelLevel, pos: 'front', school: 'kiem',
-      power: this.estPower('kael', true, this.kaelLevel) * 1.001,
-    }];
-    Object.keys(this.ownedCompanions).forEach((id) => {
-      const def = COMPANIONS.find((c) => c.id === id);
-      if (!def) return;
-      cands.push({ defId: id, isKael: false, level: this.ownedCompanions[id], pos: def.pos, school: def.school, power: this.estPower(id, false, this.ownedCompanions[id]) });
+  // ---------- party ----------
+  private kaelLook(): ChibiLook {
+    const s = SKINS.find((k) => k.id === this.equippedSkin) ?? SKINS[0];
+    return s.look;
+  }
+  private recomputeParty(): void {
+    const prevHp: Record<string, number> = {};
+    for (const h of this.heroes) prevHp[h.uid] = h.hp / h.maxHp;
+    const bonus = this.itemBonus();
+    const cands = COMPANIONS.filter((c) => (this.ownedCompanions[c.id] ?? 0) > 0);
+    // aura
+    this.partyAtkAura = 1; this.partyGoldAura = 1; this.partyGemAura = 1;
+    for (const c of cands) {
+      if (c.skill.id === 'buff' || c.skill.id === 'holysplash') this.partyAtkAura *= 1.12;
+    }
+    const ranked = [...cands].sort((a, b) => this.compPower(b) - this.compPower(a));
+    const picked: CompanionDef[] = [];
+    for (const c of ranked) {
+      if (picked.length >= 5) break;
+      picked.push(c);
+    }
+    // ensure at least one front if any front owned
+    if (!picked.some((c) => c.pos === 'front')) {
+      const front = ranked.find((c) => c.pos === 'front' && !picked.includes(c));
+      if (front && picked.length > 0) picked[picked.length - 1] = front;
+    }
+    const slots: Record<Pos, number[]> = { front: [505, 465], mid: [425, 385], back: [290, 248, 206] };
+    const used: Record<Pos, number> = { front: 0, mid: 0, back: 0 };
+    const newHeroes: HeroUnit[] = [];
+    // Kael always front-most
+    const kL = this.kaelLevel;
+    const kAtk = (15 * Math.pow(1.1, kL - 1) + bonus.atk) * this.kaelAsc();
+    const kHp = 150 * Math.pow(1.085, kL - 1) + bonus.hp;
+    newHeroes.push({
+      uid: 'kael', isKael: true, defId: 'kael', level: kL,
+      atk: kAtk, maxHp: kHp, hp: kHp, aspd: Math.min(1.7, 1.1 + kL * 0.004), crit: 0.08 + bonus.crit,
+      ranged: false, pos: 'front', x: 560, slotY: 0, atkCd: 0.4, swing: 0, hurtT: 0, frozenT: 0, hitCount: 0, dead: false,
+      look: this.kaelLook(), skill: 'double', def: null,
     });
-    cands.sort((a, b) => b.power - a.power);
-    const quota: Record<PosId, number> = { front: 2, mid: 1, back: 1, far: 1 };
-    const picked: Cand[] = [];
-    for (const c of cands) {
-      if (picked.length >= 5) break;
-      if (quota[c.pos] > 0) { quota[c.pos] -= 1; picked.push(c); }
+    for (const c of picked) {
+      const lvl = this.ownedCompanions[c.id] ?? 1;
+      const g = Math.pow(1.095, lvl - 1);
+      const atk = (c.atkBase * g + bonus.atk * 0.4) * this.partyAtkAura;
+      const hp = c.hpBase * g + bonus.hp * 0.4;
+      const aspd = c.atkSpd * (1 + bonus.aspd) * (c.skill.id === 'flurry' ? 1.2 : 1);
+      const slot = slots[c.pos][used[c.pos] % slots[c.pos].length];
+      used[c.pos] += 1;
+      const uid = c.id;
+      newHeroes.push({
+        uid, isKael: false, defId: c.id, level: lvl,
+        atk, maxHp: hp, hp, aspd, crit: c.crit + bonus.crit * 0.5,
+        ranged: c.ranged, pos: c.pos, x: slot + (c.pos === 'back' ? 0 : 0), slotY: 0,
+        atkCd: rand(0.2, 0.6), swing: 0, hurtT: 0, frozenT: 0, hitCount: 0, dead: false,
+        look: c.look, skill: c.skill.id, def: c,
+      });
     }
-    for (const c of cands) {
-      if (picked.length >= 5) break;
-      if (!picked.includes(c)) picked.push(c);
+    // preserve hp pct
+    for (const h of newHeroes) {
+      const r = prevHp[h.uid];
+      if (r !== undefined && r > 0 && !h.dead) h.hp = h.maxHp * clamp(r, 0.2, 1);
     }
-    // sắp xếp: trước → viện
-    const order: PosId[] = ['front', 'mid', 'back', 'far'];
-    picked.sort((a, b) => order.indexOf(a.pos) - order.indexOf(b.pos));
-    return picked;
+    this.heroes = newHeroes;
   }
-
-  getKaelLevel(): number { return this.kaelLevel; }
-  getMeta(): { ownedSkins: string[]; equippedSkin: string; ownedItems: string[]; equipped: Record<'weapon' | 'armor' | 'charm', string | null> } {
-    return {
-      ownedSkins: [...this.ownedSkins], equippedSkin: this.equippedSkin,
-      ownedItems: [...this.ownedItems], equipped: { ...this.equippedItems },
-    };
+  private compPower(c: CompanionDef): number {
+    const lvl = this.ownedCompanions[c.id] ?? 1;
+    const g = Math.pow(1.095, lvl - 1);
+    return c.atkBase * g * 2 + c.hpBase * g * 0.25 + ({ common: 0, rare: 60, epic: 200, legendary: 500 } as Record<Rarity, number>)[c.rarity];
   }
-  upgradeKael(): boolean {
-    const cost = this.upgradeCost(this.kaelLevel);
+  upgradeCompanion(id: string): boolean {
+    const lvl = this.ownedCompanions[id] ?? 0;
+    if (lvl <= 0) return false;
+    const cost = this.upgradeCost(lvl);
     if (this.gold < cost) return false;
-    this.gold -= cost; this.kaelLevel += 1;
-    this.rebuildParty(); this.burstAt(470, GROUND - 70, '#ffd23c', 18, 'star');
-    sfx.levelup(); this.pushHud(); this.save();
+    this.gold -= cost;
+    this.ownedCompanions[id] = lvl + 1;
+    this.recomputeParty();
+    this.toast(`${COMPANIONS.find((c) => c.id === id)?.name ?? id} đạt cấp ${lvl + 1}!`, '#3fe0b0');
+    sfx.levelup();
+    this.save();
+    this.pushMeta();
     return true;
   }
+  private upgradeCost(lvl: number): number { return Math.round(25 + 12 * Math.pow(lvl, 1.85)); }
+  upgradeCostOf(lvl: number): number { return this.upgradeCost(Math.max(1, lvl)); }
 
-  private homeForPos(pos: PosId, idxInPos: number): number {
-    const base: Record<PosId, number> = { front: 470, mid: 360, back: 295, far: 235 };
-    return base[pos] - idxInPos * 58;
+  // ---------- flow ----------
+  startGame(): void {
+    initAudio();
+    const hasSave = this.load();
+    if (!hasSave) {
+      this.gold = 600; this.gems = 1000;
+    } else {
+      this.toast('Chào mừng trở lại, Đại Ca!', '#ffd23c');
+    }
+    this.recomputeParty();
+    this.state = 'playing';
+    if (hasSave) {
+      this.startFloor(this.floor);
+    } else {
+      this.pendingStart = true; // chờ hết truyện mở đầu mới khai chiến
+    }
+    this.pushMeta();
   }
-
-  private rebuildParty(): void {
-    const defs = this.activePartyDefs();
-    const bonus = this.itemBonus();
-    const oldHp: Record<string, number> = {};
-    this.fighters.forEach((f) => { oldHp[f.uid] = f.hp / f.maxHp; });
-    const posCount: Record<PosId, number> = { front: 0, mid: 0, back: 0, far: 0 };
-    this.fighters = defs.map((d) => {
-      const isKael = d.isKael;
-      const def = isKael ? null : COMPANIONS.find((c) => c.id === d.defId);
-      const level = isKael ? this.kaelLevel : d.level;
-      const g = this.growth(level);
-      let maxHp: number, atk: number, spd: number, crit = 8;
-      let cfg: HeroCfg; let name: string; let cls: string; let role: string; let rarity: Rarity;
-      if (isKael) {
-        maxHp = 150 * g + bonus.hp; atk = 15 * g + bonus.atk; spd = Math.min(1.7, 1.1 + level * 0.01);
-        crit += 12 + bonus.crit; cfg = this.kaelSkinCfg(); name = 'Kael'; cls = 'Hắc Kiếm Sĩ'; role = 'melee'; rarity = 'legendary';
-      } else if (def) {
-        maxHp = def.hp * g; atk = def.atk * g; spd = Math.min(2.2, def.spd + level * 0.01);
-        if (def.school === 'kiem') crit += 12;
-        cfg = def.cfg; name = def.name; cls = def.cls; role = def.role; rarity = def.rarity;
-      } else { maxHp = 10; atk = 1; spd = 1; cfg = KAEL_BASE; name = '?'; cls = '?'; role = 'melee'; rarity = 'common'; }
-      const uid = isKael ? 'kael' : d.defId;
-      const prev = oldHp[uid];
-      const homeX = this.homeForPos(d.pos, posCount[d.pos]);
-      posCount[d.pos] += 1;
-      return {
-        uid, defId: d.defId, name, cls, role, pos: d.pos, school: d.school, rarity, level, isKael, cfg,
-        maxHp: Math.round(maxHp), hp: Math.round(maxHp * (prev ?? 1)), atk, spd, crit,
-        x: homeX, homeX, state: 'idle' as const, stateT: 0, cd: rand(0.05, 0.4),
-        target: -1, reviveT: 0, flashT: 0, attackAnim: -1, animT: rand(0, 10), buffT: 0,
-      };
+  hasSaveData(): boolean {
+    try { return localStorage.getItem(SAVE_KEY) !== null; } catch { return false; }
+  }
+  continueFromStory(): void {
+    this.state = 'playing';
+    if (this.pendingStart) {
+      this.pendingStart = false;
+      this.startFloor(this.floor);
+    } else if (this.enemies.length === 0 && this.spawnQueue.length === 0) {
+      this.startFloor(this.floor);
+    }
+    this.pushMeta();
+  }
+  toTitle(): void {
+    this.save();
+    this.state = 'title';
+    this.enemies = []; this.projs = []; this.pickups = []; this.parts = []; this.texts = [];
+    this.bossActive = false; this.banner = null;
+    this.pushMeta();
+  }
+  restart(): void {
+    try { localStorage.removeItem(SAVE_KEY); } catch { /* ignore */ }
+    this.gold = 600; this.gems = 1000; this.kaelLevel = 1; this.kaelXp = 0;
+    this.floor = 0; this.wave = 0; this.kills = 0; this.playTime = 0;
+    this.ownedCompanions = {}; this.ownedSkins = ['default']; this.equippedSkin = 'default';
+    this.ownedItems = {}; this.equippedItems = []; this.pullsSinceEpic = 0;
+    this.recomputeParty();
+    this.state = 'playing';
+    this.startFloor(0);
+    this.pushMeta();
+  }
+  private startFloor(f: number): void {
+    this.floor = clamp(f, 0, TOTAL_FLOORS - 1);
+    this.wave = 0;
+    this.waveDelay = 0.6;
+    this.spawnQueue = [];
+    this.enemies = [];
+    this.projs = [];
+    this.bossActive = false;
+    for (const h of this.heroes) { h.hp = h.maxHp; h.dead = false; }
+    this.showBanner(`TẦNG ${this.floor + 1}/30`, FLOOR_NAMES[this.floor], ZONES[this.zone()].accent, 2.4);
+    sfx.warn();
+    this.startWave();
+  }
+  private startWave(): void {
+    const isBoss = this.wave === WAVES_PER_FLOOR - 1;
+    if (isBoss) {
+      this.bossActive = true;
+      const boss = BOSSES[this.floor];
+      this.showBanner('BOSS XUẤT HIỆN', boss.name, '#ff3b52', 2.6);
+      sfx.roar();
+      this.shake = Math.max(this.shake, 9);
+      this.spawnQueue = [{ kind: 'boss', delay: 0.9 }];
+    } else {
+      const count = 2 + Math.min(3, Math.floor(this.floor / 6)) + (this.wave >= 3 ? 1 : 0);
+      this.spawnQueue = [];
+      for (let i = 0; i < count; i++) {
+        this.spawnQueue.push({ kind: pick(MONSTER_KINDS[this.zone()]), delay: 0.15 + i * 0.3 });
+      }
+      if (this.floor >= 5 && this.wave >= 4 && Math.random() < 0.5) this.spawnQueue.push({ kind: 'ogre', delay: 0.5 + count * 0.3 });
+    }
+    this.waveDelay = 0.7;
+  }
+  private spawnEnemy(kind: string): void {
+    const zone = this.zone();
+    const z = ZONES[zone];
+    const boss = kind === 'boss';
+    const hpMul = ({ slime: 0.8, bat: 0.6, skeleton: 1, imp: 0.9, wraith: 1.1, ogre: 1.7, knight: 1, demon: 1, queen: 1, lich: 1 } as Record<string, number>)[kind] ?? 1;
+    const atkMul = ({ ogre: 1.35, knight: 1.1 } as Record<string, number>)[kind] ?? 1;
+    const hp = this.foeHpBase() * hpMul * (boss ? 1.8 : 1);
+    const tints: Record<string, string> = {
+      slime: zone === 1 ? '#5a8a4a' : '#4a7a8a', bat: '#5a4a6a', skeleton: '#c8c0b0', imp: '#b04a5a', wraith: '#6a5a9a', ogre: '#8a6a4a',
+      knight: '#7a7a8a', demon: '#8a2a3a', queen: '#9a3a6a', lich: '#5a6a8a',
+    };
+    const k = boss ? BOSSES[this.floor].kind : kind;
+    this.enemies.push({
+      uid: this.uid++, kind: k, boss, bossIdx: this.floor,
+      hp, maxHp: hp, atk: this.foeAtkBase() * atkMul * (boss ? 1.35 : 1), atkCd: rand(0.8, 1.4), swing: 0,
+      x: VIEW_W + rand(80, 160) + (boss ? 200 : 0), hover: k === 'bat' || k === 'wraith' ? 1 : 0,
+      stunT: 0, hurtT: 0, scale: (0.92 + Math.random() * 0.16) * (1 + this.floor * 0.006) * (boss ? 2.1 : 1),
+      walk: rand(0, 6), skillCd: 5, telegraph: 0, dead: false,
+      tint: tints[k] ?? z.tint, eye: boss ? '#ff3b52' : z.eye,
     });
   }
 
-  teamPower(): number {
-    return this.fighters.reduce((s, f) => s + Math.round(f.atk * 10 + f.maxHp), 0);
+  private showBanner(main: string, sub: string, color: string, life: number): void {
+    this.banner = { main, sub, t: 0, life, color };
+  }
+  private toast(text: string, color: string): void {
+    this.toasts.push({ text, color, life: 3.2 });
+    if (this.toasts.length > 4) this.toasts.shift();
   }
 
-  /* ---------------- public API ---------------- */
-  startGame(): void {
-    initAudio();
-    this.pushHud();
+  // ---------- combat ----------
+  private dealHeroDamage(h: HeroUnit, e: Enemy, mult: number, opts?: { splash?: number; meteor?: boolean }): void {
+    if (e.dead) return;
+    let crit = Math.random() < h.crit;
+    let dmg = h.atk * mult * rand(0.92, 1.08) * (crit ? 2 : 1);
+    // skills
+    if (h.skill === 'berserk' && h.hp < h.maxHp * 0.5) dmg *= 1.6;
+    if ((h.skill === 'execute' || h.skill === 'annihilate') && e.hp < e.maxHp * 0.3) dmg *= 2;
+    h.hitCount += 1;
+    e.hp -= dmg;
+    e.hurtT = 0.18;
+    this.texts.push({ x: e.x + rand(-14, 14), y: GROUND - 130 * e.scale + rand(-10, 10), text: fmt(dmg), color: crit ? '#ffd23c' : (h.isKael ? '#ff8a5a' : '#f0e8d8'), life: 0.9, size: crit ? 24 : 15 });
+    this.burst(e.x, GROUND - 70 * e.scale, crit ? 10 : 5, crit ? '#ffd23c' : '#ff5a4a', 'spark');
+    if (crit) sfx.crit(); else sfx.hit();
+    if (crit) this.freeze = Math.max(this.freeze, 0.04);
+    // splash
+    const splashR = opts?.splash ?? (h.skill === 'splash' ? 110 : h.skill === 'holysplash' ? 130 : h.skill === 'annihilate' || h.skill === 'meteor' ? 130 : 0);
+    if (splashR > 0 && !opts?.meteor) {
+      for (const o of this.enemies) {
+        if (o !== e && !o.dead && Math.abs(o.x - e.x) < splashR) {
+          o.hp -= dmg * 0.55; o.hurtT = 0.18;
+          this.burst(o.x, GROUND - 60 * o.scale, 4, '#ffb43c', 'spark');
+        }
+      }
+    }
+    // stun / freeze
+    const stunChance = h.skill === 'stun' ? 0.25 : h.skill === 'freeze' ? (h.defId === 'vex' ? 0.35 : 0.3) : 0;
+    if (stunChance > 0 && Math.random() < stunChance && !e.dead) {
+      e.stunT = h.defId === 'vex' ? 0.9 : 0.8;
+      this.burst(e.x, GROUND - 80 * e.scale, 8, '#8cdcff', 'ice');
+      sfx.splat();
+    }
+    // heal skills
+    if (h.skill === 'heal' || h.skill === 'strongheal' || h.skill === 'holysplash') {
+      const factor = h.skill === 'strongheal' ? 0.9 : 0.4;
+      const hurt = [...this.heroes].filter((a) => !a.dead && a.hp < a.maxHp).sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0];
+      if (hurt) {
+        hurt.hp = Math.min(hurt.maxHp, hurt.hp + dmg * factor);
+        this.texts.push({ x: hurt.x, y: GROUND - 120, text: `+${fmt(dmg * factor)}`, color: '#3fe0b0', life: 0.8, size: 13 });
+        this.burst(hurt.x, GROUND - 70, 4, '#3fe0b0', 'spark');
+      }
+    }
+    if (h.skill === 'lifesteal' && !h.dead) {
+      h.hp = Math.min(h.maxHp, h.hp + dmg * 0.3);
+    }
+    // meteor every 4 hits
+    if (h.skill === 'meteor' && h.hitCount % 4 === 0) {
+      this.projs.push({ x: e.x + rand(-30, 30), y: -60, tx: e.x, ty: GROUND - 30, target: '', speed: 640, dmg: h.atk * 2.5, kind: 'meteor', t: 0, splash: 130, crit: h.crit, ally: true });
+      sfx.beam();
+    }
+    if (e.hp <= 0 && !e.dead) this.killEnemy(e, h);
   }
-  continueFromStory(): void {
-    initAudio();
-    this.state = 'playing';
-    this.startFloor(this.floor);
-    this.pushHud();
+  private killEnemy(e: Enemy, killer: HeroUnit): void {
+    e.dead = true;
+    this.kills += 1;
+    const gold = this.goldPerKill() * (e.boss ? 4 : 1);
+    this.gold += gold;
+    this.burst(e.x, GROUND - 60 * e.scale, e.boss ? 40 : 14, '#ffd23c', 'spark');
+    this.burst(e.x, GROUND - 60 * e.scale, e.boss ? 24 : 10, '#ff5a4a', 'ember');
+    this.pickups.push({ x: e.x, y: GROUND - 80 * e.scale, vy: -rand(120, 200), vx: rand(-40, 40), kind: 'gold', val: gold, life: 4 });
+    const gemChance = (0.3 + (killer.skill === 'holysplash' ? 0.1 : 0)) * this.partyGemAura * (e.boss ? 3 : 1);
+    if (Math.random() < gemChance) {
+      const amt = Math.round((2 + this.gw() * 0.5) * 8 * (e.boss ? 1 : 1));
+      this.gems += amt;
+      this.pickups.push({ x: e.x + 20, y: GROUND - 100 * e.scale, vy: -rand(140, 220), vx: rand(-60, 20), kind: 'gem', val: amt, life: 4 });
+      this.texts.push({ x: e.x + 20, y: GROUND - 150, text: `+${fmt(amt)} Ngọc`, color: '#ff4fd8', life: 1.1, size: 14 });
+    }
+    if (e.boss) {
+      const bonus = Math.round((4 + this.floor) * 10);
+      this.gems += bonus;
+      this.texts.push({ x: e.x, y: GROUND - 190, text: `BOSS +${fmt(bonus)} Ngọc`, color: '#ff4fd8', life: 1.6, size: 20 });
+      this.toast(`Boss ${BOSSES[this.floor].name} đã gục ngã!`, '#ff3b52');
+    }
+    this.texts.push({ x: e.x, y: GROUND - 120 * e.scale, text: `+${fmt(gold)} vàng`, color: '#ffd23c', life: 1, size: 13 });
+    this.gainXp(12 + this.floor);
+    sfx.pickup();
+    if (e.boss) {
+      sfx.bossdie();
+      this.shake = Math.max(this.shake, 16);
+      this.flash = 0.9; this.flashColor = '#ff3b52';
+      this.slowmo = 0.5;
+      this.gainXp(60 + this.floor * 4);
+      this.kaelLevel += 1;
+      // owned companions +1 cấp (tự cường)
+      for (const id of Object.keys(this.ownedCompanions)) this.ownedCompanions[id] += 1;
+      this.recomputeParty();
+      this.floorCleared();
+    }
   }
-  setSpeed(s: number): void { this.speed = s; this.pushHud(); }
-  togglePause(): void { this.paused = !this.paused; this.pushHud(); }
-  toggleMute(): void { setAudioMuted(!getMuted()); this.pushHud(); }
-
-  startFloor(idx: number, first = false): void {
-    this.floor = idx;
-    this.wave = 0;
-    this.foes = []; this.projs = []; this.pending = []; this.zaps = [];
+  private gainXp(x: number): void {
+    this.kaelXp += x;
+    while (this.kaelXp >= this.kaelXpNeed()) {
+      this.kaelXp -= this.kaelXpNeed();
+      this.kaelLevel += 1;
+      this.toast(`KAEL THĂNG CẤP ${this.kaelLevel}!`, '#ffd23c');
+      this.burst(560, GROUND - 90, 22, '#ffd23c', 'spark');
+      sfx.levelup();
+      this.recomputeParty();
+      for (const h of this.heroes) h.hp = h.maxHp;
+    }
+  }
+  private kaelXpNeed(): number { return Math.floor(this.kaelLevel * (this.kaelLevel + 1) / 2 + 10); }
+  private floorCleared(): void {
     this.bossActive = false;
-    this.waveDelay = first ? 0.8 : 1.1;
-    this.fighters.forEach((f) => { f.hp = f.maxHp; f.state = 'idle'; f.x = f.homeX; });
-    const name = FLOOR_NAMES[idx];
-    const boss = BOSSES[idx];
-    this.banner = {
-      main: `TẦNG ${idx + 1}/30 — ${name.toUpperCase()}`,
-      sub: `Boss canh giữ: ${boss.name}`, t: 0, life: 2.4, color: '#ff9a3c',
-    };
-    sfx.roar();
+    this.enemies = this.enemies.filter((e) => !e.dead);
+    const cleared = this.floor;
+    if (cleared === TOTAL_FLOORS - 1) {
+      this.state = 'victory';
+      this.save();
+      this.onEvent({ type: 'victory', stats: { kills: this.kills, gold: this.gold, playTime: this.playTime } });
+      return;
+    }
+    this.save();
+    this.pushMeta();
+    if (cleared === 9 || cleared === 19 || cleared === 28) {
+      this.floor = cleared + 1;
+      this.wave = 0;
+      this.enemies = [];
+      this.projs = [];
+      this.spawnQueue = [];
+      this.state = 'story';
+      this.onEvent({ type: 'story', chapter: cleared === 9 ? 1 : cleared === 19 ? 2 : 3 });
+      return;
+    }
+    this.startFloor(cleared + 1);
   }
 
-  /* ---------------- gacha ---------------- */
-  canPull(n: number): boolean { return this.gems >= (n === 10 ? GACHA_COST_10 : GACHA_COST); }
-  pullGacha(n: number): GachaResult[] {
-    const cost = n === 10 ? GACHA_COST_10 : GACHA_COST;
-    if (this.gems < cost) return [];
+  // ---------- gacha ----------
+  private rollOne(): GachaResult {
+    const r = Math.random();
+    let rarity: Rarity = r < 0.04 ? 'legendary' : r < 0.16 ? 'epic' : r < 0.5 ? 'rare' : 'common';
+    this.pullsSinceEpic += 1;
+    if (this.pullsSinceEpic >= 10 && rarity === 'common') {
+      rarity = Math.random() < 0.2 ? 'legendary' : 'epic';
+    }
+    if (rarity === 'epic' || rarity === 'legendary') this.pullsSinceEpic = 0;
+    const poolR = Math.random();
+    if (poolR < 0.55) {
+      const pool = COMPANIONS.filter((c) => c.rarity === rarity);
+      const c = pick(pool);
+      const owned = this.ownedCompanions[c.id] ?? 0;
+      if (owned === 0) {
+        this.ownedCompanions[c.id] = 1;
+        this.recomputeParty();
+        return { kind: 'companion', id: c.id, name: c.name, rarity, isNew: true, dupeText: 'Đồng hành mới gia nhập!' };
+      }
+      this.ownedCompanions[c.id] = owned + 2;
+      this.recomputeParty();
+      return { kind: 'companion', id: c.id, name: c.name, rarity, isNew: false, dupeText: `Đã sở hữu → +2 cấp (Lv ${owned + 2})` };
+    }
+    if (poolR < 0.75) {
+      const skinPool = SKINS.filter((s) => s.id !== 'default' && !this.ownedSkins.includes(s.id));
+      if (skinPool.length > 0) {
+        const s = pick(skinPool);
+        this.ownedSkins.push(s.id);
+        return { kind: 'skin', id: s.id, name: s.name, rarity, isNew: true, dupeText: 'Skin mới cho Kael!' };
+      }
+      const refund = rarity === 'legendary' ? 400 : rarity === 'epic' ? 250 : 120;
+      this.gems += refund;
+      return { kind: 'skin', id: 'refund', name: 'Hoàn Ngọc', rarity, isNew: false, dupeText: `Đã đủ skin → +${refund} ngọc` };
+    }
+    const item = pick(ITEMS);
+    this.ownedItems[item.id] = (this.ownedItems[item.id] ?? 0) + 1;
+    if (!this.equippedItems.includes(item.id) && this.equippedItems.length < 3) this.equippedItems.push(item.id);
+    this.recomputeParty();
+    return { kind: 'item', id: item.id, name: item.name, rarity, isNew: (this.ownedItems[item.id] ?? 0) === 1, dupeText: `Bản sao ×${this.ownedItems[item.id] ?? 1} — cộng dồn chỉ số` };
+  }
+  gacha(times: 1 | 10): GachaResult[] | null {
+    const cost = times === 1 ? GACHA_COST : GACHA_X10_COST;
+    if (this.gems < cost) {
+      this.toast('Không đủ Ngọc Huyết Nguyệt!', '#ff3b52');
+      sfx.warn();
+      return null;
+    }
     this.gems -= cost;
     const results: GachaResult[] = [];
-    for (let i = 0; i < n; i++) results.push(this.rollOne());
+    for (let i = 0; i < times; i++) results.push(this.rollOne());
+    if (times === 10 && !results.some((r) => r.rarity === 'epic' || r.rarity === 'legendary')) {
+      const pool = COMPANIONS.filter((c) => c.rarity === 'epic');
+      const c = pick(pool);
+      const owned = this.ownedCompanions[c.id] ?? 0;
+      this.ownedCompanions[c.id] = owned === 0 ? 1 : owned + 2;
+      this.recomputeParty();
+      results[9] = { kind: 'companion', id: c.id, name: c.name, rarity: 'epic', isNew: owned === 0, dupeText: owned === 0 ? 'Đồng hành mới gia nhập!' : `Đã sở hữu → +2 cấp (Lv ${owned + 2})` };
+    }
     sfx.levelup();
-    this.pushHud(); this.save();
+    this.save();
+    this.pushMeta();
     return results;
   }
-  private rollOne(): GachaResult {
-    this.pity += 1;
-    let pool = POOL;
-    if (this.pity >= 10) {
-      pool = POOL.filter((p) => p.rarity === 'epic' || p.rarity === 'legendary');
-      this.pity = 0;
-    }
-    const total = pool.reduce((s, p) => s + p.weight, 0);
-    let r = Math.random() * total;
-    let entry = pool[0];
-    for (const p of pool) { r -= p.weight; if (r <= 0) { entry = p; break; } }
-    if (entry.rarity === 'epic' || entry.rarity === 'legendary') this.pity = 0;
-    return this.grant(entry);
-  }
-  private grant(e: PoolEntry): GachaResult {
-    if (e.kind === 'companion') {
-      const def = COMPANIONS.find((c) => c.id === e.id);
-      if (this.ownedCompanions[e.id] === undefined) {
-        this.ownedCompanions[e.id] = 1;
-        this.rebuildParty();
-        return { kind: 'companion', id: e.id, name: def?.name ?? e.id, rarity: e.rarity, isNew: true, note: 'Đồng hành mới gia nhập!' };
-      }
-      this.ownedCompanions[e.id] += 2;
-      this.rebuildParty();
-      return { kind: 'companion', id: e.id, name: def?.name ?? e.id, rarity: e.rarity, isNew: false, note: 'Trùng lặp → +2 cấp' };
-    }
-    if (e.kind === 'skin') {
-      if (!this.ownedSkins.includes(e.id)) {
-        this.ownedSkins.push(e.id);
-        const def = SKINS.find((s) => s.id === e.id);
-        return { kind: 'skin', id: e.id, name: def?.name ?? e.id, rarity: e.rarity, isNew: true, note: 'Skin mới cho Kael!' };
-      }
-      this.gems += 200;
-      return { kind: 'skin', id: e.id, name: SKINS.find((s) => s.id === e.id)?.name ?? e.id, rarity: e.rarity, isNew: false, note: 'Trùng lặp → +200 Ngọc' };
-    }
-    if (!this.ownedItems.includes(e.id)) {
-      this.ownedItems.push(e.id);
-      const def = ITEMS.find((i) => i.id === e.id);
-      if (def && !this.equippedItems[def.slot]) this.equippedItems[def.slot] = e.id;
-      return { kind: 'item', id: e.id, name: def?.name ?? e.id, rarity: e.rarity, isNew: true, note: 'Vật phẩm mới!' };
-    }
-    this.gems += 150;
-    return { kind: 'item', id: e.id, name: ITEMS.find((i) => i.id === e.id)?.name ?? e.id, rarity: e.rarity, isNew: false, note: 'Trùng lặp → +150 Ngọc' };
-  }
-
   equipSkin(id: string): void {
     if (!this.ownedSkins.includes(id)) return;
     this.equippedSkin = id;
-    this.rebuildParty(); sfx.click(); this.pushHud(); this.save();
+    this.recomputeParty();
+    sfx.click();
+    this.save();
+    this.pushMeta();
   }
-  equipItem(id: string): void {
-    if (!this.ownedItems.includes(id)) return;
-    const def = ITEMS.find((i) => i.id === id);
-    if (!def) return;
-    this.equippedItems[def.slot] = this.equippedItems[def.slot] === id ? null : id;
-    this.rebuildParty(); sfx.click(); this.pushHud(); this.save();
-  }
-  upgradeCompanion(defId: string): boolean {
-    const lv = this.ownedCompanions[defId];
-    if (lv === undefined) return false;
-    const cost = this.upgradeCost(lv);
-    if (this.gold < cost) return false;
-    this.gold -= cost;
-    this.ownedCompanions[defId] = lv + 1;
-    this.rebuildParty(); sfx.levelup(); this.pushHud(); this.save();
+  buySkin(id: string): boolean {
+    const cost = SKIN_COST[id] ?? 500;
+    if (this.ownedSkins.includes(id) || this.gems < cost) { this.toast('Không đủ Ngọc!', '#ff3b52'); return false; }
+    this.gems -= cost;
+    this.ownedSkins.push(id);
+    this.equippedSkin = id;
+    this.recomputeParty();
+    sfx.levelup();
+    this.save();
+    this.pushMeta();
     return true;
   }
+  equipItem(id: string): void {
+    if ((this.ownedItems[id] ?? 0) <= 0) return;
+    if (this.equippedItems.includes(id)) this.equippedItems = this.equippedItems.filter((x) => x !== id);
+    else if (this.equippedItems.length < 3) this.equippedItems.push(id);
+    else { this.toast('Chỉ trang bị tối đa 3 vật phẩm!', '#ff9a3c'); return; }
+    this.recomputeParty();
+    sfx.click();
+    this.save();
+    this.pushMeta();
+  }
+  cycleSpeed(): void {
+    this.speedIdx = (this.speedIdx + 1) % SPEEDS.length;
+    sfx.click();
+    this.pushMeta();
+  }
+  togglePause(): void { this.setPaused(!this.paused); }
+  private setPaused(p: boolean): void {
+    this.paused = p;
+    if (!p) this.last = performance.now();
+    this.pushMeta();
+  }
+  toggleMute(): void {
+    setAudioMuted(!getMuted());
+    this.pushMeta();
+  }
 
-  getPartyView(): PartyView[] {
-    const activeIds = new Set(this.fighters.map((f) => f.uid));
-    const out: PartyView[] = [];
-    out.push({
-      id: 'kael', name: 'Kael', cls: 'Hắc Kiếm Sĩ', role: 'melee', pos: 'front', school: 'kiem', rarity: 'legendary',
-      level: this.kaelLevel, hpPct: 1, atk: Math.round(15 * this.growth(this.kaelLevel) + this.itemBonus().atk),
-      maxHp: Math.round(150 * this.growth(this.kaelLevel) + this.itemBonus().hp),
-      active: activeIds.has('kael'), isKael: true, upgradeCost: this.upgradeCost(this.kaelLevel),
-      skinId: this.equippedSkin, power: this.estPower('kael', true, this.kaelLevel),
-    });
-    COMPANIONS.forEach((def) => {
-      const lv = this.ownedCompanions[def.id];
-      if (lv === undefined) return;
-      const f = this.fighters.find((x) => x.uid === def.id);
-      out.push({
-        id: def.id, name: def.name, cls: def.cls, role: def.role, pos: def.pos, school: def.school,
-        rarity: def.rarity, level: lv,
-        hpPct: f ? f.hp / f.maxHp : 1, atk: Math.round(def.atk * this.growth(lv)),
-        maxHp: Math.round(def.hp * this.growth(lv)), active: activeIds.has(def.id), isKael: false,
-        upgradeCost: this.upgradeCost(lv), power: this.estPower(def.id, false, lv),
+  // ---------- save ----------
+  save = (): void => {
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify({
+        v: 2, gold: this.gold, gems: this.gems, kaelLevel: this.kaelLevel, kaelXp: this.kaelXp,
+        floor: this.floor, wave: this.wave, kills: this.kills, playTime: this.playTime,
+        ownedCompanions: this.ownedCompanions, ownedSkins: this.ownedSkins, equippedSkin: this.equippedSkin,
+        ownedItems: this.ownedItems, equippedItems: this.equippedItems, pullsSinceEpic: this.pullsSinceEpic,
+        savedAt: Date.now(),
+      }));
+    } catch { /* ignore */ }
+  };
+  private load(): boolean {
+    try {
+      const raw = localStorage.getItem(SAVE_KEY);
+      if (!raw) return false;
+      const d = JSON.parse(raw) as Record<string, unknown>;
+      if (typeof d.gold === 'number') this.gold = d.gold;
+      if (typeof d.gems === 'number') this.gems = d.gems;
+      if (typeof d.kaelLevel === 'number') this.kaelLevel = Math.max(1, d.kaelLevel);
+      if (typeof d.kaelXp === 'number') this.kaelXp = d.kaelXp;
+      if (typeof d.floor === 'number') this.floor = clamp(d.floor, 0, TOTAL_FLOORS - 1);
+      if (typeof d.wave === 'number') this.wave = clamp(d.wave, 0, WAVES_PER_FLOOR - 1);
+      if (typeof d.kills === 'number') this.kills = d.kills;
+      if (typeof d.playTime === 'number') this.playTime = d.playTime;
+      if (d.ownedCompanions && typeof d.ownedCompanions === 'object') this.ownedCompanions = d.ownedCompanions as Record<string, number>;
+      if (Array.isArray(d.ownedSkins)) this.ownedSkins = d.ownedSkins as string[];
+      if (typeof d.equippedSkin === 'string') this.equippedSkin = d.equippedSkin;
+      if (d.ownedItems && typeof d.ownedItems === 'object') this.ownedItems = d.ownedItems as Record<string, number>;
+      if (Array.isArray(d.equippedItems)) this.equippedItems = d.equippedItems as string[];
+      if (typeof d.pullsSinceEpic === 'number') this.pullsSinceEpic = d.pullsSinceEpic;
+      // offline reward
+      if (typeof d.savedAt === 'number') {
+        const sec = clamp((Date.now() - d.savedAt) / 1000, 0, 8 * 3600);
+        if (sec > 90) {
+          const g = Math.round(this.goldPerKill() * 1.5 * sec);
+          const m = Math.round((1 + this.floor * 0.25) * sec);
+          this.gold += g; this.gems += m;
+          this.onEvent({ type: 'toast', text: `Thưởng ngoại tuyến: +${fmt(g)} Vàng, +${fmt(m)} Ngọc`, color: '#ffd23c' });
+        }
+      }
+      return true;
+    } catch { return false; }
+  }
+  newGamePlus(): void {
+    this.floor = 0; this.wave = 0;
+    for (const h of this.heroes) { h.hp = h.maxHp; h.dead = false; }
+    this.state = 'playing';
+    this.startFloor(0);
+    this.toast('Hành trình mới bắt đầu — New Game+!', '#ff4fd8');
+    this.pushMeta();
+  }
+
+  // ---------- events / meta ----------
+  private pushMeta(): void {
+    this.onEvent({ type: 'meta' });
+  }
+  getMeta(): MetaInfo {
+    return {
+      gold: this.gold, gems: this.gems, kaelLevel: this.kaelLevel, kaelXp: this.kaelXp, kaelXpNext: this.kaelXpNeed(),
+      asc: Math.floor(this.kaelLevel / 10),
+      floor: this.floor, wave: this.wave, kills: this.kills, playTime: this.playTime,
+      speed: SPEEDS[this.speedIdx], muted: getMuted(), paused: this.paused,
+      ownedCompanions: { ...this.ownedCompanions },
+      party: this.heroes.filter((h) => !h.isKael).map((h) => ({
+        id: h.defId, name: h.def?.name ?? '?', rarity: h.def?.rarity ?? 'common', level: h.level,
+        power: Math.round(h.atk * 2 + h.maxHp * 0.25), pos: h.pos,
+      })),
+      ownedSkins: [...this.ownedSkins], equippedSkin: this.equippedSkin,
+      ownedItems: Object.keys(this.ownedItems).map((id) => ({ id, name: ITEMS.find((i) => i.id === id)?.name ?? id, count: this.ownedItems[id] ?? 0 })),
+      equippedItems: [...this.equippedItems],
+      hud: { ...this.hudCache },
+    };
+  }
+
+  // ---------- particles ----------
+  private burst(x: number, y: number, n: number, color: string, shape: Particle['shape']): void {
+    if (this.parts.length > 420) return;
+    for (let i = 0; i < n; i++) {
+      const a = rand(0, Math.PI * 2);
+      const sp = rand(40, shape === 'ember' ? 260 : 180);
+      this.parts.push({
+        x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - (shape === 'ember' ? 80 : 40),
+        g: shape === 'smoke' ? -30 : 300, life: rand(0.3, shape === 'ember' ? 0.9 : 0.6), maxLife: 0.9,
+        size: rand(2, shape === 'ember' ? 6 : 4.5), color, shape, rot: rand(0, 6), vr: rand(-6, 6),
       });
-    });
-    return out;
+    }
   }
 
-  private pushHud(): void {
-    const boss = this.foes.find((f) => f.bossIdx !== undefined);
-    this.cb.onHud({
-      gold: Math.floor(this.gold), gems: Math.floor(this.gems),
-      floor: this.floor, floorName: FLOOR_NAMES[this.floor],
-      wave: Math.min(this.wave, REGULAR_WAVES), wavesPerFloor: REGULAR_WAVES,
-      inBoss: this.bossActive, bossName: boss ? `${BOSSES[boss.bossIdx ?? 0].name} — ${BOSSES[boss.bossIdx ?? 0].title}` : '',
-      bossHpPct: boss ? clamp(boss.hp / boss.maxHp, 0, 1) : 0,
-      kills: this.kills, speed: this.speed, muted: getMuted(),
-      party: this.getPartyView(), pity: this.pity, totalDmg: Math.round(this.totalDmg),
-      power: this.teamPower(), bossIdx: this.floor,
-    });
-  }
-
-  /* ---------------- waves ---------------- */
-  private globalWave(): number { return this.floor * WAVES_PER_FLOOR + this.wave; }
-  private combatBusy(): boolean { return this.foes.some((f) => f.state !== 'die') || this.pending.length > 0; }
-
-  private spawnWave(): void {
-    this.wave += 1;
-    if (this.wave >= WAVES_PER_FLOOR) {
-      this.spawnBoss();
+  // ---------- update ----------
+  private tick(dt: number): void {
+    if (this.paused) { this.draw(); return; }
+    if (this.freeze > 0) { this.freeze -= dt; this.draw(); return; }
+    const ts = this.slowmo > 0 ? 0.35 : 1;
+    if (this.slowmo > 0) this.slowmo -= dt;
+    const wdt = dt * ts * SPEEDS[this.speedIdx];
+    this.draw();
+    if (this.state !== 'playing') {
+      this.updateParticles(dt);
       return;
     }
-    const count = clamp(3 + Math.floor(this.floor / 6) + Math.floor(this.wave / 3), 3, 7);
-    const types = FLOOR_FOES[this.floor % 3];
-    for (let i = 0; i < count; i++) {
-      const type = types[irand(0, types.length - 1)];
-      this.pending.push({ t: i * 0.28, type });
-    }
-    this.banner = { main: `ĐỢT ${this.wave}/${REGULAR_WAVES}`, sub: '', t: 0, life: 1.1, color: '#e8dfc8' };
+    this.updateWorld(wdt, dt);
   }
-  private foeHpBase(): number { return 160 * Math.pow(1.115, this.globalWave() - 1); }
-  private foeAtkBase(): number { return 50 * Math.pow(1.095, this.globalWave() - 1); }
-
-  private spawnFoe(type: FoeType): void {
-    const st = FOE_STATS[type];
-    const hp = Math.round(this.foeHpBase() * st.hp);
-    this.foes.push({
-      uid: this.uidSeq++, type, name: st.name, hp, maxHp: hp,
-      atk: this.foeAtkBase() * st.atk, spd: st.spd, speed: st.speed,
-      gold: Math.round((40 + this.globalWave() * 16 + this.floor * 80) * st.gold),
-      x: W + rand(20, 90), scale: type === 'brute' ? 1.35 : 1,
-      state: 'walk', t: 0, cd: rand(0.3, 0.9), flashT: 0, animT: rand(0, 10),
-      specialT: 0, specialPhase: 0, returnX: 0,
-      slowT: 0, stunT: 0, bleedDps: 0, bleedT: 0,
-    });
-  }
-  private spawnBoss(): void {
-    const def = BOSSES[this.floor];
-    const hp = Math.round(this.foeHpBase() * def.hpMul);
-    this.bossActive = true;
-    this.banner = { main: `${def.name} — ${def.title}`, sub: `BOSS TẦNG ${this.floor + 1}`, t: 0, life: 2.6, color: '#ff3b52' };
-    sfx.roar();
-    this.shake = 12;
-    this.foes.push({
-      uid: this.uidSeq++, type: 'boss', bossIdx: this.floor, name: def.name,
-      hp, maxHp: hp, atk: this.foeAtkBase() * def.atkMul, spd: def.spd, speed: 110,
-      gold: Math.round(400 + this.floor * 120), x: W + 120, scale: def.scale,
-      state: 'walk', t: 0, cd: 1, flashT: 0, animT: 0, specialT: 4.5, specialPhase: 0, returnX: 0,
-      slowT: 0, stunT: 0, bleedDps: 0, bleedT: 0,
-    });
-  }
-
-  /* ---------------- combat helpers ---------------- */
-  private aliveFoes(): Foe[] { return this.foes.filter((f) => f.state !== 'die'); }
-  private frontFighter(): Fighter | null {
-    let best: Fighter | null = null;
-    this.fighters.forEach((f) => { if (f.state !== 'dead' && (!best || f.x > best.x)) best = f; });
-    return best;
-  }
-  private nearestFoe(x: number): Foe | null {
-    let best: Foe | null = null; let bd = 1e9;
-    this.aliveFoes().forEach((f) => { const d = Math.abs(f.x - x); if (d < bd) { bd = d; best = f; } });
-    return best;
-  }
-
-  private dealToFoe(f: Foe, dmg: number, crit: boolean, sx: number, sy: number): void {
-    if (f.state === 'die') return;
-    f.hp -= dmg;
-    f.flashT = 0.12;
-    this.totalDmg += dmg;
-    this.texts.push({ x: sx + rand(-14, 14), y: sy, text: fmt(dmg), color: crit ? '#ffd23c' : '#ffffff', life: 0.8, maxLife: 0.8, size: crit ? 26 : 16, vy: -70 });
-    if (crit) this.texts.push({ x: sx, y: sy - 26, text: 'CHÍ MẠNG!', color: '#ffd23c', life: 0.7, maxLife: 0.7, size: 12, vy: -50 });
-    this.burstAt(sx, sy, crit ? '#ffd23c' : '#ff5a6a', crit ? 10 : 5, 'spark');
-    if (crit) { sfx.crit(); this.shake = Math.max(this.shake, 5); } else sfx.hit();
-    if (f.hp <= 0) this.killFoe(f);
-  }
-
-  private applySchool(f: Fighter, t: Foe, dmg: number, sx: number, sy: number): void {
-    switch (f.school) {
-      case 'hoa': {
-        const others = this.aliveFoes().filter((o) => o.uid !== t.uid).sort((a, b) => Math.abs(a.x - t.x) - Math.abs(b.x - t.x)).slice(0, 2);
-        others.forEach((o) => { this.dealToFoe(o, dmg * 0.35, false, o.x, GROUND - 60 * o.scale); });
-        this.burstAt(sx, sy, '#ff9a3c', 10, 'spark');
-        break;
-      }
-      case 'bang':
-        if (t.state !== 'die') { t.slowT = 1.5; this.burstAt(sx, sy, '#7fd4ff', 7, 'spark'); }
-        break;
-      case 'loi': {
-        const others = this.aliveFoes().filter((o) => o.uid !== t.uid && Math.abs(o.x - t.x) < 340).slice(0, 2);
-        others.forEach((o) => {
-          this.zaps.push({ x1: sx, y1: sy, x2: o.x, y2: GROUND - 60 * o.scale, t: 0.22, color: '#ffe14d' });
-          this.dealToFoe(o, dmg * 0.5, false, o.x, GROUND - 60 * o.scale);
-        });
-        break;
-      }
-      case 'am':
-        if (t.state !== 'die') { t.bleedDps = f.atk * 0.45; t.bleedT = 3; }
-        f.hp = Math.min(f.maxHp, f.hp + dmg * 0.12);
-        break;
-      case 'son':
-        if (Math.random() < 0.18 && t.state !== 'die') {
-          t.stunT = 0.9;
-          this.texts.push({ x: sx, y: sy - 34, text: 'CHOÁNG!', color: '#d9a03f', life: 0.7, maxLife: 0.7, size: 12, vy: -40 });
-        }
-        break;
-      case 'phong':
-        if (Math.random() < 0.25 && t.state !== 'die') this.dealToFoe(t, dmg * 0.6, false, sx + 12, sy - 14);
-        break;
-      case 'huyet':
-        f.hp = Math.min(f.maxHp, f.hp + dmg * 0.25);
-        break;
-      case 'quang': {
-        if (f.role === 'ranged') {
-          const wounded = this.fighters.filter((x) => x.state !== 'dead' && x.hp < x.maxHp).sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0];
-          if (wounded) {
-            wounded.hp = Math.min(wounded.maxHp, wounded.hp + dmg * 0.3);
-            this.burstAt(wounded.x, GROUND - 70, '#7fe08a', 6, 'star');
-          }
-        }
-        break;
-      }
-      default: break;
-    }
-  }
-
-  private killFoe(f: Foe): void {
-    if (f.state === 'die') return;
-    f.state = 'die'; f.t = 0;
-    this.kills += 1;
-    const bonus = 1 + this.itemBonus().goldBonus / 100;
-    const gold = Math.round(f.gold * bonus);
-    this.gold += gold;
-    const gy = GROUND - 40 * f.scale;
-    this.burstAt(f.x, gy, '#ff5a6a', f.bossIdx !== undefined ? 46 : 14, 'blood');
-    this.burstAt(f.x, gy, '#ffffff', 8, 'poof');
-    this.coinFly(f.x, gy, gold);
-    sfx.splat();
-    if (f.bossIdx !== undefined) this.onBossDown(f);
-  }
-
-  private coinFly(x: number, y: number, gold: number): void {
-    for (let i = 0; i < Math.min(8, 2 + Math.floor(gold / 2000)); i++) {
-      this.parts.push({ x: x + rand(-10, 10), y, vx: rand(-40, 40), vy: rand(-160, -90), life: 0.7, maxLife: 0.7, size: 5, color: '#ffd23c', grav: 320, kind: 'coin' });
-    }
-    this.texts.push({ x, y: y - 30, text: `+${fmt(gold)}`, color: '#ffd23c', life: 1, maxLife: 1, size: 14, vy: -46 });
-  }
-
-  private onBossDown(f: Foe): void {
-    this.bossActive = false;
-    this.slowmo = 1.1;
-    this.shake = 20;
-    this.flash = 0.7; this.flashColor = '#ffd8a0';
-    sfx.bossdie();
-    const gemReward = 300 + this.floor * 150;
-    this.gems += gemReward;
-    this.texts.push({ x: f.x, y: GROUND - 160, text: `+${fmt(gemReward)} NGỌC`, color: '#ff8fd0', life: 1.6, maxLife: 1.6, size: 24, vy: -30 });
-    this.banner = { main: `${f.name} ĐÃ GỤC NGÃ`, sub: `+${fmt(gemReward)} Ngọc`, t: 0, life: 2.4, color: '#ffd23c' };
-    this.aliveFoes().forEach((m) => { if (m.bossIdx === undefined) { m.hp = 0; this.killFoe(m); } });
-    this.pending = [];
-    this.save();
-    setTimeout(() => {
-      if (this.destroyed) return;
-      if (this.floor >= TOTAL_FLOORS - 1) {
-        this.state = 'victory';
-        this.cb.onEvent({ type: 'victory', stats: { time: this.playTime, kills: this.kills, totalDmg: Math.round(this.totalDmg), floor: this.floor + 1 } });
-      } else {
-        this.floor += 1;
-        if (this.floor === 3) { this.state = 'story'; this.cb.onEvent({ type: 'story', chapter: 1 }); }
-        else if (this.floor === 10) { this.state = 'story'; this.cb.onEvent({ type: 'story', chapter: 2 }); }
-        else this.continueFromStory();
-      }
-      this.pushHud(); this.save();
-    }, 2200);
-  }
-
-  private damageFighter(f: Fighter, dmg: number, foe?: Foe): void {
-    if (f.state === 'dead') return;
-    f.hp -= dmg;
-    f.flashT = 0.15;
-    this.burstAt(f.x, GROUND - 60, '#ff5a6a', 6, 'spark');
-    this.texts.push({ x: f.x + rand(-10, 10), y: GROUND - 100, text: fmt(dmg), color: '#ff7a7a', life: 0.7, maxLife: 0.7, size: 13, vy: -55 });
-    // Thiết phái: phản đòn
-    if (f.school === 'thiet' && foe && foe.state !== 'die') {
-      this.dealToFoe(foe, f.atk * 0.35, false, foe.x, GROUND - 50 * foe.scale);
-      this.zaps.push({ x1: f.x, y1: GROUND - 60, x2: foe.x, y2: GROUND - 50 * foe.scale, t: 0.18, color: '#9aa3b2' });
-    }
-    if (f.hp <= 0) {
-      f.hp = 0; f.state = 'dead'; f.reviveT = 6; f.attackAnim = -1;
-      this.burstAt(f.x, GROUND - 40, '#ff5a6a', 20, 'blood');
-      sfx.hurt();
-    }
-  }
-
-  private burstAt(x: number, y: number, color: string, n: number, kind: Particle['kind']): void {
-    for (let i = 0; i < n; i++) {
-      const a = rand(0, TAU); const sp = kind === 'poof' ? rand(20, 70) : rand(60, 260);
-      this.parts.push({
-        x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - (kind === 'soul' ? 60 : 40),
-        life: rand(0.3, kind === 'soul' ? 1.1 : 0.65), maxLife: 0.8, size: kind === 'poof' ? rand(6, 14) : rand(2, 5),
-        color, grav: kind === 'soul' ? -30 : kind === 'coin' ? 320 : 200, kind,
-      });
-    }
-    if (kind === 'star' || kind === 'spark') {
-      this.parts.push({ x, y, vx: 0, vy: 0, life: 0.3, maxLife: 0.3, size: 8, color, grav: 0, kind: 'ring' });
-    }
-  }
-
-  /* ---------------- main update ---------------- */
-  private tick(dt: number): void {
-    this.globalT += dt;
-    if (!this.paused && this.state === 'playing') {
-      const sdt = dt * this.speed * (this.slowmo > 0 ? 0.35 : 1);
-      if (this.slowmo > 0) this.slowmo -= dt;
-      this.update(sdt);
-      this.playTime += sdt;
-    } else if (!this.paused) {
-      this.updateFx(dt);
-    }
-    this.draw();
-    this.hudT -= dt;
-    if (this.hudT <= 0) { this.hudT = 0.12; if (this.state === 'playing') this.pushHud(); }
-    this.saveT -= dt;
-    if (this.saveT <= 0) { this.saveT = 5; this.save(); }
-  }
-
-  private update(dt: number): void {
-    if (this.banner) { this.banner.t += dt; if (this.banner.t > this.banner.life) this.banner = null; }
-    if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 30);
-    if (this.flash > 0) this.flash -= dt * 1.4;
-    // tiến về phía trước: cảnh luôn cuộn
-    this.scrollX += dt * (this.combatBusy() ? 46 : 105);
-
-    for (const p of this.pending) p.t -= dt;
-    const due = this.pending.filter((p) => p.t <= 0);
-    if (due.length) { due.forEach((p) => this.spawnFoe(p.type)); this.pending = this.pending.filter((p) => p.t > 0); }
-
-    if (!this.bossActive && this.pending.length === 0 && this.aliveFoes().length === 0 && this.wave < WAVES_PER_FLOOR) {
-      this.waveDelay -= dt;
-      if (this.waveDelay <= 0) {
-        this.spawnWave();
-        this.waveDelay = 0.5;
-        if (this.wave % 4 === 0 && this.wave > 0 && this.wave < WAVES_PER_FLOOR) {
-          this.gems += 40;
-          this.texts.push({ x: W / 2, y: 130, text: '+40 Ngọc (thưởng đợt)', color: '#ff8fd0', life: 1.2, maxLife: 1.2, size: 15, vy: -20 });
-        }
-      }
-    }
-
-    this.updateFighters(dt);
-    this.updateFoes(dt);
-    this.updateProjs(dt);
-    this.updateFx(dt);
-    for (const z of this.zaps) z.t -= dt;
-    this.zaps = this.zaps.filter((z) => z.t > 0);
-  }
-
-  private updateFx(dt: number): void {
+  private updateParticles(dt: number): void {
     for (const p of this.parts) {
-      p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += p.grav * dt;
+      p.life -= dt;
+      p.x += p.vx * dt; p.y += p.vy * dt; p.vy += p.g * dt; p.rot += p.vr * dt;
     }
     this.parts = this.parts.filter((p) => p.life > 0);
-    for (const t of this.texts) { t.life -= dt; t.y += t.vy * dt; }
-    this.texts = this.texts.filter((t) => t.life > 0);
-    for (const f of this.fighters) { f.animT += dt; if (f.flashT > 0) f.flashT -= dt; if (f.buffT > 0) f.buffT -= dt; }
-    for (const e of this.foes) { e.animT += dt; if (e.flashT > 0) e.flashT -= dt; }
-    this.foes = this.foes.filter((f) => !(f.state === 'die' && f.t > 0.5));
-    for (const f of this.foes) if (f.state === 'die') f.t += dt;
   }
+  private updateWorld(dt: number, realDt: number): void {
+    if (this.pendingStart) {
+      // đoàn quân hành quân chờ lệnh — chỉ cuộn cảnh và粒子
+      this.scrollX += 58 * dt;
+      this.updateParticles(dt);
+      return;
+    }
+    this.playTime += dt;
+    this.scrollX += 58 * dt;
+    if (this.shake > 0) this.shake = Math.max(0, this.shake - realDt * 30);
+    if (this.flash > 0) this.flash -= realDt * 1.5;
+    if (this.banner) { this.banner.t += realDt; if (this.banner.t > this.banner.life) this.banner = null; }
+    for (const t of this.toasts) t.life -= realDt;
+    this.toasts = this.toasts.filter((t) => t.life > 0);
+    this.updateParticles(dt);
+    // texts & pickups
+    for (const t of this.texts) { t.life -= dt; t.y -= 42 * dt; }
+    this.texts = this.texts.filter((t) => t.life > 0);
+    for (const pk of this.pickups) {
+      pk.life -= dt; pk.vy += 500 * dt; pk.y += pk.vy * dt; pk.x += pk.vx * dt;
+      if (pk.y > GROUND - 8) { pk.y = GROUND - 8; pk.vy *= -0.4; }
+    }
+    this.pickups = this.pickups.filter((p) => p.life > 0);
 
-  private updateFighters(dt: number): void {
-    const busy = this.combatBusy();
-    for (const f of this.fighters) {
-      if (f.state === 'dead') {
-        f.reviveT -= dt;
-        if (f.reviveT <= 0) {
-          f.hp = Math.round(f.maxHp * 0.6); f.state = 'idle'; f.x = f.homeX; f.cd = 0.3;
-          this.burstAt(f.x, GROUND - 60, '#7fd4ff', 14, 'star');
-          this.texts.push({ x: f.x, y: GROUND - 110, text: 'HỒI SINH', color: '#7fd4ff', life: 0.9, maxLife: 0.9, size: 12, vy: -40 });
+    // ---------- spawn queue ----------
+    if (this.spawnQueue.length > 0 && this.enemies.filter((e) => !e.dead).length < 7) {
+      for (const s of this.spawnQueue) s.delay -= dt;
+      while (this.spawnQueue.length > 0 && this.spawnQueue[0].delay <= 0) {
+        const s = this.spawnQueue.shift();
+        if (s) this.spawnEnemy(s.kind);
+      }
+    }
+
+    // ---------- enemies ----------
+    const alive = this.enemies.filter((e) => !e.dead).sort((a, b) => a.x - b.x);
+    alive.forEach((e, i) => {
+      e.walk += dt * 8;
+      if (e.hurtT > 0) e.hurtT -= dt;
+      if (e.stunT > 0) { e.stunT -= dt; return; }
+      if (e.swing > 0) e.swing -= dt * 3.4;
+      // march to clash line
+      const stop = i === 0 ? (e.boss ? CLASH_X + 40 : CLASH_X) : alive[i - 1].x + (alive[i - 1].boss ? 170 : 96);
+      const spd = e.boss ? 130 : ({ slime: 120, bat: 210, skeleton: 150, imp: 185, wraith: 165, ogre: 112, knight: 140, demon: 170, queen: 130, lich: 150 } as Record<string, number>)[e.kind] ?? 150;
+      if (e.x > stop) e.x -= spd * dt;
+      // attack
+      const inRange = e.x < CLASH_X + 90;
+      if (inRange) {
+        e.atkCd -= dt * (e.boss ? 1 : 1);
+        if (e.atkCd <= 0) {
+          e.atkCd = e.boss ? 1.7 : 1.5;
+          e.swing = 1;
+          const targets = this.heroes.filter((h) => !h.dead);
+          if (targets.length > 0) {
+            const front = targets.filter((h) => h.pos === 'front');
+            const tgt = front.length > 0 && Math.random() < 0.7 ? pick(front) : pick(targets);
+            let dmg = e.atk * rand(0.9, 1.1) * (e.boss ? 1.15 : 1);
+            if (tgt.skill === 'skinwall') dmg *= 0.7;
+            tgt.hp -= dmg;
+            tgt.hurtT = 0.25;
+            this.texts.push({ x: tgt.x, y: GROUND - 130, text: `-${fmt(dmg)}`, color: '#ff5a6a', life: 0.7, size: 13 });
+            this.burst(tgt.x, GROUND - 70, 4, '#ff5a4a', 'spark');
+            if (tgt.skill === 'thorns' || tgt.skill === 'annihilate') {
+              e.hp -= dmg * 0.6; e.hurtT = 0.18;
+              this.texts.push({ x: e.x, y: GROUND - 120 * e.scale, text: fmt(dmg * 0.6), color: '#8cdcff', life: 0.7, size: 12 });
+              if (e.hp <= 0 && !e.dead) this.killEnemy(e, tgt);
+            }
+            if (tgt.hp <= 0 && !tgt.dead) this.heroDown(tgt);
+          }
+        }
+        // boss skill
+        if (e.boss) {
+          e.skillCd -= dt;
+          if (e.skillCd <= 0) {
+            e.skillCd = rand(6, 8);
+            this.bossSkill(e);
+          }
+        }
+      }
+    });
+    this.enemies = this.enemies.filter((e) => !e.dead);
+
+    // ---------- heroes ----------
+    for (const h of this.heroes) {
+      if (h.dead) {
+        h.atkCd -= dt;
+        if (h.atkCd <= 0) {
+          h.dead = false;
+          h.hp = h.maxHp * 0.6;
+          this.burst(h.x, GROUND - 60, 12, '#3fe0b0', 'spark');
+          this.texts.push({ x: h.x, y: GROUND - 120, text: 'Hồi sinh!', color: '#3fe0b0', life: 1, size: 13 });
           sfx.potion();
         }
         continue;
       }
-      f.cd -= dt;
-
-      // hành quân: không có địch thì cả đội chạy tiến lên
-      if (f.state === 'idle') {
-        if (!busy && f.x < f.homeX + 150) { f.x += 70 * dt; continue; }
-        if (busy && f.x > f.homeX + 10) { f.x -= 420 * dt; if (f.x < f.homeX) f.x = f.homeX; continue; }
-        if (f.cd > 0) continue;
-        if (f.role === 'healer') { this.doHeal(f); continue; }
-        const target = this.nearestFoe(f.x);
-        if (!target) { f.cd = 0.25; continue; }
-        f.target = target.uid;
-        if (f.role === 'ranged') { this.doRanged(f, target); f.cd = 1 / f.spd; }
-        else { f.state = 'dash'; f.stateT = 0; }
-      } else if (f.state === 'dash') {
-        const t = this.foes.find((e) => e.uid === f.target && e.state !== 'die');
-        if (!t) { f.state = 'return'; }
-        else {
-          const dest = t.x - 46 * t.scale;
-          f.x += clamp(dest - f.x, -950 * dt, 950 * dt);
-          if (Math.abs(f.x - dest) < 14) { f.state = 'strike'; f.stateT = 0; f.attackAnim = 0; sfx.slash(); }
-        }
-      } else if (f.state === 'strike') {
-        f.stateT += dt;
-        f.attackAnim = Math.min(1, f.stateT / 0.22);
-        if (f.stateT >= 0.1 && f.stateT - dt < 0.1) {
-          const t = this.foes.find((e) => e.uid === f.target && e.state !== 'die');
-          if (t) {
-            const crit = Math.random() * 100 < f.crit;
-            const dmg = f.atk * (f.buffT > 0 ? 1.15 : 1) * (crit ? 1.8 : 1) * rand(0.9, 1.1);
-            this.dealToFoe(t, dmg, crit, t.x, GROUND - 70 * t.scale);
-            this.applySchool(f, t, dmg, t.x, GROUND - 70 * t.scale);
-            this.slashFx(t.x - 10, GROUND - 70 * t.scale, f.cfg.accent);
+      if (h.hurtT > 0) h.hurtT -= dt;
+      if (h.swing > 0) h.swing -= dt * 3.2;
+      if (h.frozenT > 0) { h.frozenT -= dt; continue; }
+      // regen
+      h.hp = Math.min(h.maxHp, h.hp + h.maxHp * 0.012 * dt);
+      const target = this.enemies.filter((e) => !e.dead).sort((a, b) => a.x - b.x)[0];
+      if (!target) continue;
+      h.atkCd -= dt;
+      const canHit = h.ranged ? target.x < VIEW_W + 60 : target.x - h.x < 230;
+      if (canHit && h.atkCd <= 0) {
+        h.atkCd = 1 / h.aspd;
+        h.swing = 1;
+        const ty = GROUND - (target.hover ? 105 : 62) * target.scale;
+        if (h.ranged) {
+          const kind: Proj['kind'] = h.look.weapon === 'bow' ? 'arrow' : h.skill === 'holysplash' || h.look.weapon === 'orb' ? 'light' : 'magic';
+          this.projs.push({ x: h.x + 20, y: GROUND - 78, tx: target.x, ty, target: String(target.uid), speed: kind === 'arrow' ? 760 : 520, dmg: h.atk, kind, t: 0, splash: h.skill === 'pierce' || h.skill === 'crit' && h.defId === 'lyra' ? 2 : 0, crit: h.crit, ally: true });
+          if (kind === 'arrow') sfx.shoot();
+        } else {
+          this.dealHeroDamage(h, target, 1);
+          if (h.skill === 'double' || h.skill === 'flurry') {
+            this.dealHeroDamage(h, target, 0.7);
           }
         }
-        if (f.stateT >= 0.24) { f.state = 'return'; f.attackAnim = -1; }
-      } else if (f.state === 'return') {
-        f.x += clamp(f.homeX - f.x, -950 * dt, 950 * dt);
-        if (Math.abs(f.x - f.homeX) < 8) { f.x = f.homeX; f.state = 'idle'; f.cd = 1 / f.spd; }
-      } else if (f.state === 'cast') {
-        f.stateT += dt;
-        if (f.stateT > 0.32) { f.state = 'idle'; f.cd = 1 / f.spd; }
       }
     }
-  }
 
-  private doRanged(f: Fighter, t: Foe): void {
-    f.state = 'cast'; f.stateT = 0;
-    let kind: Proj['kind'] = f.cfg.weapon === 'bow' ? 'arrow' : f.cfg.weapon === 'spear' ? 'light' : 'magic';
-    if (f.school === 'bang') kind = 'ice';
-    if (f.school === 'am') kind = 'blood';
-    const splash = f.defId === 'seraph' ? 0.3 : f.school === 'hoa' ? 0.35 : 0;
-    this.projs.push({
-      x: f.x + 20, y: GROUND - 78 * f.cfg.scale, target: t.uid,
-      speed: kind === 'arrow' ? 1050 : kind === 'light' ? 1150 : 720,
-      dmg: f.atk * (f.buffT > 0 ? 1.15 : 1) * rand(0.92, 1.08), kind, t: 0, splash,
-      crit: f.crit, school: f.school, from: f.uid,
-    });
-    if (kind === 'arrow') sfx.shoot(); else sfx.teleport();
-  }
-  private doHeal(f: Fighter): void {
-    const wounded = this.fighters.filter((x) => x.state !== 'dead' && x.hp < x.maxHp).sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0];
-    if (!wounded) { f.cd = 0.5; return; }
-    f.state = 'cast'; f.stateT = 0;
-    const amount = f.atk * 2.6;
-    wounded.hp = Math.min(wounded.maxHp, wounded.hp + amount);
-    this.burstAt(wounded.x, GROUND - 70, '#7fe08a', 12, 'star');
-    this.texts.push({ x: wounded.x, y: GROUND - 105, text: `+${fmt(amount)}`, color: '#7fe08a', life: 0.8, maxLife: 0.8, size: 14, vy: -50 });
-    sfx.potion();
-    f.cd = 1 / f.spd;
-  }
-
-  private slashFx(x: number, y: number, color: string): void {
-    this.burstAt(x, y, color, 6, 'spark');
-    this.burstAt(x, y, '#ffffff', 3, 'spark');
-  }
-
-  private updateFoes(dt: number): void {
-    for (const e of this.foes) {
-      if (e.state === 'die') continue;
-      // hiệu ứng trạng thái
-      if (e.slowT > 0) e.slowT -= dt;
-      if (e.bleedT > 0) {
-        e.bleedT -= dt;
-        e.hp -= e.bleedDps * dt;
-        if (Math.random() < dt * 4) this.burstAt(e.x + rand(-12, 12), GROUND - 50 * e.scale, '#c05cff', 2, 'blood');
-        if (e.hp <= 0) { this.killFoe(e); continue; }
-      }
-      if (e.stunT > 0) { e.stunT -= dt; continue; }
-
-      if (e.bossIdx !== undefined) { this.updateBoss(e, dt); continue; }
-      const frontline = 560;
-      const spd = e.speed * (e.slowT > 0 ? 0.5 : 1);
-      if (e.x > frontline) { e.x -= spd * dt; e.state = 'walk'; }
-      else {
-        e.state = 'fight';
-        e.cd -= dt;
-        if (e.cd <= 0) {
-          const target = this.frontFighter();
-          if (target) {
-            this.damageFighter(target, e.atk * rand(0.85, 1.15), e);
-            this.slashFx(target.x + 10, GROUND - 70, '#ff5a6a');
-            if (e.type === 'imp' || e.type === 'wisp') sfx.shoot(); else sfx.slash();
-          }
-          e.cd = 1 / e.spd;
-        }
-      }
-    }
-  }
-
-  private updateBoss(e: Foe, dt: number): void {
-    const def = BOSSES[e.bossIdx ?? 0];
-    const frontline = 620;
-    e.specialT -= dt;
-    const spd = e.speed * (e.slowT > 0 ? 0.5 : 1);
-    if (e.state === 'walk') {
-      e.x -= spd * dt;
-      if (e.x <= frontline) { e.state = 'fight'; e.cd = 0.7; e.specialT = 4; }
-      return;
-    }
-    if (e.state === 'tele') {
-      e.t += dt;
-      if (e.t > 0.5 && e.specialPhase === 1) {
-        e.specialPhase = 2;
-        e.x = 170; sfx.teleport();
-        this.burstAt(e.x, GROUND - 90, def.accent, 18, 'spark');
-      }
-      if (e.t > 0.7 && e.specialPhase === 2) {
-        e.specialPhase = 3;
-        const target = this.frontFighter() ?? this.fighters.find((f) => f.state !== 'dead');
-        if (target) {
-          this.damageFighter(target, e.atk * 1.4, e);
-          this.shake = Math.max(this.shake, 9);
-          this.burstAt(target.x, GROUND - 60, def.accent, 16, 'spark');
-          sfx.beam();
-        }
-      }
-      if (e.t > 1.2) { e.state = 'fight'; e.x = frontline; e.cd = 0.7; e.specialT = rand(5, 7); e.specialPhase = 0; }
-      return;
-    }
-    e.cd -= dt;
-    if (e.cd <= 0) {
-      const target = this.frontFighter();
-      if (target) {
-        this.damageFighter(target, e.atk * rand(0.9, 1.1), e);
-        this.slashFx(target.x + 14, GROUND - 70, '#ff5a6a');
-        sfx.heavy();
-        this.shake = Math.max(this.shake, 4);
-      }
-      e.cd = 1 / e.spd;
-    }
-    if (e.specialT > 0) return;
-    switch (def.arch) {
-      case 'charger': {
-        sfx.spike();
-        this.shake = Math.max(this.shake, 12);
-        this.flash = 0.3; this.flashColor = '#ff9a3c';
-        this.fighters.forEach((f) => { if (f.state !== 'dead') this.damageFighter(f, e.atk * 0.7, e); });
-        for (let i = 0; i < 22; i++) this.parts.push({ x: e.x - rand(0, 300), y: GROUND, vx: rand(-60, 60), vy: rand(-260, -120), life: 0.7, maxLife: 0.7, size: rand(3, 7), color: def.accent, grav: 420, kind: 'spark' });
-        this.texts.push({ x: e.x - 140, y: GROUND - 140, text: 'SÓNG CHẤN ĐỘNG!', color: def.accent, life: 1, maxLife: 1, size: 16, vy: -30 });
-        e.specialT = rand(5.5, 7.5);
-        break;
-      }
-      case 'spitter': {
-        sfx.shoot();
-        const targets = this.fighters.filter((f) => f.state !== 'dead');
-        for (let i = 0; i < 3; i++) {
-          const tgt = targets[i % Math.max(1, targets.length)];
-          if (tgt) this.projs.push({ x: e.x - 30, y: GROUND - 150 - i * 20, target: tgt.uid, speed: 520, dmg: e.atk * 0.65, kind: 'acid', t: i * 0.12, splash: 0, crit: 0 });
-        }
-        if (this.aliveFoes().length < 5 && Math.random() < 0.6) { this.spawnFoe('slime'); this.spawnFoe('slime'); }
-        this.texts.push({ x: e.x - 60, y: GROUND - 200, text: 'MƯA AXIT!', color: '#8dff9a', life: 1, maxLife: 1, size: 16, vy: -30 });
-        e.specialT = rand(5, 7);
-        break;
-      }
-      case 'trickster': {
-        e.state = 'tele'; e.t = 0; e.specialPhase = 1;
-        this.burstAt(e.x, GROUND - 90, def.accent, 18, 'spark');
-        const targets = this.fighters.filter((f) => f.state !== 'dead');
-        targets.slice(0, 3).forEach((tgt) => this.projs.push({ x: e.x - 40, y: GROUND - 180, target: tgt.uid, speed: 560, dmg: e.atk * 0.5, kind: 'bolt', t: 0, splash: 0, crit: 0 }));
-        sfx.beam();
-        e.specialT = rand(5.5, 8);
-        break;
-      }
-      case 'warlock': {
-        sfx.beam();
-        const targets = this.fighters.filter((f) => f.state !== 'dead');
-        targets.slice(0, 4).forEach((tgt) => this.projs.push({ x: e.x - 40, y: GROUND - 190, target: tgt.uid, speed: 500, dmg: e.atk * 0.55, kind: 'bolt', t: 0, splash: 0, crit: 0 }));
-        if (this.aliveFoes().length < 6) { this.spawnFoe('skeleton'); this.spawnFoe('skeleton'); }
-        this.texts.push({ x: e.x - 80, y: GROUND - 210, text: 'TRIỆU HỒN!', color: def.accent, life: 1, maxLife: 1, size: 16, vy: -30 });
-        e.specialT = rand(5.5, 7.5);
-        break;
-      }
-      case 'titan': {
-        sfx.spike(); sfx.heavy();
-        this.shake = Math.max(this.shake, 17);
-        this.flash = 0.4; this.flashColor = def.accent;
-        this.fighters.forEach((f) => { if (f.state !== 'dead') this.damageFighter(f, e.atk * 0.95, e); });
-        for (let i = 0; i < 30; i++) this.parts.push({ x: e.x - rand(0, 420), y: GROUND, vx: rand(-90, 90), vy: rand(-340, -140), life: 0.9, maxLife: 0.9, size: rand(4, 10), color: i % 2 ? def.accent : '#8f887a', grav: 460, kind: 'spark' });
-        this.texts.push({ x: e.x - 160, y: GROUND - 150, text: 'ĐẠI ĐỊA CHẤN!', color: def.accent, life: 1.1, maxLife: 1.1, size: 18, vy: -30 });
-        e.specialT = rand(6.5, 8.5);
-        break;
-      }
-    }
-  }
-
-  private updateProjs(dt: number): void {
-    const keep: Proj[] = [];
+    // ---------- projectiles ----------
     for (const pr of this.projs) {
-      pr.t -= dt;
-      if (pr.t > 0) { keep.push(pr); continue; }
-      const isEnemy = pr.kind === 'acid' || pr.kind === 'bolt';
-      if (isEnemy) {
-        const tgt = this.fighters.find((f) => f.uid === pr.target && f.state !== 'dead') ?? this.frontFighter();
-        if (!tgt) continue;
-        const ty = GROUND - 70;
-        const dx = tgt.x - pr.x; const dy = ty - pr.y;
-        const d = Math.hypot(dx, dy);
-        if (d < 26) {
-          this.damageFighter(tgt, pr.dmg);
-          this.burstAt(pr.x, ty, pr.kind === 'acid' ? '#8dff9a' : '#c9b8ff', 8, 'spark');
-          continue;
-        }
-        pr.x += (dx / d) * pr.speed * dt; pr.y += (dy / d) * pr.speed * dt;
-        keep.push(pr);
-      } else {
-        const tgt = this.foes.find((f) => f.uid === pr.target && f.state !== 'die');
-        if (!tgt) continue;
-        const ty = GROUND - 70 * tgt.scale;
-        const dx = tgt.x - pr.x; const dy = ty - pr.y;
-        const d = Math.hypot(dx, dy);
-        if (d < 30 * tgt.scale) {
-          const crit = Math.random() * 100 < pr.crit;
-          const dmg = pr.dmg * (crit ? 1.8 : 1);
-          this.dealToFoe(tgt, dmg, crit, tgt.x, ty);
-          const shooter = pr.from ? this.fighters.find((f) => f.uid === pr.from) : undefined;
-          if (shooter) this.applySchool(shooter, tgt, dmg, tgt.x, ty);
-          else if (pr.splash > 0) {
-            this.aliveFoes().filter((o) => o.uid !== tgt.uid).slice(0, 2).forEach((o) => this.dealToFoe(o, pr.dmg * pr.splash, false, o.x, GROUND - 60 * o.scale));
+      pr.t += dt;
+      const tgt = this.enemies.find((e) => String(e.uid) === pr.target && !e.dead);
+      const tx = tgt ? tgt.x : pr.tx;
+      const ty = tgt ? GROUND - (tgt.hover ? 105 : 62) * tgt.scale : pr.ty;
+      const dx = tx - pr.x;
+      const dy = ty - pr.y;
+      const d = Math.hypot(dx, dy);
+      const step = pr.speed * dt;
+      if (d < step + 14) {
+        if (pr.kind === 'meteor') {
+          this.burst(pr.x, GROUND - 20, 26, '#ff9a3c', 'ember');
+          this.burst(pr.x, GROUND - 20, 14, '#ffd23c', 'spark');
+          this.shake = Math.max(this.shake, 8);
+          sfx.crit();
+          for (const e of this.enemies) {
+            if (!e.dead && Math.abs(e.x - pr.x) < pr.splash) {
+              const crit = Math.random() < pr.crit;
+              const dmg = pr.dmg * (crit ? 2 : 1);
+              e.hp -= dmg; e.hurtT = 0.2;
+              this.texts.push({ x: e.x, y: GROUND - 130 * e.scale, text: fmt(dmg), color: '#ff9a3c', life: 0.9, size: 18 });
+              if (e.hp <= 0 && !e.dead) {
+                const killer = this.heroes.find((h) => h.skill === 'meteor' && !h.dead) ?? this.heroes[0];
+                if (killer) this.killEnemy(e, killer);
+              }
+            }
           }
-          continue;
+        } else if (pr.ally && tgt) {
+          const crit = Math.random() < pr.crit;
+          let dmg = pr.dmg * (crit ? 2 : 1) * rand(0.92, 1.08);
+          tgt.hp -= dmg; tgt.hurtT = 0.18;
+          this.texts.push({ x: tgt.x + rand(-12, 12), y: ty - 30, text: fmt(dmg), color: crit ? '#ffd23c' : '#c8e8ff', life: 0.85, size: crit ? 21 : 14 });
+          this.burst(tgt.x, ty, crit ? 8 : 4, pr.kind === 'light' ? '#fff4c8' : pr.kind === 'magic' ? '#b878e8' : '#8cdcff', 'spark');
+          if (crit) sfx.crit();
+          if (tgt.hp <= 0 && !tgt.dead) {
+            const killer = this.heroes.find((h) => !h.dead && !h.isKael) ?? this.heroes[0];
+            if (killer) this.killEnemy(tgt, killer);
+          }
+          // pierce
+          if (pr.splash > 0) {
+            const others = this.enemies.filter((e) => !e.dead && e.uid !== tgt.uid).sort((a, b) => Math.abs(a.x - tgt.x) - Math.abs(b.x - tgt.x));
+            for (let i = 0; i < Math.min(pr.splash, others.length); i++) {
+              others[i].hp -= dmg * 0.6; others[i].hurtT = 0.18;
+              this.texts.push({ x: others[i].x, y: GROUND - 120 * others[i].scale, text: fmt(dmg * 0.6), color: '#8cdcff', life: 0.7, size: 12 });
+              if (others[i].hp <= 0 && !others[i].dead) {
+                const killer = this.heroes.find((h) => !h.dead) ?? this.heroes[0];
+                if (killer) this.killEnemy(others[i], killer);
+              }
+            }
+          }
+        } else if (!pr.ally) {
+          // enemy projectile lands: hurt nearest hero to impact point
+          const victims = this.heroes.filter((h) => !h.dead);
+          if (victims.length > 0) {
+            const tgtHero = [...victims].sort((a, b) => Math.abs(a.x - pr.tx) - Math.abs(b.x - pr.tx))[0];
+            let dmg = pr.dmg * rand(0.9, 1.1);
+            if (tgtHero.skill === 'skinwall') dmg *= 0.7;
+            tgtHero.hp -= dmg;
+            tgtHero.hurtT = 0.28;
+            this.texts.push({ x: tgtHero.x, y: GROUND - 130, text: `-${fmt(dmg)}`, color: pr.kind === 'acid' ? '#8dff5a' : '#b878e8', life: 0.8, size: 14 });
+            this.burst(tgtHero.x, GROUND - 70, 6, pr.kind === 'acid' ? '#8dff5a' : '#b878e8', 'spark');
+            sfx.splat();
+            if (tgtHero.hp <= 0 && !tgtHero.dead) this.heroDown(tgtHero);
+          }
         }
-        pr.x += (dx / d) * pr.speed * dt; pr.y += (dy / d) * pr.speed * dt;
-        if (Math.random() < 0.5) {
-          const col = pr.kind === 'arrow' ? '#c9e8ff' : pr.kind === 'light' ? '#ffd23c' : pr.kind === 'ice' ? '#7fd4ff' : pr.kind === 'blood' ? '#ff3b52' : '#d05cff';
-          this.parts.push({ x: pr.x, y: pr.y, vx: rand(-20, 20), vy: rand(-20, 20), life: 0.25, maxLife: 0.25, size: 3, color: col, grav: 0, kind: 'spark' });
-        }
-        keep.push(pr);
+        pr.t = 99;
+      } else {
+        pr.x += (dx / d) * step;
+        pr.y += (dy / d) * step;
       }
     }
-    this.projs = keep;
+    this.projs = this.projs.filter((p) => p.t < 90);
+
+    // ---------- wave flow ----------
+    if (this.spawnQueue.length === 0 && this.enemies.filter((e) => !e.dead).length === 0 && !this.bossActive) {
+      this.waveDelay -= dt;
+      if (this.waveDelay <= 0) {
+        this.wave += 1;
+        if (this.wave >= WAVES_PER_FLOOR) this.wave = WAVES_PER_FLOOR - 1;
+        this.gainXp(45 + this.floor * 2);
+        this.startWave();
+      }
+    }
+
+    // HUD cache
+    const boss = this.enemies.find((e) => e.boss && !e.dead);
+    this.hudCache = {
+      floor: this.floor, wave: this.wave + 1, inBoss: this.bossActive,
+      bossName: BOSSES[this.floor].name, bossHpPct: boss ? clamp(boss.hp / boss.maxHp, 0, 1) : 0,
+      gold: this.gold, gems: this.gems, kaelLevel: this.kaelLevel, asc: this.kaelAsc(), power: this.power(),
+      floorName: FLOOR_NAMES[this.floor],
+    };
+    if (this.globalT - this.lastMetaPush > 0.35) {
+      this.lastMetaPush = this.globalT;
+      this.pushMeta();
+    }
+  }
+  private heroDown(h: HeroUnit): void {
+    h.dead = true;
+    h.hp = 0;
+    h.atkCd = 6;
+    this.burst(h.x, GROUND - 60, 14, '#ff5a4a', 'spark');
+    this.burst(h.x, GROUND - 60, 8, '#888898', 'smoke');
+    sfx.hurt();
+    this.shake = Math.max(this.shake, 6);
+    if (this.heroes.every((x) => x.dead)) {
+      this.toast('Cả đội gục ngã... nhưng sẽ đứng dậy!', '#ff3b52');
+      for (const x of this.heroes) x.atkCd = Math.min(x.atkCd, 4);
+    }
+  }
+  private bossSkill(e: Enemy): void {
+    const targets = this.heroes.filter((h) => !h.dead);
+    if (targets.length === 0) return;
+    sfx.warn();
+    if (e.kind === 'queen') {
+      for (let i = 0; i < 3; i++) {
+        const tgt = pick(targets);
+        this.projs.push({ x: e.x - 40, y: GROUND - 150 * e.scale, tx: tgt.x, ty: GROUND - 60, target: '', speed: 420, dmg: e.atk * 0.7, kind: 'acid', t: -i * 0.22, splash: 0, crit: 0, ally: false });
+      }
+      sfx.shoot();
+    } else if (e.kind === 'lich') {
+      for (let i = 0; i < 3; i++) {
+        const tgt = pick(targets);
+        this.projs.push({ x: e.x - 40, y: GROUND - 140 * e.scale, tx: tgt.x, ty: GROUND - 60, target: '', speed: 500, dmg: e.atk * 0.55, kind: 'bolt', t: -i * 0.18, splash: 0, crit: 0, ally: false });
+      }
+      const freezeTgt = pick(targets);
+      freezeTgt.frozenT = 0.9;
+      this.burst(freezeTgt.x, GROUND - 70, 10, '#8cdcff', 'ice');
+      sfx.shoot();
+    } else if (e.kind === 'demon') {
+      for (const t of targets) {
+        t.hp -= e.atk * 0.4;
+        t.hurtT = 0.3;
+        this.burst(t.x, GROUND - 70, 8, '#ff5a4a', 'ember');
+        if (t.hp <= 0 && !t.dead) this.heroDown(t);
+      }
+      this.shake = Math.max(this.shake, 10);
+      this.flash = 0.35; this.flashColor = '#ff3b52';
+      sfx.beam();
+    } else {
+      // knight / ogre: smash front
+      const front = targets.filter((h) => h.pos === 'front');
+      const tgt = front.length > 0 ? front : targets;
+      for (const t of tgt) {
+        let dmg = e.atk * 1.5;
+        if (t.skill === 'skinwall') dmg *= 0.7;
+        t.hp -= dmg;
+        t.hurtT = 0.35;
+        this.texts.push({ x: t.x, y: GROUND - 130, text: `-${fmt(dmg)}`, color: '#ff5a6a', life: 0.8, size: 16 });
+        if (t.hp <= 0 && !t.dead) this.heroDown(t);
+      }
+      this.shake = Math.max(this.shake, 12);
+      this.burst(e.x - 80, GROUND - 20, 16, '#c8c0b0', 'smoke');
+      sfx.spike();
+    }
+    e.swing = 1;
   }
 
-  /* ============================================================
-     DRAW
-     ============================================================ */
+  // ============ DRAW ============
   private draw(): void {
     const ctx = this.ctx;
+    const zone = ZONES[this.zone()];
     ctx.save();
-    ctx.clearRect(0, 0, W, H);
     if (this.shake > 0) ctx.translate(rand(-this.shake, this.shake) * 0.6, rand(-this.shake, this.shake) * 0.6);
-
-    this.drawBg(ctx);
-    this.drawGround(ctx);
-
-    const drawables: { x: number; fn: () => void }[] = [];
-    for (const f of this.fighters) drawables.push({ x: f.x, fn: () => this.drawFighter(ctx, f) });
-    for (const e of this.foes) drawables.push({ x: e.x, fn: () => this.drawFoe(ctx, e) });
-    drawables.sort((a, b) => a.x - b.x).forEach((d) => d.fn());
-
-    this.drawZaps(ctx);
-    this.drawProjs(ctx);
-    this.drawParts(ctx);
-    this.drawTexts(ctx);
-    this.drawBanner(ctx);
-    this.drawBossBar(ctx);
-    this.drawWavePips(ctx);
-    this.drawSpeedLines(ctx);
-
+    this.drawBg(zone);
+    if (this.state === 'title') {
+      this.drawTitleScene();
+    } else {
+      this.drawWorld(zone);
+    }
+    this.drawParticles();
+    this.drawHud(zone);
     ctx.restore();
-
+    // flash
     if (this.flash > 0) {
-      ctx.globalAlpha = clamp(this.flash, 0, 1) * 0.5;
+      ctx.globalAlpha = this.flash * 0.45;
       ctx.fillStyle = this.flashColor;
-      ctx.fillRect(0, 0, W, H);
+      ctx.fillRect(0, 0, VIEW_W, VIEW_H);
       ctx.globalAlpha = 1;
     }
     if (this.paused) {
-      ctx.fillStyle = 'rgba(4,3,8,0.55)';
-      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = 'rgba(5,4,10,0.55)';
+      ctx.fillRect(0, 0, VIEW_W, VIEW_H);
     }
   }
-
-  private drawSpeedLines(ctx: CanvasRenderingContext2D): void {
-    if (this.state !== 'playing') return;
-    const n = this.speed >= 3 ? 8 : 4;
-    ctx.save();
-    ctx.strokeStyle = 'rgba(232,223,200,0.07)';
-    ctx.lineWidth = 2;
-    for (let i = 0; i < n; i++) {
-      const y = ((i * 173 + this.globalT * 400) % (H - 160)) + 60;
-      const x = W - ((i * 331 + this.globalT * (900 + i * 120)) % (W + 300));
-      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 90 + i * 14, y); ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  private drawBg(ctx: CanvasRenderingContext2D): void {
-    const inGame = this.state === 'playing' || this.state === 'story' || this.state === 'victory';
-    const url = inGame ? floorImg(this.floor) : IMG.title;
-    const im = this.bgImgs[url];
-    const grad = ctx.createLinearGradient(0, 0, 0, H);
-    grad.addColorStop(0, '#141021'); grad.addColorStop(1, '#0a0812');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, W, H);
-    if (im && this.bgLoaded[url]) {
-      const sc = Math.max(W / im.width, H / im.height) * 1.12;
-      const iw = im.width * sc; const ih = im.height * sc;
-      // cuộn parallax liên tục — đội luôn tiến về phía trước
-      const off = -((this.scrollX * 0.35) % iw);
-      ctx.globalAlpha = 0.92;
-      ctx.drawImage(im, off, (H - ih) / 2 - 20, iw, ih);
-      ctx.drawImage(im, off + iw, (H - ih) / 2 - 20, iw, ih);
+  private drawBg(zone: (typeof ZONES)[number]): void {
+    const ctx = this.ctx;
+    const sky = ctx.createLinearGradient(0, 0, 0, VIEW_H);
+    sky.addColorStop(0, zone.sky[0]);
+    sky.addColorStop(1, zone.sky[1]);
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    // far image parallax
+    const imgKey = this.zone() === 0 ? 'floor1' : this.zone() === 1 ? 'floor2' : 'floor3';
+    const img = this.bgImgs[imgKey];
+    if (img && img.complete && img.naturalWidth > 0) {
+      const off = (this.scrollX * 0.12) % VIEW_W;
+      ctx.globalAlpha = 0.5;
+      const h = VIEW_H;
+      const w = VIEW_W * 1.2;
+      ctx.drawImage(img, -off, 0, w, h);
+      ctx.drawImage(img, -off + w, 0, w, h);
       ctx.globalAlpha = 1;
     }
-    const g2 = ctx.createLinearGradient(0, GROUND - 160, 0, H);
-    g2.addColorStop(0, 'rgba(8,6,14,0)');
-    g2.addColorStop(1, 'rgba(8,6,14,0.88)');
-    ctx.fillStyle = g2;
-    ctx.fillRect(0, GROUND - 160, W, H - GROUND + 160);
-    ctx.save();
-    for (let i = 0; i < 26; i++) {
-      const seed = i * 137.5;
-      const px = ((seed + this.globalT * (14 + (i % 5) * 6)) % (W + 60)) - 30;
-      const py = H - ((seed * 1.7 + this.globalT * (24 + (i % 4) * 10)) % (H + 40));
-      const a = 0.14 + 0.1 * Math.sin(this.globalT * 2 + i);
-      ctx.globalAlpha = clamp(a, 0, 0.3);
-      ctx.fillStyle = i % 3 === 0 ? '#ff9a3c' : '#ff5a6a';
-      ctx.beginPath(); ctx.arc(px, py, i % 4 === 0 ? 2.4 : 1.5, 0, TAU); ctx.fill();
+    ctx.fillStyle = 'rgba(8,6,14,0.45)';
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    // mid silhouettes: pillars
+    const pOff = (this.scrollX * 0.35) % 240;
+    ctx.fillStyle = zone.pillar;
+    for (let x = -pOff; x < VIEW_W + 240; x += 240) {
+      ctx.fillRect(x + 60, 60, 44, GROUND - 60);
+      ctx.fillRect(x + 40, 48, 84, 20);
+      ctx.fillRect(x + 40, GROUND - 26, 84, 26);
     }
-    ctx.restore();
-  }
-
-  private drawGround(ctx: CanvasRenderingContext2D): void {
-    ctx.fillStyle = 'rgba(10,8,16,0.65)';
-    ctx.fillRect(0, GROUND, W, H - GROUND);
-    ctx.strokeStyle = 'rgba(255,154,60,0.25)';
+    // torches
+    const tOff = (this.scrollX * 0.6) % 320;
+    for (let x = -tOff; x < VIEW_W + 320; x += 320) {
+      const fx = x + 180;
+      const fy = 170 + Math.sin(this.globalT * 3 + fx) * 3;
+      ctx.fillStyle = '#3a2e28';
+      ctx.fillRect(fx - 4, fy, 8, 26);
+      const g = ctx.createRadialGradient(fx, fy - 8, 2, fx, fy - 8, 34);
+      g.addColorStop(0, 'rgba(255,170,60,0.85)');
+      g.addColorStop(1, 'rgba(255,120,30,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(fx, fy - 8, 34, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ffd23c';
+      ctx.beginPath(); ctx.ellipse(fx, fy - 8, 5, 9 + Math.sin(this.globalT * 11 + fx) * 3, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    // floor
+    ctx.fillStyle = '#171320';
+    ctx.fillRect(0, GROUND, VIEW_W, VIEW_H - GROUND);
+    const fOff = this.scrollX % 96;
+    ctx.strokeStyle = 'rgba(90,78,110,0.35)';
     ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(0, GROUND); ctx.lineTo(W, GROUND); ctx.stroke();
-    // vết nứt cuộn theo bước chạy
-    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-    ctx.lineWidth = 1;
-    const off = this.scrollX % 160;
-    for (let i = -1; i < 10; i++) {
-      const sx = i * 160 - off;
-      ctx.beginPath(); ctx.moveTo(sx, GROUND + 10 + (i % 3) * 16);
-      ctx.lineTo(sx + 60, GROUND + 16 + (i % 3) * 16);
-      ctx.stroke();
+    for (let x = -fOff; x < VIEW_W + 96; x += 96) {
+      ctx.beginPath(); ctx.moveTo(x, GROUND); ctx.lineTo(x, VIEW_H); ctx.stroke();
     }
-  }
-
-  /* ---------- hero drawing (CHIBI) ---------- */
-  private drawFighter(ctx: CanvasRenderingContext2D, f: Fighter): void {
-    const gy = GROUND;
-    const s = f.cfg.scale;
-    const bob = f.state === 'dead' ? 0 : Math.abs(Math.sin(f.animT * 7)) * 3;
-    ctx.save();
-    ctx.translate(f.x, gy);
-    ctx.fillStyle = 'rgba(0,0,0,0.4)';
-    ctx.beginPath(); ctx.ellipse(0, 4, 30 * s, 8 * s, 0, 0, TAU); ctx.fill();
-
-    if (f.state === 'dead') {
-      this.drawHeroDown(ctx, f);
-      ctx.restore();
-      return;
-    }
-
-    if (f.cfg.aura) {
-      const ag = ctx.createRadialGradient(0, -56 * s, 6, 0, -56 * s, 70 * s);
-      ag.addColorStop(0, f.cfg.aura); ag.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = ag;
-      ctx.beginPath(); ctx.arc(0, -56 * s, 70 * s, 0, TAU); ctx.fill();
-      for (let i = 0; i < 3; i++) {
-        const a = f.animT * 1.4 + i * 2.1;
-        const px = Math.cos(a) * 34 * s; const py = -56 * s + Math.sin(a * 1.3) * 40 * s;
-        ctx.globalAlpha = 0.5 + 0.4 * Math.sin(f.animT * 4 + i);
-        this.star(ctx, px, py, 4, f.cfg.accent);
-        ctx.globalAlpha = 1;
-      }
-    }
-
-    ctx.translate(0, -bob);
-    if (f.flashT > 0) ctx.filter = 'brightness(2.2)';
-    const swing = f.attackAnim >= 0 ? f.attackAnim : -1;
-    this.drawHeroBody(ctx, f.cfg, s, swing, f.state === 'cast' ? f.stateT : -1, f.animT);
-    ctx.filter = 'none';
-    ctx.restore();
-
-    const hpPct = clamp(f.hp / f.maxHp, 0, 1);
-    const bw = 56;
-    const bx = f.x - bw / 2; const by = gy - 122 * s;
-    ctx.fillStyle = 'rgba(8,6,12,0.8)';
-    ctx.fillRect(bx - 1, by - 1, bw + 2, 7);
-    ctx.fillStyle = hpPct > 0.5 ? '#52e07a' : hpPct > 0.25 ? '#ffd23c' : '#ff3b52';
-    ctx.fillRect(bx, by, bw * hpPct, 5);
-    ctx.font = '700 11px "Be Vietnam Pro", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = f.isKael ? '#ffd8a1' : '#e8dfc8';
-    ctx.fillText(`${f.name} Lv${f.level}`, f.x, by - 5);
-  }
-
-  private drawHeroDown(ctx: CanvasRenderingContext2D, f: Fighter): void {
-    ctx.save();
-    ctx.globalAlpha = 0.85;
-    ctx.rotate(-Math.PI / 2);
-    ctx.translate(26, 8);
-    ctx.scale(0.9, 0.9);
-    this.drawHeroBody(ctx, f.cfg, f.cfg.scale, -1, -1, 0);
-    ctx.restore();
-    const sy = -64 - Math.sin(f.animT * 2) * 6;
-    ctx.globalAlpha = 0.6;
-    ctx.fillStyle = '#9fd8ff';
-    ctx.beginPath(); ctx.arc(0, sy, 7, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(0, GROUND + 20); ctx.lineTo(VIEW_W, GROUND + 20); ctx.stroke();
+    ctx.strokeStyle = zone.accent;
+    ctx.globalAlpha = 0.5;
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(0, GROUND); ctx.lineTo(VIEW_W, GROUND); ctx.stroke();
     ctx.globalAlpha = 1;
-    ctx.font = '700 10px "Be Vietnam Pro", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#9fd8ff';
-    ctx.fillText(`${Math.ceil(f.reviveT)}s`, 0, -92);
   }
-
-  /* Tỷ lệ chibi: đầu to ~45% thân, chân tay ngắn mũm mĩm */
-  private drawHeroBody(ctx: CanvasRenderingContext2D, cfg: HeroCfg, s: number, swing: number, castT: number, animT: number): void {
-    const c = cfg;
+  private drawTitleScene(): void {
+    const ctx = this.ctx;
+    // ambient embers
+    if (Math.random() < 0.3) {
+      this.parts.push({ x: rand(0, VIEW_W), y: VIEW_H + 10, vx: rand(-10, 10), vy: -rand(30, 80), g: -8, life: rand(2, 4), maxLife: 4, size: rand(2, 4), color: Math.random() < 0.5 ? '#ff9a3c' : '#ff3b52', shape: 'ember', rot: 0, vr: 0 });
+    }
+    const t = this.globalT;
+    const look = this.kaelLook();
     ctx.save();
-    ctx.scale(s, s);
-    ctx.lineWidth = 2.4;
-    ctx.strokeStyle = '#17121f';
-    ctx.lineJoin = 'round';
-    const run = Math.sin(animT * 9);
-
-    if (c.cape) {
-      ctx.fillStyle = c.cape;
-      ctx.beginPath();
-      ctx.moveTo(-8, -50);
-      ctx.quadraticCurveTo(-28, -30 + Math.sin(animT * 3) * 3, -22, -2);
-      ctx.lineTo(-6, -18);
-      ctx.closePath();
-      ctx.fill(); ctx.stroke();
-    }
-    // chân ngắn chạy luân phiên
-    ctx.fillStyle = c.outfitDark;
-    rr(ctx, -12, -20 + Math.max(0, run) * 4, 10, 20, 4); ctx.fill(); ctx.stroke();
-    rr(ctx, 3, -20 + Math.max(0, -run) * 4, 10, 20, 4); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#241d2e';
-    rr(ctx, -13, -6, 12, 6, 3); ctx.fill(); ctx.stroke();
-    rr(ctx, 2, -6, 12, 6, 3); ctx.fill(); ctx.stroke();
-    // thân nhỏ
-    ctx.fillStyle = c.outfit;
-    ctx.beginPath();
-    ctx.moveTo(-14, -50); ctx.lineTo(14, -50); ctx.lineTo(12, -18); ctx.lineTo(-12, -18);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = c.accent;
-    ctx.fillRect(-12, -26, 24, 4);
-    // tay sau
-    ctx.fillStyle = c.outfit;
-    rr(ctx, -18, -48, 7, 18, 4); ctx.fill(); ctx.stroke();
-
-    // ĐẦU TO
-    const hy = -70;
-    ctx.fillStyle = c.skinTone;
-    ctx.beginPath(); ctx.arc(1, hy, 21, 0, TAU); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.arc(-17, hy + 4, 4, 0, TAU); ctx.fill(); ctx.stroke();
-    // má hồng
-    ctx.fillStyle = 'rgba(255,120,130,0.35)';
-    ctx.beginPath(); ctx.ellipse(-6, hy + 8, 3.6, 2.2, 0, 0, TAU); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(13, hy + 8, 3.6, 2.2, 0, 0, TAU); ctx.fill();
-
-    ctx.fillStyle = c.hair;
-    this.drawHairBack(ctx, c, hy);
-    this.drawAnimeEyes(ctx, c, hy);
-    ctx.strokeStyle = '#8a5a4a';
-    ctx.lineWidth = 1.6;
-    ctx.beginPath(); ctx.moveTo(5, hy + 11); ctx.quadraticCurveTo(8, hy + 13, 11, hy + 11); ctx.stroke();
-    ctx.strokeStyle = '#17121f'; ctx.lineWidth = 2.4;
-    this.drawHairFront(ctx, c, hy);
-
-    // tay cầm vũ khí
-    const casting = castT >= 0;
-    const shoulderX = 9; const shoulderY = -46;
-    let armAngle: number;
-    if (swing >= 0) armAngle = lerp(-2.4, 0.9, easeOut(swing));
-    else if (casting) armAngle = -1.9 + Math.sin(castT * 20) * 0.1;
-    else armAngle = -0.5 + Math.sin(animT * 3.2) * 0.06;
-
-    ctx.save();
-    ctx.translate(shoulderX, shoulderY);
-    ctx.rotate(armAngle);
-    ctx.fillStyle = c.outfit;
-    rr(ctx, -4, 0, 8, 20, 4); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = c.skinTone;
-    ctx.beginPath(); ctx.arc(0.5, 21, 4.6, 0, TAU); ctx.fill(); ctx.stroke();
-    this.drawWeapon(ctx, c, swing, castT);
+    ctx.translate(VIEW_W / 2, GROUND);
+    drawChibiHero(ctx, look, t, t * 2.2, 0, 2.3, 1, 0);
     ctx.restore();
-
-    ctx.restore();
-  }
-
-  private drawAnimeEyes(ctx: CanvasRenderingContext2D, c: HeroCfg, hy: number): void {
-    const eyes = [{ x: 2, w: 6.4, h: 8 }, { x: 12, w: 5.2, h: 6.8 }];
-    for (const e of eyes) {
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath(); ctx.ellipse(e.x, hy - 1, e.w, e.h, 0, 0, TAU); ctx.fill();
-      ctx.strokeStyle = '#17121f'; ctx.lineWidth = 1.7; ctx.stroke();
-      ctx.fillStyle = c.eye;
-      ctx.beginPath(); ctx.ellipse(e.x + 1, hy - 0.5, e.w * 0.64, e.h * 0.7, 0, 0, TAU); ctx.fill();
-      ctx.fillStyle = '#10101a';
-      ctx.beginPath(); ctx.arc(e.x + 1.4, hy + 0.2, e.w * 0.3, 0, TAU); ctx.fill();
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath(); ctx.arc(e.x - 0.8, hy - 3.4, 2, 0, TAU); ctx.fill();
-      ctx.beginPath(); ctx.arc(e.x + 2.4, hy + 2, 1, 0, TAU); ctx.fill();
-    }
-    ctx.lineWidth = 2.4;
-  }
-
-  private drawHairBack(ctx: CanvasRenderingContext2D, c: HeroCfg, hy: number): void {
-    ctx.beginPath();
-    switch (c.hairStyle) {
-      case 'long':
-      case 'angel':
-        ctx.moveTo(-18, hy - 6);
-        ctx.quadraticCurveTo(-32, hy + 18, -24, hy + 44);
-        ctx.lineTo(-10, hy + 36);
-        ctx.quadraticCurveTo(-20, hy + 10, -8, hy - 4);
-        break;
-      case 'twin':
-        ctx.moveTo(-16, hy - 4);
-        ctx.quadraticCurveTo(-30, hy + 10, -26, hy + 34);
-        ctx.lineTo(-16, hy + 30);
-        ctx.quadraticCurveTo(-20, hy + 8, -8, hy - 2);
-        ctx.moveTo(16, hy - 6);
-        ctx.quadraticCurveTo(28, hy + 8, 24, hy + 32);
-        ctx.lineTo(15, hy + 28);
-        ctx.quadraticCurveTo(19, hy + 6, 8, hy - 4);
-        break;
-      default:
-        ctx.moveTo(-19, hy - 2);
-        ctx.quadraticCurveTo(-26, hy + 8, -20, hy + 15);
-        ctx.lineTo(-10, hy + 6);
-        break;
-    }
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
-    if (c.hairStyle === 'angel') {
+    // companions preview bobbing behind
+    const previews = COMPANIONS.filter((c) => (this.ownedCompanions[c.id] ?? 0) > 0).slice(0, 4);
+    previews.forEach((c, i) => {
       ctx.save();
-      ctx.strokeStyle = '#ffd23c';
-      ctx.lineWidth = 3;
+      ctx.translate(VIEW_W / 2 - 190 + i * 126, GROUND + 6);
       ctx.globalAlpha = 0.9;
-      ctx.beginPath(); ctx.ellipse(1, hy - 30, 17, 5.5, 0, 0, TAU); ctx.stroke();
+      drawChibiHero(ctx, c.look, t + i, t * 2.2 + i, 0, 1.5, i % 2 === 0 ? 1 : -1, 0);
       ctx.restore();
-      ctx.strokeStyle = '#17121f'; ctx.lineWidth = 2.4;
-    }
+    });
+    ctx.globalAlpha = 1;
   }
-
-  private drawHairFront(ctx: CanvasRenderingContext2D, c: HeroCfg, hy: number): void {
-    ctx.fillStyle = c.hair;
-    ctx.beginPath();
-    switch (c.hairStyle) {
-      case 'spiky':
-        ctx.moveTo(-20, hy - 2);
-        ctx.lineTo(-25, hy - 20); ctx.lineTo(-12, hy - 13);
-        ctx.lineTo(-10, hy - 30); ctx.lineTo(-1, hy - 16);
-        ctx.lineTo(7, hy - 32); ctx.lineTo(12, hy - 15);
-        ctx.lineTo(23, hy - 22); ctx.lineTo(20, hy - 4);
-        ctx.quadraticCurveTo(20, hy - 18, 1, hy - 19);
-        ctx.quadraticCurveTo(-16, hy - 18, -20, hy - 2);
-        break;
-      case 'wild':
-        ctx.moveTo(-20, hy);
-        ctx.quadraticCurveTo(-27, hy - 22, -7, hy - 25);
-        ctx.quadraticCurveTo(0, hy - 32, 9, hy - 24);
-        ctx.quadraticCurveTo(24, hy - 22, 20, hy - 2);
-        ctx.quadraticCurveTo(15, hy - 16, 1, hy - 17);
-        ctx.quadraticCurveTo(-13, hy - 16, -20, hy);
-        break;
-      case 'bun':
-        ctx.arc(1, hy - 7, 21.5, Math.PI * 0.95, Math.PI * 2.02);
-        ctx.quadraticCurveTo(20, hy - 9, 19, hy - 2);
-        ctx.quadraticCurveTo(9, hy - 17, -3, hy - 16);
-        ctx.quadraticCurveTo(-17, hy - 15, -18, hy - 1);
-        ctx.closePath();
-        ctx.fill(); ctx.stroke();
-        ctx.beginPath(); ctx.arc(-10, hy - 28, 9, 0, TAU);
-        break;
-      case 'twin':
-        ctx.moveTo(-20, hy);
-        ctx.quadraticCurveTo(-22, hy - 24, 1, hy - 24);
-        ctx.quadraticCurveTo(22, hy - 23, 20, hy - 1);
-        ctx.lineTo(14, hy - 10);
-        ctx.quadraticCurveTo(10, hy - 3, 13, hy + 3);
-        ctx.quadraticCurveTo(4, hy - 14, -5, hy - 14);
-        ctx.quadraticCurveTo(-14, hy - 12, -20, hy);
-        break;
-      case 'long':
-      case 'angel':
-        ctx.moveTo(-20, hy);
-        ctx.quadraticCurveTo(-22, hy - 25, 1, hy - 25);
-        ctx.quadraticCurveTo(23, hy - 24, 20, hy - 1);
-        ctx.lineTo(15, hy - 10);
-        ctx.quadraticCurveTo(12, hy - 2, 14, hy + 5);
-        ctx.quadraticCurveTo(5, hy - 15, -5, hy - 15);
-        ctx.quadraticCurveTo(-15, hy - 12, -20, hy);
-        break;
-      default:
-        ctx.moveTo(-20, hy - 1);
-        ctx.quadraticCurveTo(-20, hy - 24, 1, hy - 24);
-        ctx.quadraticCurveTo(22, hy - 23, 21, hy - 2);
-        ctx.quadraticCurveTo(12, hy - 16, -3, hy - 16);
-        ctx.quadraticCurveTo(-15, hy - 15, -20, hy - 1);
-        break;
-    }
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
-  }
-
-  private drawWeapon(ctx: CanvasRenderingContext2D, c: HeroCfg, swing: number, castT: number): void {
-    ctx.save();
-    ctx.translate(0.5, 21);
-    switch (c.weapon) {
-      case 'great': {
-        ctx.rotate(-0.25);
-        ctx.fillStyle = '#3a3542';
-        rr(ctx, -3.4, 2, 7, 14, 2); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = c.accent;
-        rr(ctx, -9, 14, 18, 5, 2); ctx.fill(); ctx.stroke();
-        const glint = swing >= 0 ? 0.5 + 0.5 * Math.sin(swing * Math.PI) : 0.35;
-        const bg = ctx.createLinearGradient(0, 18, 0, 88);
-        bg.addColorStop(0, '#c8cdd8'); bg.addColorStop(1, '#5a5f6e');
-        ctx.fillStyle = bg;
-        ctx.beginPath();
-        ctx.moveTo(-8, 18); ctx.lineTo(9, 18); ctx.lineTo(11, 80); ctx.lineTo(0, 92); ctx.lineTo(-10, 76);
-        ctx.closePath(); ctx.fill(); ctx.stroke();
-        ctx.globalAlpha = glint;
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath(); ctx.moveTo(4, 22); ctx.lineTo(8, 22); ctx.lineTo(8, 72); ctx.lineTo(3, 66); ctx.closePath(); ctx.fill();
-        ctx.globalAlpha = 1;
-        break;
-      }
-      case 'sword': {
-        ctx.fillStyle = '#5a4630';
-        rr(ctx, -3, 2, 6, 11, 2); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = c.accent;
-        rr(ctx, -8, 12, 16, 4, 2); ctx.fill(); ctx.stroke();
-        const bg = ctx.createLinearGradient(0, 15, 0, 62);
-        bg.addColorStop(0, '#d6dae2'); bg.addColorStop(1, '#7c8290');
-        ctx.fillStyle = bg;
-        ctx.beginPath(); ctx.moveTo(-5, 15); ctx.lineTo(5, 15); ctx.lineTo(6, 54); ctx.lineTo(0, 62); ctx.lineTo(-6, 52); ctx.closePath();
-        ctx.fill(); ctx.stroke();
-        break;
-      }
-      case 'dagger': {
-        ctx.fillStyle = '#2c2733';
-        rr(ctx, -2.6, 2, 5, 8, 2); ctx.fill(); ctx.stroke();
-        const bg = ctx.createLinearGradient(0, 9, 0, 40);
-        bg.addColorStop(0, '#b8bcd0'); bg.addColorStop(1, '#565a70');
-        ctx.fillStyle = bg;
-        ctx.beginPath(); ctx.moveTo(-4, 9); ctx.lineTo(4, 9); ctx.lineTo(4.5, 34); ctx.lineTo(0, 42); ctx.lineTo(-4.5, 32); ctx.closePath();
-        ctx.fill(); ctx.stroke();
-        break;
-      }
-      case 'bow': {
-        ctx.rotate(0.2);
-        ctx.strokeStyle = '#7a5230';
-        ctx.lineWidth = 3.4;
-        ctx.beginPath(); ctx.arc(0, 22, 24, -1.15, 1.15); ctx.stroke();
-        ctx.strokeStyle = '#e8e4d8'; ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.moveTo(24 * Math.cos(-1.15), 22 + 24 * Math.sin(-1.15));
-        ctx.lineTo(24 * Math.cos(1.15), 22 + 24 * Math.sin(1.15));
-        ctx.stroke();
-        ctx.strokeStyle = '#17121f'; ctx.lineWidth = 2.4;
-        break;
-      }
-      case 'staff': {
-        ctx.fillStyle = '#6a4a30';
-        rr(ctx, -2.2, 0, 4.4, 56, 2); ctx.fill(); ctx.stroke();
-        const glow = castT >= 0 ? 0.95 : 0.6;
-        ctx.globalAlpha = glow;
-        const og = ctx.createRadialGradient(0, 58, 1, 0, 58, 13);
-        og.addColorStop(0, '#ffffff'); og.addColorStop(0.4, c.accent); og.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = og;
-        ctx.beginPath(); ctx.arc(0, 58, 13, 0, TAU); ctx.fill();
-        ctx.globalAlpha = 1;
-        ctx.fillStyle = c.accent;
-        ctx.beginPath(); ctx.arc(0, 58, 5.5, 0, TAU); ctx.fill(); ctx.stroke();
-        break;
-      }
-      case 'spear': {
-        ctx.rotate(-0.3);
-        ctx.fillStyle = '#d8d2c0';
-        rr(ctx, -2, 4, 4, 60, 2); ctx.fill(); ctx.stroke();
-        const bg = ctx.createLinearGradient(0, -16, 0, 6);
-        bg.addColorStop(0, '#fff2c0'); bg.addColorStop(1, '#ffb020');
-        ctx.fillStyle = bg;
-        ctx.beginPath(); ctx.moveTo(0, -16); ctx.lineTo(6, 4); ctx.lineTo(-6, 4); ctx.closePath(); ctx.fill(); ctx.stroke();
-        break;
-      }
-      case 'axe': {
-        ctx.fillStyle = '#5a4630';
-        rr(ctx, -2.4, 0, 5, 52, 2); ctx.fill(); ctx.stroke();
-        const bg = ctx.createLinearGradient(0, -8, 26, 22);
-        bg.addColorStop(0, '#d6dae2'); bg.addColorStop(1, '#7c8290');
-        ctx.fillStyle = bg;
-        ctx.beginPath();
-        ctx.moveTo(0, -4);
-        ctx.quadraticCurveTo(26, -8, 24, 16);
-        ctx.quadraticCurveTo(14, 8, 0, 12);
-        ctx.closePath(); ctx.fill(); ctx.stroke();
-        break;
-      }
-      case 'hammer': {
-        ctx.fillStyle = '#5a4630';
-        rr(ctx, -2.4, 0, 5, 46, 2); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = '#565e6e';
-        rr(ctx, -14, 40, 28, 20, 5); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = c.accent;
-        ctx.fillRect(-14, 47, 28, 4);
-        break;
-      }
-      case 'orb': {
-        const fl = Math.sin((castT >= 0 ? castT : 0) * 10) * 2;
-        ctx.globalAlpha = 0.85;
-        const og = ctx.createRadialGradient(2, 34 + fl, 1, 2, 34 + fl, 14);
-        og.addColorStop(0, '#ffffff'); og.addColorStop(0.45, c.accent); og.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = og;
-        ctx.beginPath(); ctx.arc(2, 34 + fl, 14, 0, TAU); ctx.fill();
-        ctx.globalAlpha = 1;
-        ctx.fillStyle = c.accent;
-        ctx.beginPath(); ctx.arc(2, 34 + fl, 6, 0, TAU); ctx.fill(); ctx.stroke();
-        break;
-      }
-      case 'scythe': {
-        ctx.rotate(-0.2);
-        ctx.fillStyle = '#3a3542';
-        rr(ctx, -2, 0, 4, 58, 2); ctx.fill(); ctx.stroke();
-        const bg = ctx.createLinearGradient(0, -14, 30, 6);
-        bg.addColorStop(0, '#d6dae2'); bg.addColorStop(1, '#7c8290');
-        ctx.fillStyle = bg;
-        ctx.beginPath();
-        ctx.moveTo(0, -10);
-        ctx.quadraticCurveTo(30, -16, 30, 4);
-        ctx.quadraticCurveTo(20, -4, 0, 0);
-        ctx.closePath(); ctx.fill(); ctx.stroke();
-        break;
-      }
-    }
-    ctx.restore();
-  }
-
-  /* ---------- foes (CHIBI) ---------- */
-  private drawFoe(ctx: CanvasRenderingContext2D, e: Foe): void {
-    const gy = GROUND;
-    ctx.save();
-    ctx.translate(e.x, gy);
-    if (e.state === 'die') {
-      ctx.globalAlpha = clamp(1 - e.t / 0.5, 0, 1);
-      ctx.scale(1 + e.t, Math.max(0.05, 1 - e.t * 1.6));
-    }
-    ctx.fillStyle = 'rgba(0,0,0,0.4)';
-    ctx.beginPath(); ctx.ellipse(0, 4, 26 * e.scale, 7 * e.scale, 0, 0, TAU); ctx.fill();
-    if (e.flashT > 0) ctx.filter = 'brightness(2.4)';
-    ctx.scale(-e.scale, e.scale);
-    if (e.bossIdx !== undefined) this.drawBossBody(ctx, e);
-    else this.drawMonster(ctx, e);
-    ctx.filter = 'none';
-    ctx.restore();
-
-    if (e.state !== 'die' && e.bossIdx === undefined) {
-      const pct = clamp(e.hp / e.maxHp, 0, 1);
-      const bw = 44 * e.scale;
-      ctx.fillStyle = 'rgba(8,6,12,0.8)';
-      ctx.fillRect(e.x - bw / 2 - 1, gy - 92 * e.scale - 1, bw + 2, 6);
-      ctx.fillStyle = '#ff3b52';
-      ctx.fillRect(e.x - bw / 2, gy - 92 * e.scale, bw * pct, 4);
-    }
-    if (e.stunT > 0 && e.state !== 'die') {
+  private drawWorld(zone: (typeof ZONES)[number]): void {
+    const ctx = this.ctx;
+    const t = this.globalT;
+    // pickups
+    for (const pk of this.pickups) {
       ctx.save();
-      ctx.translate(e.x, gy - 100 * e.scale);
-      for (let i = 0; i < 3; i++) {
-        const a = this.globalT * 6 + i * 2.1;
-        this.star(ctx, Math.cos(a) * 14, Math.sin(a) * 5 - 8, 4, '#ffe14d');
-      }
-      ctx.restore();
-    }
-  }
-
-  private monsterEyes(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, pupil = '#1a1020'): void {
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
-    ctx.strokeStyle = '#17121f'; ctx.lineWidth = 1.6; ctx.stroke();
-    ctx.fillStyle = pupil;
-    ctx.beginPath(); ctx.arc(x - r * 0.25, y, r * 0.45, 0, TAU); ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath(); ctx.arc(x - r * 0.4, y - r * 0.3, r * 0.18, 0, TAU); ctx.fill();
-  }
-
-  private drawMonster(ctx: CanvasRenderingContext2D, e: Foe): void {
-    const t = e.animT;
-    ctx.lineWidth = 2.2;
-    ctx.strokeStyle = '#17121f';
-    switch (e.type) {
-      case 'slime': {
-        const sq = 1 + Math.sin(t * 6) * 0.08;
-        ctx.fillStyle = '#5ad16a';
-        ctx.beginPath();
-        ctx.moveTo(-22, 0);
-        ctx.quadraticCurveTo(-26, -34 * sq, 0, -38 * sq);
-        ctx.quadraticCurveTo(26, -34 * sq, 22, 0);
-        ctx.closePath(); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = 'rgba(255,255,255,0.35)';
-        ctx.beginPath(); ctx.ellipse(-8, -26, 6, 9, -0.4, 0, TAU); ctx.fill();
-        this.monsterEyes(ctx, -6, -18, 5.4);
-        this.monsterEyes(ctx, 9, -18, 5.4);
-        ctx.strokeStyle = '#1a4020'; ctx.lineWidth = 1.8;
-        ctx.beginPath(); ctx.arc(2, -9, 5, 0.2, Math.PI - 0.2); ctx.stroke();
-        break;
-      }
-      case 'bat': {
-        const flap = Math.sin(t * 14) * 0.7;
-        const y = -52 + Math.sin(t * 5) * 6;
-        ctx.save(); ctx.translate(0, y);
-        ctx.fillStyle = '#7a4a9a';
-        for (const dir of [-1, 1]) {
-          ctx.save(); ctx.scale(dir, 1); ctx.rotate(flap * dir);
-          ctx.beginPath();
-          ctx.moveTo(6, -4);
-          ctx.quadraticCurveTo(28, -18, 34, -2);
-          ctx.quadraticCurveTo(26, 0, 22, 6);
-          ctx.quadraticCurveTo(16, 2, 6, 6);
-          ctx.closePath(); ctx.fill(); ctx.stroke();
-          ctx.restore();
-        }
-        ctx.fillStyle = '#9a5ac0';
-        ctx.beginPath(); ctx.ellipse(0, 0, 13, 15, 0, 0, TAU); ctx.fill(); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(-8, -11); ctx.lineTo(-13, -22); ctx.lineTo(-3, -14); ctx.closePath(); ctx.fill(); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(8, -11); ctx.lineTo(13, -22); ctx.lineTo(3, -14); ctx.closePath(); ctx.fill(); ctx.stroke();
-        this.monsterEyes(ctx, -4, -3, 4, '#ff3b52');
-        this.monsterEyes(ctx, 5, -3, 4, '#ff3b52');
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath(); ctx.moveTo(-3, 7); ctx.lineTo(-1.5, 11); ctx.lineTo(0, 7); ctx.closePath(); ctx.fill();
-        ctx.beginPath(); ctx.moveTo(3, 7); ctx.lineTo(1.5, 11); ctx.lineTo(0, 7); ctx.closePath(); ctx.fill();
-        ctx.restore();
-        break;
-      }
-      case 'skeleton': {
-        const step = Math.sin(t * 8) * 3.4;
-        ctx.fillStyle = '#d8d2c4';
-        rr(ctx, -12, -20 + step * 0.4, 8, 20, 3); ctx.fill(); ctx.stroke();
-        rr(ctx, 5, -20 - step * 0.4, 8, 20, 3); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = '#c9c2b2';
-        rr(ctx, -13, -48, 26, 30, 7); ctx.fill(); ctx.stroke();
-        ctx.strokeStyle = '#8f887a'; ctx.lineWidth = 1.6;
-        for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(-9, -41 + i * 8); ctx.lineTo(9, -41 + i * 8); ctx.stroke(); }
-        ctx.strokeStyle = '#17121f'; ctx.lineWidth = 2.2;
-        // sọ to
-        ctx.fillStyle = '#e8e2d4';
-        ctx.beginPath(); ctx.arc(0, -62, 15, 0, TAU); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = '#1a1020';
-        ctx.beginPath(); ctx.ellipse(-5.5, -64, 4, 5, 0, 0, TAU); ctx.fill();
-        ctx.beginPath(); ctx.ellipse(5.5, -64, 4, 5, 0, 0, TAU); ctx.fill();
-        ctx.fillStyle = '#ff3b52';
-        ctx.beginPath(); ctx.arc(-5.5, -64, 1.6, 0, TAU); ctx.fill();
-        ctx.beginPath(); ctx.arc(5.5, -64, 1.6, 0, TAU); ctx.fill();
-        ctx.strokeStyle = '#1a1020'; ctx.lineWidth = 1.4;
-        ctx.beginPath(); ctx.moveTo(-4, -54); ctx.lineTo(4, -54); ctx.stroke();
-        ctx.strokeStyle = '#17121f'; ctx.lineWidth = 2.2;
-        ctx.save(); ctx.translate(16, -36); ctx.rotate(0.5 + Math.sin(t * 8) * 0.15);
-        ctx.fillStyle = '#8f887a';
-        ctx.beginPath(); ctx.moveTo(-2.6, 0); ctx.lineTo(2.6, 0); ctx.lineTo(2, -30); ctx.lineTo(-2, -30); ctx.closePath(); ctx.fill(); ctx.stroke();
-        ctx.restore();
-        break;
-      }
-      case 'imp': {
-        const hop = Math.abs(Math.sin(t * 7)) * 5;
-        ctx.save(); ctx.translate(0, -hop);
-        ctx.strokeStyle = '#c04a5a'; ctx.lineWidth = 4;
-        ctx.beginPath(); ctx.moveTo(-12, -14); ctx.quadraticCurveTo(-30, -18, -28, -34); ctx.stroke();
-        ctx.fillStyle = '#8a2a3a';
-        ctx.beginPath(); ctx.moveTo(-28, -34); ctx.lineTo(-34, -40); ctx.lineTo(-24, -40); ctx.closePath(); ctx.fill();
-        ctx.strokeStyle = '#17121f'; ctx.lineWidth = 2.2;
-        ctx.fillStyle = '#c04a5a';
-        ctx.beginPath(); ctx.ellipse(0, -22, 17, 21, 0, 0, TAU); ctx.fill(); ctx.stroke();
-        rr(ctx, -12, -8, 9, 12, 4); ctx.fill(); ctx.stroke();
-        rr(ctx, 4, -8, 9, 12, 4); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = '#3a2a2a';
-        ctx.beginPath(); ctx.moveTo(-8, -41); ctx.lineTo(-14, -54); ctx.lineTo(-4, -45); ctx.closePath(); ctx.fill(); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(8, -41); ctx.lineTo(14, -54); ctx.lineTo(4, -45); ctx.closePath(); ctx.fill(); ctx.stroke();
-        this.monsterEyes(ctx, -5.5, -28, 5, '#ffd23c');
-        this.monsterEyes(ctx, 6, -28, 5, '#ffd23c');
-        ctx.strokeStyle = '#17121f'; ctx.lineWidth = 1.6;
-        ctx.beginPath(); ctx.moveTo(-4, -16); ctx.quadraticCurveTo(1, -12, 6, -16); ctx.stroke();
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath(); ctx.moveTo(-3, -15); ctx.lineTo(-2, -11); ctx.lineTo(-1, -15); ctx.closePath(); ctx.fill();
-        ctx.beginPath(); ctx.moveTo(3, -15); ctx.lineTo(2, -11); ctx.lineTo(1, -15); ctx.closePath(); ctx.fill();
-        ctx.restore();
-        break;
-      }
-      case 'wisp': {
-        const y = -46 + Math.sin(t * 4) * 10;
-        const g = ctx.createRadialGradient(0, y, 2, 0, y, 26);
-        g.addColorStop(0, '#eaffff'); g.addColorStop(0.5, '#7fd4ff'); g.addColorStop(1, 'rgba(127,212,255,0)');
-        ctx.fillStyle = g;
-        ctx.beginPath(); ctx.arc(0, y, 26, 0, TAU); ctx.fill();
-        ctx.fillStyle = 'rgba(220,250,255,0.9)';
-        ctx.beginPath(); ctx.arc(0, y, 13, 0, TAU); ctx.fill();
-        ctx.strokeStyle = '#2a6a8a'; ctx.lineWidth = 1.8;
-        ctx.stroke();
-        ctx.fillStyle = '#123a5a';
-        ctx.beginPath(); ctx.ellipse(-4.5, y - 2, 2.6, 3.8, 0, 0, TAU); ctx.fill();
-        ctx.beginPath(); ctx.ellipse(4.5, y - 2, 2.6, 3.8, 0, 0, TAU); ctx.fill();
-        ctx.beginPath(); ctx.ellipse(0, y + 5, 2.2, 3.2, 0, 0, TAU); ctx.fill();
-        break;
-      }
-      case 'brute': {
-        const step = Math.sin(t * 4.5) * 3;
-        ctx.fillStyle = '#6a7a4a';
-        rr(ctx, -20, -24 + step * 0.4, 15, 24, 6); ctx.fill(); ctx.stroke();
-        rr(ctx, 6, -24 - step * 0.4, 15, 24, 6); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = '#7a8a56';
-        ctx.beginPath(); ctx.ellipse(0, -46, 27, 26, 0, 0, TAU); ctx.fill(); ctx.stroke();
-        rr(ctx, -35, -58, 13, 34, 6); ctx.fill(); ctx.stroke();
-        rr(ctx, 22, -58, 13, 34, 6); ctx.fill(); ctx.stroke();
-        ctx.save(); ctx.translate(28, -26); ctx.rotate(-0.6 + Math.sin(t * 4.5) * 0.12);
-        ctx.fillStyle = '#5a4630';
-        rr(ctx, -4, -38, 8, 40, 3); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = '#4a3a26';
-        ctx.beginPath(); ctx.ellipse(0, -44, 13, 16, 0, 0, TAU); ctx.fill(); ctx.stroke();
-        ctx.restore();
-        // đầu chibi nhỏ hơn thân
-        ctx.fillStyle = '#8a9a62';
-        ctx.beginPath(); ctx.arc(0, -78, 16, 0, TAU); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = '#e8e2d4';
-        ctx.beginPath(); ctx.moveTo(-12, -74); ctx.lineTo(-19, -66); ctx.lineTo(-9, -70); ctx.closePath(); ctx.fill(); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(12, -74); ctx.lineTo(19, -66); ctx.lineTo(9, -70); ctx.closePath(); ctx.fill(); ctx.stroke();
-        this.monsterEyes(ctx, -5.5, -81, 4.4, '#ff3b52');
-        this.monsterEyes(ctx, 6, -81, 4.4, '#ff3b52');
-        break;
-      }
-      default: break;
-    }
-    ctx.lineWidth = 2.2;
-  }
-
-  /* Boss chibi tổng quát theo bảng màu + phụ kiện */
-  private drawBossBody(ctx: CanvasRenderingContext2D, e: Foe): void {
-    const def = BOSSES[e.bossIdx ?? 0];
-    const t = e.animT;
-    const step = Math.sin(t * 3.4) * 2.4;
-    ctx.lineWidth = 2.6;
-    ctx.strokeStyle = '#17121f';
-
-    if (def.arch === 'spitter') {
-      // chân váy xúc tu
-      ctx.fillStyle = def.armorDark;
-      for (let i = 0; i < 7; i++) {
-        const tx = -42 + i * 14;
-        const th = 26 + ((i * 37) % 22);
-        const ph = Math.sin(t * 3 + i) * 6;
-        ctx.beginPath();
-        ctx.moveTo(tx - 8, 0);
-        ctx.quadraticCurveTo(tx - 10 + ph, -th * 0.6, tx + ph * 0.5, -th);
-        ctx.quadraticCurveTo(tx + 10 + ph, -th * 0.6, tx + 8, 0);
-        ctx.closePath(); ctx.fill(); ctx.stroke();
-      }
-    }
-
-    if (def.cape) {
-      ctx.fillStyle = def.cape;
-      ctx.beginPath();
-      ctx.moveTo(-16, -92);
-      ctx.quadraticCurveTo(-50, -52, -36, -4);
-      ctx.lineTo(-10, -26);
-      ctx.closePath(); ctx.fill(); ctx.stroke();
-    }
-    if (def.wings) {
-      const flap = Math.sin(t * 2.6) * 0.16;
-      for (const dir of [-1, 1]) {
-        ctx.save(); ctx.translate(dir * 18, -86); ctx.scale(dir, 1); ctx.rotate(-0.3 + flap * dir);
-        ctx.fillStyle = def.armorDark;
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.quadraticCurveTo(40, -34, 58, -10);
-        ctx.quadraticCurveTo(44, -8, 38, 2);
-        ctx.quadraticCurveTo(28, -2, 22, 8);
-        ctx.quadraticCurveTo(14, 2, 0, 12);
-        ctx.closePath(); ctx.fill(); ctx.stroke();
-        ctx.restore();
-      }
-    }
-
-    // chân ngắn
-    ctx.fillStyle = def.armorDark;
-    rr(ctx, -20, -34 + step, 15, 34, 6); ctx.fill(); ctx.stroke();
-    rr(ctx, 5, -34 - step, 15, 34, 6); ctx.fill(); ctx.stroke();
-    // thân giáp nhỏ
-    const bg = ctx.createLinearGradient(0, -100, 0, -30);
-    bg.addColorStop(0, def.armor); bg.addColorStop(1, def.armorDark);
-    ctx.fillStyle = bg;
-    ctx.beginPath();
-    ctx.moveTo(-24, -96); ctx.lineTo(24, -96); ctx.lineTo(20, -30); ctx.lineTo(-20, -30);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = def.accent;
-    ctx.fillRect(-20, -52, 40, 6);
-    // cầu vai
-    ctx.fillStyle = def.armor;
-    ctx.beginPath(); ctx.ellipse(-26, -92, 14, 10, -0.3, 0, TAU); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.ellipse(26, -92, 14, 10, 0.3, 0, TAU); ctx.fill(); ctx.stroke();
-    // tay
-    rr(ctx, -34, -88, 11, 30, 5); ctx.fill(); ctx.stroke();
-    rr(ctx, 23, -88, 11, 30, 5); ctx.fill(); ctx.stroke();
-
-    // ĐẦU KHỔNG LỒ
-    const hy = -122;
-    ctx.fillStyle = def.armor;
-    ctx.beginPath(); ctx.arc(0, hy, 27, 0, TAU); ctx.fill(); ctx.stroke();
-    // sừng
-    ctx.fillStyle = '#c9c2b2';
-    ctx.beginPath(); ctx.moveTo(-16, hy - 18); ctx.quadraticCurveTo(-30, -160, -20, hy - 44); ctx.quadraticCurveTo(-14, hy - 28, -8, hy - 22); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(16, hy - 18); ctx.quadraticCurveTo(30, -160, 20, hy - 44); ctx.quadraticCurveTo(14, hy - 28, 8, hy - 22); ctx.closePath(); ctx.fill(); ctx.stroke();
-
-    if (def.mask) {
-      // mặt nạ trắng + khe dọc
-      ctx.fillStyle = '#f6f2fa';
-      ctx.beginPath(); ctx.arc(0, hy, 22, 0, TAU); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#1a1020';
-      ctx.fillRect(-2, hy - 12, 4, 22);
-      ctx.fillStyle = def.eye;
-      ctx.shadowColor = def.eye; ctx.shadowBlur = 10;
-      ctx.beginPath(); ctx.arc(0, hy - 1, 3, 0, TAU); ctx.fill();
-      ctx.shadowBlur = 0;
-    } else {
-      // mắt rực sáng
-      ctx.fillStyle = def.eye;
-      ctx.shadowColor = def.eye; ctx.shadowBlur = 12;
-      ctx.beginPath(); ctx.ellipse(-9, hy - 2, 6, 7, 0, 0, TAU); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(9, hy - 2, 6, 7, 0, 0, TAU); ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = '#10101a';
-      ctx.beginPath(); ctx.arc(-9, hy - 1, 2.6, 0, TAU); ctx.fill();
-      ctx.beginPath(); ctx.arc(9, hy - 1, 2.6, 0, TAU); ctx.fill();
-      // miệng răng
-      ctx.fillStyle = '#10101a';
-      ctx.beginPath(); ctx.ellipse(0, hy + 12, 9, 5 + Math.sin(t * 4) * 1.6, 0, 0, TAU); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#ffffff';
-      for (let i = 0; i < 4; i++) {
-        ctx.beginPath();
-        ctx.moveTo(-6 + i * 4, hy + 8);
-        ctx.lineTo(-4.6 + i * 4, hy + 12);
-        ctx.lineTo(-3.2 + i * 4, hy + 8);
-        ctx.closePath(); ctx.fill();
-      }
-    }
-
-    // vũ khí theo hệ
-    ctx.save();
-    ctx.translate(32, -80);
-    ctx.rotate(-0.35 + Math.sin(t * 3) * 0.06);
-    if (def.arch === 'warlock') {
-      ctx.fillStyle = '#3a3542';
-      rr(ctx, -3, 0, 6, 60, 2); ctx.fill(); ctx.stroke();
-      const og = ctx.createRadialGradient(0, 64, 2, 0, 64, 16);
-      og.addColorStop(0, '#ffffff'); og.addColorStop(0.45, def.accent); og.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = og;
-      ctx.beginPath(); ctx.arc(0, 64, 16, 0, TAU); ctx.fill();
-      ctx.fillStyle = def.accent;
-      ctx.beginPath(); ctx.arc(0, 64, 7, 0, TAU); ctx.fill(); ctx.stroke();
-    } else {
-      ctx.fillStyle = '#4a3a26';
-      rr(ctx, -4, 0, 8, 18, 3); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = def.accent;
-      rr(ctx, -12, -6, 24, 6, 2); ctx.fill(); ctx.stroke();
-      const sg = ctx.createLinearGradient(0, -8, 0, -96);
-      sg.addColorStop(0, def.armor); sg.addColorStop(1, def.armorDark);
-      ctx.fillStyle = sg;
-      ctx.beginPath();
-      ctx.moveTo(-10, -8); ctx.lineTo(10, -8); ctx.lineTo(12, -84); ctx.lineTo(0, -100); ctx.lineTo(-12, -80);
-      ctx.closePath(); ctx.fill(); ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  private drawZaps(ctx: CanvasRenderingContext2D): void {
-    for (const z of this.zaps) {
-      const a = clamp(z.t / 0.22, 0, 1);
-      ctx.save();
-      ctx.globalAlpha = a;
-      ctx.strokeStyle = z.color;
-      ctx.lineWidth = 3;
-      ctx.shadowColor = z.color;
-      ctx.shadowBlur = 10;
-      ctx.beginPath();
-      ctx.moveTo(z.x1, z.y1);
-      const segs = 4;
-      for (let i = 1; i < segs; i++) {
-        const px = lerp(z.x1, z.x2, i / segs) + rand(-10, 10);
-        const py = lerp(z.y1, z.y2, i / segs) + rand(-10, 10);
-        ctx.lineTo(px, py);
-      }
-      ctx.lineTo(z.x2, z.y2);
-      ctx.stroke();
-      ctx.restore();
-    }
-  }
-
-  /* ---------- projectiles / fx ---------- */
-  private drawProjs(ctx: CanvasRenderingContext2D): void {
-    for (const p of this.projs) {
-      if (p.t > 0) continue;
-      ctx.save();
-      ctx.translate(p.x, p.y);
-      if (p.kind === 'arrow') {
-        ctx.fillStyle = '#e8e4d8';
-        ctx.strokeStyle = '#17121f'; ctx.lineWidth = 1.4;
-        ctx.beginPath(); ctx.moveTo(10, 0); ctx.lineTo(-8, -3); ctx.lineTo(-8, 3); ctx.closePath(); ctx.fill(); ctx.stroke();
-      } else if (p.kind === 'acid') {
-        const g = ctx.createRadialGradient(0, 0, 1, 0, 0, 12);
-        g.addColorStop(0, '#eaffe0'); g.addColorStop(0.5, '#8dff9a'); g.addColorStop(1, 'rgba(141,255,154,0)');
-        ctx.fillStyle = g;
-        ctx.beginPath(); ctx.arc(0, 0, 12, 0, TAU); ctx.fill();
-      } else if (p.kind === 'bolt') {
-        const g = ctx.createRadialGradient(0, 0, 1, 0, 0, 11);
-        g.addColorStop(0, '#ffffff'); g.addColorStop(0.5, '#c9b8ff'); g.addColorStop(1, 'rgba(201,184,255,0)');
-        ctx.fillStyle = g;
-        ctx.beginPath(); ctx.arc(0, 0, 11, 0, TAU); ctx.fill();
-      } else if (p.kind === 'ice') {
-        ctx.fillStyle = '#dff4ff';
-        ctx.strokeStyle = '#7fd4ff'; ctx.lineWidth = 1.6;
-        ctx.beginPath();
-        ctx.moveTo(10, 0); ctx.lineTo(0, -6); ctx.lineTo(-8, 0); ctx.lineTo(0, 6);
-        ctx.closePath(); ctx.fill(); ctx.stroke();
-      } else if (p.kind === 'blood') {
-        const g = ctx.createRadialGradient(0, 0, 1, 0, 0, 12);
-        g.addColorStop(0, '#ffd0d8'); g.addColorStop(0.5, '#ff3b52'); g.addColorStop(1, 'rgba(255,59,82,0)');
-        ctx.fillStyle = g;
-        ctx.beginPath(); ctx.arc(0, 0, 12, 0, TAU); ctx.fill();
-      } else if (p.kind === 'light') {
-        ctx.fillStyle = '#ffd23c';
-        this.star(ctx, 0, 0, 8, '#fff2c0');
+      ctx.translate(pk.x, pk.y);
+      const glow = pk.kind === 'gem' ? '#ff4fd8' : '#ffd23c';
+      ctx.globalAlpha = clamp(pk.life, 0, 1);
+      const g = ctx.createRadialGradient(0, 0, 1, 0, 0, 16);
+      g.addColorStop(0, glow); g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(0, 0, 16, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = clamp(pk.life, 0, 1);
+      if (pk.kind === 'gem') {
+        ctx.fillStyle = '#ff4fd8';
+        ctx.strokeStyle = 'rgba(20,10,25,0.9)'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(0, -9); ctx.lineTo(7, -2); ctx.lineTo(0, 9); ctx.lineTo(-7, -2); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(-2, -3, 1.6, 0, Math.PI * 2); ctx.fill();
       } else {
-        const g = ctx.createRadialGradient(0, 0, 1, 0, 0, 13);
-        g.addColorStop(0, '#ffffff'); g.addColorStop(0.45, '#d05cff'); g.addColorStop(1, 'rgba(208,92,255,0)');
-        ctx.fillStyle = g;
-        ctx.beginPath(); ctx.arc(0, 0, 13, 0, TAU); ctx.fill();
+        ctx.fillStyle = '#ffd23c';
+        ctx.strokeStyle = 'rgba(20,10,25,0.9)'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#a8741e';
+        ctx.font = '700 9px "Chakra Petch", sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('$', 0, 0.5);
       }
       ctx.restore();
     }
+    // enemies (draw further ones first)
+    const sorted = [...this.enemies].filter((e) => !e.dead).sort((a, b) => b.x - a.x);
+    for (const e of sorted) {
+      const ey = e.hover ? GROUND - 60 : GROUND;
+      ctx.save();
+      ctx.translate(e.x, ey);
+      // shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.beginPath(); ctx.ellipse(0, e.hover ? 60 : 2, 34 * e.scale, 8 * e.scale, 0, 0, Math.PI * 2); ctx.fill();
+      if (e.boss) {
+        ctx.globalAlpha = 0.5 + 0.25 * Math.sin(t * 5);
+        ctx.fillStyle = '#ff3b52';
+        ctx.beginPath(); ctx.ellipse(0, 4, 60 * e.scale, 14 * e.scale, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      if (e.hurtT > 0) { ctx.filter = 'brightness(2.2) saturate(0.6)'; }
+      const swing = e.swing > 0 ? clamp(Math.sin(clamp(e.swing, 0, 1) * Math.PI), 0, 1) : 0;
+      drawMonsterChibi(ctx, e.kind, e.tint, e.eye, t + e.uid, e.walk, swing, e.scale, e.stunT, e.boss);
+      ctx.filter = 'none';
+      // hp bar
+      if (!e.boss && e.hp < e.maxHp) {
+        const w = 52 * e.scale;
+        ctx.fillStyle = 'rgba(10,8,14,0.8)';
+        rr(ctx, -w / 2, -130 * e.scale, w, 6, 3); ctx.fill();
+        ctx.fillStyle = '#ff3b52';
+        rr(ctx, -w / 2 + 1, -130 * e.scale + 1, (w - 2) * clamp(e.hp / e.maxHp, 0, 1), 4, 2); ctx.fill();
+      }
+      ctx.restore();
+    }
+    // heroes
+    for (const h of this.heroes) {
+      if (h.dead) continue;
+      ctx.save();
+      ctx.translate(h.x, GROUND);
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.beginPath(); ctx.ellipse(0, 2, 26, 7, 0, 0, Math.PI * 2); ctx.fill();
+      if (h.hurtT > 0) ctx.filter = 'brightness(2) saturate(0.5)';
+      const lunge = h.swing > 0 ? clamp(Math.sin(clamp(h.swing, 0, 1) * Math.PI), 0, 1) : 0;
+      const scale = h.isKael ? 1.5 : 1.22;
+      drawChibiHero(ctx, h.look, t + h.x * 0.01, t * 7, lunge, scale, 1, h.frozenT);
+      ctx.filter = 'none';
+      // slash arc
+      if (lunge > 0.25 && !h.ranged) {
+        ctx.strokeStyle = h.look.aura;
+        ctx.globalAlpha = lunge * 0.8;
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.arc(26, -70, 52 * scale, -1.6 + lunge * 1.4, -0.2 + lunge * 1.4);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      // mini hp
+      const w = 44;
+      ctx.fillStyle = 'rgba(10,8,14,0.8)';
+      rr(ctx, -w / 2, -148 * scale + 8, w, 6, 3); ctx.fill();
+      ctx.fillStyle = h.hp / h.maxHp > 0.35 ? '#3fe0b0' : '#ff3b52';
+      rr(ctx, -w / 2 + 1, -148 * scale + 9, (w - 2) * clamp(h.hp / h.maxHp, 0, 1), 4, 2); ctx.fill();
+      ctx.restore();
+    }
+    // projectiles
+    for (const pr of this.projs) {
+      if (pr.t < 0) continue;
+      ctx.save();
+      ctx.translate(pr.x, pr.y);
+      if (pr.kind === 'arrow') {
+        ctx.rotate(Math.atan2(pr.ty - pr.y, pr.tx - pr.x));
+        ctx.strokeStyle = '#e8e0d0'; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.moveTo(-10, 0); ctx.lineTo(8, 0); ctx.stroke();
+        ctx.fillStyle = '#8cdcff';
+        ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(4, -4); ctx.lineTo(4, 4); ctx.closePath(); ctx.fill();
+      } else if (pr.kind === 'meteor') {
+        ctx.fillStyle = '#8a5a3a';
+        ctx.beginPath(); ctx.arc(0, 0, 13, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = 'rgba(20,10,25,0.9)'; ctx.lineWidth = 2.5; ctx.stroke();
+        ctx.fillStyle = '#ff9a3c';
+        ctx.beginPath(); ctx.moveTo(-8, -10); ctx.lineTo(0, -34); ctx.lineTo(8, -10); ctx.closePath(); ctx.fill();
+      } else {
+        const color = pr.kind === 'light' ? '#fff4c8' : pr.kind === 'magic' ? '#b878e8' : pr.kind === 'acid' ? '#8dff5a' : '#8cdcff';
+        const g = ctx.createRadialGradient(0, 0, 1, 0, 0, 12);
+        g.addColorStop(0, '#ffffff'); g.addColorStop(0.4, color); g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(0, 0, 12, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+    }
+    // float texts
+    for (const ft of this.texts) {
+      ctx.globalAlpha = clamp(ft.life * 2, 0, 1);
+      ctx.font = `${ft.size}px "Bangers", cursive`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.strokeStyle = 'rgba(10,5,12,0.85)';
+      ctx.lineWidth = 4;
+      ctx.strokeText(ft.text, ft.x, ft.y);
+      ctx.fillStyle = ft.color;
+      ctx.fillText(ft.text, ft.x, ft.y);
+      ctx.globalAlpha = 1;
+    }
+    // toasts
+    this.toasts.forEach((to, i) => {
+      const a = clamp(to.life, 0, 1);
+      ctx.globalAlpha = a;
+      ctx.font = '700 15px "Be Vietnam Pro", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const y = 108 + i * 26;
+      ctx.strokeStyle = 'rgba(10,5,12,0.9)';
+      ctx.lineWidth = 5;
+      ctx.strokeText(to.text, VIEW_W / 2, y);
+      ctx.fillStyle = to.color;
+      ctx.fillText(to.text, VIEW_W / 2, y);
+      ctx.globalAlpha = 1;
+    });
   }
-
-  private drawParts(ctx: CanvasRenderingContext2D): void {
+  private drawParticles(): void {
+    const ctx = this.ctx;
     for (const p of this.parts) {
       const a = clamp(p.life / p.maxLife, 0, 1);
       ctx.globalAlpha = a;
-      if (p.kind === 'ring') {
-        const r = (1 - a) * 46 + 6;
-        ctx.strokeStyle = p.color;
-        ctx.lineWidth = 3 * a;
-        ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, TAU); ctx.stroke();
-      } else if (p.kind === 'star') {
-        this.star(ctx, p.x, p.y, p.size * (0.5 + a), p.color);
-      } else if (p.kind === 'poof') {
-        ctx.fillStyle = p.color;
-        ctx.globalAlpha = a * 0.5;
-        ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (1.6 - a * 0.6), 0, TAU); ctx.fill();
-      } else if (p.kind === 'coin') {
-        ctx.fillStyle = '#ffd23c';
-        ctx.strokeStyle = '#8a6a10';
-        ctx.lineWidth = 1.4;
-        ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, TAU); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = p.color;
+      if (p.shape === 'smoke') {
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (2 - a), 0, Math.PI * 2); ctx.fill();
+      } else if (p.shape === 'slash' || p.shape === 'ice') {
+        ctx.save();
+        ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+        ctx.fillRect(-p.size, -1, p.size * 2, 2);
+        ctx.restore();
       } else {
-        ctx.fillStyle = p.color;
-        ctx.beginPath(); ctx.arc(p.x, p.y, p.size * a + 0.6, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.size * a, 0, Math.PI * 2); ctx.fill();
       }
     }
     ctx.globalAlpha = 1;
   }
-
-  private star(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string): void {
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.moveTo(x, y - r);
-    ctx.quadraticCurveTo(x + r * 0.18, y - r * 0.18, x + r, y);
-    ctx.quadraticCurveTo(x + r * 0.18, y + r * 0.18, x, y + r);
-    ctx.quadraticCurveTo(x - r * 0.18, y + r * 0.18, x - r, y);
-    ctx.quadraticCurveTo(x - r * 0.18, y - r * 0.18, x, y - r);
-    ctx.fill();
-  }
-
-  private drawTexts(ctx: CanvasRenderingContext2D): void {
-    ctx.textAlign = 'center';
-    for (const t of this.texts) {
-      const a = clamp(t.life / t.maxLife, 0, 1);
-      ctx.globalAlpha = a;
-      ctx.font = `900 ${t.size}px "Anton", "Be Vietnam Pro", sans-serif`;
-      ctx.strokeStyle = 'rgba(10,6,14,0.9)';
-      ctx.lineWidth = 4;
-      ctx.strokeText(t.text, t.x, t.y);
-      ctx.fillStyle = t.color;
-      ctx.fillText(t.text, t.x, t.y);
-    }
-    ctx.globalAlpha = 1;
-  }
-
-  private drawBanner(ctx: CanvasRenderingContext2D): void {
-    if (!this.banner) return;
-    const b = this.banner;
-    const inT = clamp(b.t / 0.25, 0, 1);
-    const outT = clamp((b.life - b.t) / 0.4, 0, 1);
-    const a = Math.min(inT, outT);
+  private drawHud(zone: (typeof ZONES)[number]): void {
+    if (this.state === 'title') return;
+    const ctx = this.ctx;
+    const hud = this.hudCache;
+    // ===== top-left: stage panel =====
     ctx.save();
-    ctx.globalAlpha = a;
-    ctx.fillStyle = 'rgba(8,5,12,0.6)';
-    ctx.fillRect(0, H * 0.3 - 46, W, 118);
-    ctx.fillStyle = b.color;
-    ctx.fillRect(0, H * 0.3 - 46, W, 3);
-    ctx.fillRect(0, H * 0.3 + 69, W, 3);
-    ctx.textAlign = 'center';
-    ctx.font = '400 40px "Anton", "Be Vietnam Pro", sans-serif';
-    ctx.strokeStyle = 'rgba(0,0,0,0.8)';
-    ctx.lineWidth = 6;
-    ctx.strokeText(b.main, W / 2, H * 0.3 + 14);
-    ctx.fillStyle = b.color;
-    ctx.fillText(b.main, W / 2, H * 0.3 + 14);
-    if (b.sub) {
-      ctx.font = '600 16px "Be Vietnam Pro", sans-serif';
-      ctx.fillStyle = '#e8dfc8';
-      ctx.fillText(b.sub, W / 2, H * 0.3 + 46);
-    }
-    ctx.restore();
-  }
-
-  private drawBossBar(ctx: CanvasRenderingContext2D): void {
-    const boss = this.foes.find((f) => f.bossIdx !== undefined && f.state !== 'die');
-    if (!boss) return;
-    const def = BOSSES[boss.bossIdx ?? 0];
-    const bw = 640; const bx = W / 2 - bw / 2; const by = 26;
-    ctx.fillStyle = 'rgba(8,6,12,0.85)';
-    ctx.fillRect(bx - 8, by - 8, bw + 16, 34);
-    ctx.strokeStyle = 'rgba(255,59,82,0.6)';
+    ctx.fillStyle = 'rgba(10,8,16,0.82)';
+    ctx.strokeStyle = 'rgba(255,59,82,0.45)';
     ctx.lineWidth = 1.5;
-    ctx.strokeRect(bx - 8, by - 8, bw + 16, 34);
-    ctx.fillStyle = '#2a0d14';
-    ctx.fillRect(bx, by + 12, bw, 10);
-    const pct = clamp(boss.hp / boss.maxHp, 0, 1);
-    const g = ctx.createLinearGradient(bx, 0, bx + bw, 0);
-    g.addColorStop(0, '#ff3b52'); g.addColorStop(1, '#c2172f');
-    ctx.fillStyle = g;
-    ctx.fillRect(bx, by + 12, bw * pct, 10);
-    ctx.font = '400 14px "Anton", "Be Vietnam Pro", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#ff8fa0';
-    ctx.fillText(`${def.name} — ${def.title}`, W / 2, by + 6);
-  }
-
-  private drawWavePips(ctx: CanvasRenderingContext2D): void {
-    if (this.state !== 'playing') return;
-    const pw = 15; const gap = 6;
-    const total = WAVES_PER_FLOOR * pw + (WAVES_PER_FLOOR - 1) * gap;
-    const x0 = W / 2 - total / 2; const y = 74;
+    rr(ctx, 14, 12, 268, 82, 8); ctx.fill(); ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = '21px "Bangers", cursive';
+    ctx.fillStyle = hud.inBoss ? '#ff3b52' : '#f0e8d8';
+    ctx.fillText(`TẦNG ${hud.floor + 1}/30`, 26, 38);
+    ctx.font = '600 11px "Be Vietnam Pro", sans-serif';
+    ctx.fillStyle = zone.accent;
+    ctx.fillText(hud.floorName.toUpperCase(), 120, 37);
+    // wave pips
     for (let i = 0; i < WAVES_PER_FLOOR; i++) {
-      const x = x0 + i * (pw + gap);
-      const done = i < this.wave - (this.bossActive ? 0 : 1);
-      const cur = (this.bossActive && i === WAVES_PER_FLOOR - 1) || (!this.bossActive && i === this.wave - 1);
-      const isBoss = i === WAVES_PER_FLOOR - 1;
+      const px = 28 + i * 26;
+      const py = 54;
+      ctx.beginPath();
+      ctx.moveTo(px, py - 7); ctx.lineTo(px + 7, py); ctx.lineTo(px, py + 7); ctx.lineTo(px - 7, py); ctx.closePath();
+      const done = hud.wave > i + 1 || (hud.wave === i + 1 && hud.inBoss);
+      ctx.fillStyle = i === WAVES_PER_FLOOR - 1 ? (hud.inBoss ? '#ff3b52' : '#5a2030') : done ? zone.accent : '#2c2738';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+    }
+    ctx.font = '700 12px "Chakra Petch", sans-serif';
+    ctx.fillStyle = '#9a917f';
+    ctx.fillText(hud.inBoss ? 'BOSS CHIẾN!' : `ĐỢT ${hud.wave}/${WAVES_PER_FLOOR}`, 28, 84);
+    // power
+    ctx.font = '700 15px "Chakra Petch", sans-serif';
+    ctx.fillStyle = '#ffd23c';
+    ctx.textAlign = 'right';
+    ctx.fillText(`⚡ ${fmt(hud.power)}`, 270, 84);
+    ctx.font = '600 9px "Be Vietnam Pro", sans-serif';
+    ctx.fillStyle = '#9a917f';
+    ctx.fillText('LỰC CHIẾN', 270, 68);
+    ctx.restore();
+    // ===== boss bar =====
+    if (hud.inBoss) {
+      const bw = 480;
+      const bx = (VIEW_W - bw) / 2;
       ctx.save();
-      if (isBoss) {
-        ctx.translate(x + pw / 2, y + 4);
-        ctx.rotate(Math.PI / 4);
-        ctx.fillStyle = done ? '#ff3b52' : cur ? '#ff9a3c' : 'rgba(255,59,82,0.25)';
-        ctx.fillRect(-5, -5, 10, 10);
-        if (cur) { ctx.strokeStyle = '#ffd8a1'; ctx.lineWidth = 1.5; ctx.strokeRect(-5, -5, 10, 10); }
-      } else {
-        ctx.fillStyle = done ? '#ffd23c' : cur ? '#ff9a3c' : 'rgba(232,223,200,0.18)';
-        ctx.fillRect(x, y, pw, 7);
-        if (cur) { ctx.strokeStyle = '#ffd8a1'; ctx.lineWidth = 1.2; ctx.strokeRect(x, y, pw, 7); }
+      ctx.fillStyle = 'rgba(10,8,16,0.85)';
+      ctx.strokeStyle = 'rgba(255,59,82,0.7)';
+      ctx.lineWidth = 2;
+      rr(ctx, bx - 8, 12, bw + 16, 46, 8); ctx.fill(); ctx.stroke();
+      ctx.font = '17px "Bangers", cursive';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ff3b52';
+      ctx.fillText(hud.bossName, VIEW_W / 2, 30);
+      ctx.fillStyle = '#241018';
+      rr(ctx, bx, 36, bw, 14, 7); ctx.fill();
+      const pct = hud.bossHpPct;
+      if (pct > 0) {
+        const g = ctx.createLinearGradient(bx, 0, bx + bw, 0);
+        g.addColorStop(0, '#ff3b52'); g.addColorStop(1, '#8a1020');
+        ctx.fillStyle = g;
+        rr(ctx, bx + 1, 37, (bw - 2) * pct, 12, 6); ctx.fill();
       }
       ctx.restore();
     }
+    // ===== top-right resources =====
+    ctx.save();
+    ctx.textAlign = 'right';
+    const chips: Array<[string, string, string]> = [
+      [fmt(hud.gold), '#ffd23c', 'VÀNG'],
+      [fmt(hud.gems), '#ff4fd8', 'NGỌC'],
+    ];
+    chips.forEach((c, i) => {
+      const y = 16 + i * 34;
+      ctx.fillStyle = 'rgba(10,8,16,0.82)';
+      ctx.strokeStyle = 'rgba(122,104,140,0.35)';
+      ctx.lineWidth = 1.2;
+      rr(ctx, VIEW_W - 178, y, 164, 28, 6); ctx.fill(); ctx.stroke();
+      ctx.font = '700 16px "Chakra Petch", sans-serif';
+      ctx.fillStyle = c[1];
+      ctx.fillText(c[0], VIEW_W - 62, y + 20);
+      ctx.font = '600 9px "Be Vietnam Pro", sans-serif';
+      ctx.fillStyle = '#9a917f';
+      ctx.fillText(c[2], VIEW_W - 22, y + 19);
+      // icon
+      ctx.beginPath();
+      if (i === 0) { ctx.fillStyle = '#ffd23c'; ctx.arc(VIEW_W - 162, y + 14, 7, 0, Math.PI * 2); }
+      else { ctx.fillStyle = '#ff4fd8'; ctx.moveTo(VIEW_W - 162, y + 6); ctx.lineTo(VIEW_W - 155, y + 13); ctx.lineTo(VIEW_W - 162, y + 22); ctx.lineTo(VIEW_W - 169, y + 13); ctx.closePath(); }
+      ctx.fill();
+    });
+    ctx.restore();
+    // ===== banner =====
+    if (this.banner) {
+      const b = this.banner;
+      const p = b.t / b.life;
+      const aIn = clamp(p * 6, 0, 1);
+      const aOut = clamp((1 - p) * 4, 0, 1);
+      const a = Math.min(aIn, aOut);
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = '58px "Bangers", cursive';
+      ctx.strokeStyle = 'rgba(10,5,12,0.9)';
+      ctx.lineWidth = 10;
+      ctx.strokeText(b.main, VIEW_W / 2, 210);
+      ctx.fillStyle = b.color;
+      ctx.fillText(b.main, VIEW_W / 2, 210);
+      ctx.font = '700 17px "Be Vietnam Pro", sans-serif';
+      ctx.lineWidth = 6;
+      ctx.strokeText(b.sub, VIEW_W / 2, 252);
+      ctx.fillStyle = '#f0e8d8';
+      ctx.fillText(b.sub, VIEW_W / 2, 252);
+      ctx.restore();
+    }
   }
-}
-
-/* ============================================================
-   helpers shared with UI (portraits)
-   ============================================================ */
-function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
-  const rr2 = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + rr2, y);
-  ctx.arcTo(x + w, y, x + w, y + h, rr2);
-  ctx.arcTo(x + w, y + h, x, y + h, rr2);
-  ctx.arcTo(x, y + h, x, y, rr2);
-  ctx.arcTo(x, y, x + w, y, rr2);
-  ctx.closePath();
-}
-function easeOut(t: number): number { return 1 - Math.pow(1 - t, 3); }
-
-export function heroCfgFor(kind: 'companion' | 'skin', id: string): HeroCfg {
-  if (kind === 'companion') {
-    const d = COMPANIONS.find((c) => c.id === id);
-    return d ? d.cfg : KAEL_BASE;
-  }
-  const d = SKINS.find((s) => s.id === id);
-  return d ? d.cfg : KAEL_BASE;
-}
-
-/** Vẽ chân dung chibi vào canvas nhỏ (gacha / đội hình). */
-export function renderPortrait(canvas: HTMLCanvasElement, cfg: HeroCfg, size: number): void {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  canvas.width = size * dpr; canvas.height = size * dpr;
-  canvas.style.width = `${size}px`; canvas.style.height = `${size}px`;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const g = ctx.createRadialGradient(size / 2, size * 0.42, 4, size / 2, size * 0.42, size * 0.75);
-  g.addColorStop(0, '#2b2338'); g.addColorStop(1, '#120e1c');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, size, size);
-  if (cfg.aura) {
-    const ag = ctx.createRadialGradient(size / 2, size * 0.45, 4, size / 2, size * 0.45, size * 0.55);
-    ag.addColorStop(0, cfg.aura); ag.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = ag;
-    ctx.fillRect(0, 0, size, size);
-  }
-  const s = size / 150;
-  ctx.save();
-  ctx.translate(size / 2, size * 0.98);
-  ctx.scale(s * 1.42, s * 1.42);
-  drawPortraitBody(ctx, cfg);
-  ctx.restore();
-}
-
-function drawPortraitBody(ctx: CanvasRenderingContext2D, c: HeroCfg): void {
-  ctx.lineWidth = 2.4;
-  ctx.strokeStyle = '#17121f';
-  ctx.lineJoin = 'round';
-  if (c.cape) {
-    ctx.fillStyle = c.cape;
-    ctx.beginPath();
-    ctx.moveTo(-8, -50);
-    ctx.quadraticCurveTo(-30, -26, -24, 0);
-    ctx.lineTo(-6, -16);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-  }
-  ctx.fillStyle = c.outfitDark;
-  rr(ctx, -12, -20, 10, 20, 4); ctx.fill(); ctx.stroke();
-  rr(ctx, 3, -20, 10, 20, 4); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = c.outfit;
-  ctx.beginPath();
-  ctx.moveTo(-14, -50); ctx.lineTo(14, -50); ctx.lineTo(12, -18); ctx.lineTo(-12, -18);
-  ctx.closePath(); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = c.accent;
-  ctx.fillRect(-12, -26, 24, 4);
-  ctx.fillStyle = c.outfit;
-  rr(ctx, -18, -48, 7, 18, 4); ctx.fill(); ctx.stroke();
-  rr(ctx, 11, -48, 7, 18, 4); ctx.fill(); ctx.stroke();
-  const hy = -70;
-  ctx.fillStyle = c.skinTone;
-  ctx.beginPath(); ctx.arc(1, hy, 21, 0, TAU); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = 'rgba(255,120,130,0.35)';
-  ctx.beginPath(); ctx.ellipse(-6, hy + 8, 3.6, 2.2, 0, 0, TAU); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(13, hy + 8, 3.6, 2.2, 0, 0, TAU); ctx.fill();
-  ctx.fillStyle = c.hair;
-  ctx.beginPath();
-  ctx.moveTo(-19, hy - 2);
-  ctx.quadraticCurveTo(-26, hy + 8, -20, hy + 15);
-  ctx.lineTo(-10, hy + 6);
-  ctx.closePath(); ctx.fill(); ctx.stroke();
-  // mắt to
-  const eyes = [{ x: 2, w: 6.4, h: 8 }, { x: 12, w: 5.2, h: 6.8 }];
-  for (const e of eyes) {
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath(); ctx.ellipse(e.x, hy - 1, e.w, e.h, 0, 0, TAU); ctx.fill();
-    ctx.strokeStyle = '#17121f'; ctx.lineWidth = 1.7; ctx.stroke();
-    ctx.fillStyle = c.eye;
-    ctx.beginPath(); ctx.ellipse(e.x + 1, hy - 0.5, e.w * 0.64, e.h * 0.7, 0, 0, TAU); ctx.fill();
-    ctx.fillStyle = '#10101a';
-    ctx.beginPath(); ctx.arc(e.x + 1.4, hy + 0.2, e.w * 0.3, 0, TAU); ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath(); ctx.arc(e.x - 0.8, hy - 3.4, 2, 0, TAU); ctx.fill();
-  }
-  ctx.lineWidth = 2.4;
-  ctx.fillStyle = c.hair;
-  ctx.beginPath();
-  switch (c.hairStyle) {
-    case 'spiky':
-      ctx.moveTo(-20, hy - 2);
-      ctx.lineTo(-25, hy - 20); ctx.lineTo(-12, hy - 13);
-      ctx.lineTo(-10, hy - 30); ctx.lineTo(-1, hy - 16);
-      ctx.lineTo(7, hy - 32); ctx.lineTo(12, hy - 15);
-      ctx.lineTo(23, hy - 22); ctx.lineTo(20, hy - 4);
-      ctx.quadraticCurveTo(20, hy - 18, 1, hy - 19);
-      ctx.quadraticCurveTo(-16, hy - 18, -20, hy - 2);
-      break;
-    case 'bun':
-      ctx.arc(1, hy - 7, 21.5, Math.PI * 0.95, Math.PI * 2.02);
-      ctx.quadraticCurveTo(20, hy - 9, 19, hy - 2);
-      ctx.quadraticCurveTo(9, hy - 17, -3, hy - 16);
-      ctx.quadraticCurveTo(-17, hy - 15, -18, hy - 1);
-      ctx.closePath(); ctx.fill(); ctx.stroke();
-      ctx.beginPath(); ctx.arc(-10, hy - 28, 9, 0, TAU);
-      break;
-    case 'twin':
-      ctx.moveTo(-20, hy);
-      ctx.quadraticCurveTo(-22, hy - 24, 1, hy - 24);
-      ctx.quadraticCurveTo(22, hy - 23, 20, hy - 1);
-      ctx.lineTo(14, hy - 10);
-      ctx.quadraticCurveTo(10, hy - 3, 13, hy + 3);
-      ctx.quadraticCurveTo(4, hy - 14, -5, hy - 14);
-      ctx.quadraticCurveTo(-14, hy - 12, -20, hy);
-      break;
-    default:
-      ctx.moveTo(-20, hy - 1);
-      ctx.quadraticCurveTo(-21, hy - 25, 1, hy - 25);
-      ctx.quadraticCurveTo(22, hy - 24, 21, hy - 2);
-      ctx.quadraticCurveTo(13, hy - 16, -1, hy - 16);
-      ctx.quadraticCurveTo(-14, hy - 15, -20, hy - 1);
-      break;
-  }
-  ctx.closePath(); ctx.fill(); ctx.stroke();
-  if (c.hairStyle === 'angel') {
-    ctx.strokeStyle = '#ffd23c'; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.ellipse(1, hy - 31, 17, 5.5, 0, 0, TAU); ctx.stroke();
-    ctx.strokeStyle = '#17121f'; ctx.lineWidth = 2.4;
-  }
-}
-
-/** Vẽ icon vật phẩm. */
-export function renderItemIcon(canvas: HTMLCanvasElement, slot: 'weapon' | 'armor' | 'charm', accent: string, size: number): void {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  canvas.width = size * dpr; canvas.height = size * dpr;
-  canvas.style.width = `${size}px`; canvas.style.height = `${size}px`;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const g = ctx.createRadialGradient(size / 2, size / 2, 2, size / 2, size / 2, size * 0.72);
-  g.addColorStop(0, '#2b2338'); g.addColorStop(1, '#120e1c');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, size, size);
-  ctx.save();
-  ctx.translate(size / 2, size / 2);
-  ctx.strokeStyle = '#17121f';
-  ctx.lineWidth = 2;
-  if (slot === 'weapon') {
-    ctx.rotate(-0.7);
-    const bg = ctx.createLinearGradient(0, -size * 0.34, 0, size * 0.2);
-    bg.addColorStop(0, '#d6dae2'); bg.addColorStop(1, '#6a7080');
-    ctx.fillStyle = bg;
-    ctx.beginPath();
-    ctx.moveTo(-size * 0.07, -size * 0.34); ctx.lineTo(size * 0.07, -size * 0.34);
-    ctx.lineTo(size * 0.09, size * 0.16); ctx.lineTo(0, size * 0.3); ctx.lineTo(-size * 0.09, size * 0.14);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = accent;
-    rr(ctx, -size * 0.16, size * 0.14, size * 0.32, size * 0.08, 2); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#5a4630';
-    rr(ctx, -size * 0.05, size * 0.22, size * 0.1, size * 0.14, 2); ctx.fill(); ctx.stroke();
-  } else if (slot === 'armor') {
-    ctx.fillStyle = accent;
-    ctx.beginPath();
-    ctx.moveTo(0, -size * 0.3);
-    ctx.lineTo(size * 0.26, -size * 0.18);
-    ctx.lineTo(size * 0.22, size * 0.14);
-    ctx.quadraticCurveTo(0, size * 0.36, -size * 0.22, size * 0.14);
-    ctx.lineTo(-size * 0.26, -size * 0.18);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,0.25)';
-    ctx.beginPath();
-    ctx.moveTo(0, -size * 0.24); ctx.lineTo(size * 0.16, -size * 0.15); ctx.lineTo(0, -size * 0.02); ctx.lineTo(-size * 0.16, -size * 0.15);
-    ctx.closePath(); ctx.fill();
-  } else {
-    ctx.fillStyle = accent;
-    ctx.beginPath();
-    ctx.moveTo(0, -size * 0.3);
-    ctx.lineTo(size * 0.24, -size * 0.08);
-    ctx.lineTo(size * 0.14, size * 0.26);
-    ctx.lineTo(-size * 0.14, size * 0.26);
-    ctx.lineTo(-size * 0.24, -size * 0.08);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,0.4)';
-    ctx.beginPath(); ctx.arc(-size * 0.06, -size * 0.08, size * 0.06, 0, TAU); ctx.fill();
-  }
-  ctx.restore();
 }

@@ -1,7 +1,8 @@
 @import "tailwindcss";
 
 @theme {
-  --font-display: "Anton", "Be Vietnam Pro", system-ui, sans-serif;
+  --font-display: "Bangers", "Be Vietnam Pro", system-ui, sans-serif;
+  --font-ui: "Chakra Petch", "Be Vietnam Pro", system-ui, sans-serif;
   --font-body: "Be Vietnam Pro", "Segoe UI", system-ui, sans-serif;
   --color-ink: #07060b;
   --color-ink2: #0e0c14;
@@ -22,10 +23,13 @@ html, body {
 }
 
 /* ---------- typography helpers ---------- */
-.font-display { font-family: var(--font-display); }
+.font-display { font-family: var(--font-display); letter-spacing: 0.02em; }
+.font-ui { font-family: var(--font-ui); }
+.font-body { font-family: var(--font-body); }
 .kicker {
-  font-family: var(--font-display);
-  letter-spacing: 0.2em;
+  font-family: var(--font-ui);
+  font-weight: 700;
+  letter-spacing: 0.3em;
   text-transform: uppercase;
 }
 

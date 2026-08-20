@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 @theme {
-  --font-display: "Eczar", "Georgia", serif;
-  --font-body: "Spectral", "Georgia", serif;
+  --font-display: "Anton", "Be Vietnam Pro", system-ui, sans-serif;
+  --font-body: "Be Vietnam Pro", "Segoe UI", system-ui, sans-serif;
   --color-ink: #07060b;
   --color-ink2: #0e0c14;
   --color-ash: #2a2733;
@@ -25,7 +25,7 @@ html, body {
 .font-display { font-family: var(--font-display); }
 .kicker {
   font-family: var(--font-display);
-  letter-spacing: 0.32em;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
 }
 

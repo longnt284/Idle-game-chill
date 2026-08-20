@@ -1,5 +1,6 @@
 import { sfx, initAudio, setMuted as setAudioMuted, getMuted } from './audio';
 import { IMG } from '../story';
+import { drawPixelHero, drawPixelMonster, renderPixelPortrait } from './pixel';
 
 export const VIEW_W = 960;
 export const VIEW_H = 540;
@@ -11,7 +12,14 @@ export function hasBossOnFloor(floorIdx: number): boolean {
   return floorIdx < 30 ? true : floorIdx % 10 === 9;
 }
 export function bossIndexForFloor(floorIdx: number): number {
-  return floorIdx < 30 ? floorIdx : 30 + Math.floor((floorIdx - 30) / 10);
+  if (floorIdx < 30) return floorIdx;
+  if (floorIdx < TOTAL_FLOORS) return 30 + Math.floor((floorIdx - 30) / 10);
+  // endless: xoay vòng 37 boss
+  return floorIdx % 37;
+}
+export function floorNameOf(floorIdx: number): string {
+  if (floorIdx < FLOOR_NAMES.length) return FLOOR_NAMES[floorIdx];
+  return `Vực Vô Tận ${floorIdx - FLOOR_NAMES.length + 1}`;
 }
 // Sau khi qua tầng X (index) → mở chương truyện tương ứng
 export const STORY_AFTER: Record<number, number> = { 9: 1, 19: 2, 28: 3, 39: 4, 69: 5, 89: 6 };
@@ -57,13 +65,15 @@ function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: n
 }
 
 // ============ rarity / skills ============
-export type Rarity = 'common' | 'rare' | 'epic' | 'legendary';
+export type Rarity = 'common' | 'rare' | 'epic' | 'legendary' | 'mythic';
 export const RARITY: Record<Rarity, { name: string; color: string; glow: string; stars: number }> = {
   common: { name: 'Thường', color: '#8fa3b8', glow: '#4a5a6e', stars: 1 },
   rare: { name: 'Hiếm', color: '#3fb9ff', glow: '#1868a8', stars: 2 },
   epic: { name: 'Cực Hiếm', color: '#ffb43c', glow: '#a86414', stars: 3 },
   legendary: { name: 'Huyền Thoại', color: '#ff4fd8', glow: '#8a1e6e', stars: 4 },
+  mythic: { name: 'Thần Thoại', color: '#7dff5a', glow: '#2a9e1e', stars: 5 },
 };
+export const RARITY_ORDER: Rarity[] = ['common', 'rare', 'epic', 'legendary', 'mythic'];
 
 export type SkillId =
   | 'skinwall' | 'double' | 'pierce' | 'splash' | 'stun' | 'heal'
@@ -222,6 +232,87 @@ export const COMPANIONS: CompanionDef[] = [
   },
 ];
 
+// ============ generator: +50 đồng hành (tới bậc Mythic) ============
+(function genCompanions(): void {
+  const NAMES = [
+    'Aizen', 'Bella', 'Cyrus', 'Dahlia', 'Ezra', 'Freya', 'Gideon', 'Hazel', 'Iris', 'Jasper',
+    'Kira', 'Lorelei', 'Magnus', 'Nadia', 'Orion', 'Petra', 'Quinn', 'Rowan', 'Selene', 'Thorne',
+    'Ursa', 'Vesper', 'Wren', 'Xander', 'Yara', 'Zephyrine', 'Alaric', 'Brynhild', 'Cassius', 'Delphine',
+    'Elias', 'Faye', 'Gawain', 'Hestia', 'Isolde', 'Jareth', 'Kaia', 'Lucian', 'Maeve', 'Nyx',
+    'Oberon', 'Persephone', 'Ragnar', 'Sable', 'Titan', 'Undine', 'Valka', 'Wyatt', 'Xenos', 'Ysolde',
+  ];
+  const ROLES = ['Kiếm Sĩ', 'Pháp Sư', 'Cung Thủ', 'Đấu Sĩ', 'Sát Thủ', 'Hỗ Trợ', 'Hiền Nhân', 'Kỵ Sĩ'];
+  const SCHOOLS = ['Huyết Nguyệt', 'Lôi Điện', 'Băng Giá', 'Viêm Vương', 'Thánh Quang', 'Ảnh Sát', 'Nham Thạch', 'Phong Bạo', 'Hư Không', 'Thiết Quyền'];
+  const SKILLSET: Array<{ id: SkillId; name: string; desc: string }> = [
+    { id: 'double', name: 'Song Trảm', desc: 'Mỗi đòn đánh chém thêm một nhát (70% sát thương).' },
+    { id: 'pierce', name: 'Xuyên Thấu', desc: 'Đòn đánh xuyên thêm 1 mục tiêu.' },
+    { id: 'splash', name: 'Bùng Nổ', desc: 'Gây 60% sát thương lan ra kẻ địch xung quanh.' },
+    { id: 'stun', name: 'Đánh Choáng', desc: '25% cơ hội làm choáng kẻ địch 0.8s.' },
+    { id: 'heal', name: 'Trị Liệu', desc: 'Hồi máu cho đồng đội thấp máu nhất.' },
+    { id: 'crit', name: 'Tử Huyệt', desc: '+18% chí mạng, chí mạng nhân 2.5 sát thương.' },
+    { id: 'lifesteal', name: 'Hút Hồn', desc: 'Hồi máu bằng 30% sát thương gây ra.' },
+    { id: 'buff', name: 'Cường Hóa', desc: 'Tăng 12% Công cho toàn đội (cộng dồn).' },
+    { id: 'thorns', name: 'Gai Góc', desc: 'Kẻ đánh trúng nhận lại 60% sát thương.' },
+    { id: 'meteor', name: 'Thiên Thạch', desc: 'Cứ 4 đòn gọi thiên thạch nổ diện rộng ×2.5.' },
+    { id: 'execute', name: 'Kết Liễu', desc: 'Gấp đôi sát thương lên kẻ dưới 30% máu.' },
+    { id: 'strongheal', name: 'Đại Trị Liệu', desc: 'Hồi máu mạnh cho đồng đội thấp máu nhất.' },
+    { id: 'berserk', name: 'Cuồng Chiến', desc: 'Dưới 50% máu tăng 60% sát thương.' },
+    { id: 'freeze', name: 'Băng Phong', desc: '30% cơ hội đóng băng kẻ địch 0.8s.' },
+    { id: 'flurry', name: 'Loạn Vũ', desc: 'Chém 2 nhát liên hoàn, +25% chí mạng.' },
+    { id: 'annihilate', name: 'Tận Diệt', desc: 'Chém lan + Tử Hình kẻ dưới 30% máu.' },
+  ];
+  const HAIRS = ['#2a2a33', '#ffd76e', '#a8d8f0', '#3a3a4a', '#9aa0b0', '#f0b8d8', '#b878e8', '#e85a7a', '#f5f5f0', '#ff8a3c', '#5ae8c8', '#c83a3a', '#e8e8f0', '#7a5ae8', '#3ae85a'];
+  const OUTFITS = ['#3a3a46', '#4a7aa8', '#5a8ac8', '#2a2a3a', '#5a6070', '#e8d8f0', '#6a3aa8', '#8a1e3a', '#d8d8e0', '#a8542a', '#2a8a6a', '#8a2a2a', '#c0c0d0', '#5a3aa8', '#2a8a3a'];
+  const STYLES: ChibiLook['hairStyle'][] = ['spiky', 'long', 'bun', 'hood', 'wild', 'pony', 'twin', 'short', 'mohawk'];
+  const WEAPONS: ChibiLook['weapon'][] = ['sword', 'bow', 'staff', 'daggers', 'orb', 'shield', 'spear'];
+  const ACCESS: ChibiLook['accessory'][] = ['none', 'halo', 'horns', 'crown', 'mask', 'ears', 'headband'];
+  const AURAS = ['#8fa3b8', '#3fb9ff', '#ffb43c', '#ff4fd8', '#7dff5a'];
+  const SKINS_TONE = ['#e8bd93', '#f0c49a', '#f5d0a8', '#ffe0c0', '#e0a878', '#d8b898', '#f5cfa8', '#ffe8d0'];
+  const POSPOOL: Pos[] = ['front', 'mid', 'back'];
+
+  for (let i = 0; i < NAMES.length; i++) {
+    const n = NAMES[i];
+    const tierRoll = i % 10;
+    const rarity: Rarity = i >= 44 ? 'mythic' : tierRoll < 4 ? 'common' : tierRoll < 7 ? 'rare' : tierRoll < 9 ? 'epic' : 'legendary';
+    const rIdx = RARITY_ORDER.indexOf(rarity);
+    const skill = SKILLSET[i % SKILLSET.length];
+    const pos = POSPOOL[i % 3];
+    const ranged = pos === 'back' || (pos === 'mid' && i % 2 === 1);
+    const hair = HAIRS[i % HAIRS.length];
+    const outfit = OUTFITS[i % OUTFITS.length];
+    const mul = 1 + rIdx * 0.55;
+    COMPANIONS.push({
+      id: `gen_${n.toLowerCase()}`,
+      name: n,
+      title: `Chiến Binh ${SCHOOLS[i % SCHOOLS.length]}`,
+      role: ROLES[i % ROLES.length],
+      school: SCHOOLS[i % SCHOOLS.length],
+      pos, rarity,
+      atkBase: Math.round((8 + (i % 7) * 2) * mul),
+      hpBase: Math.round((80 + (i % 5) * 25) * mul),
+      atkSpd: 0.85 + (i % 4) * 0.12,
+      ranged,
+      crit: 0.05 + rIdx * 0.03,
+      skill: { id: skill.id, name: skill.name, desc: skill.desc },
+      look: {
+        hair, outfit, outfit2: shadeHex(outfit, -0.35), skin: SKINS_TONE[i % SKINS_TONE.length],
+        eyes: AURAS[rIdx], hairStyle: STYLES[i % STYLES.length], weapon: WEAPONS[i % WEAPONS.length],
+        accessory: ACCESS[i % ACCESS.length], aura: AURAS[rIdx],
+        cape: rIdx >= 2 ? shadeHex(outfit, -0.5) : undefined,
+      },
+    });
+  }
+})();
+function shadeHex(hex: string, amt: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  let r = (n >> 16) & 255; let g = (n >> 8) & 255; let b = n & 255;
+  r = Math.max(0, Math.min(255, Math.round(r * (1 + amt))));
+  g = Math.max(0, Math.min(255, Math.round(g * (1 + amt))));
+  b = Math.max(0, Math.min(255, Math.round(b * (1 + amt))));
+  const to = (v: number) => v.toString(16).padStart(2, '0');
+  return `#${to(r)}${to(g)}${to(b)}`;
+}
+
 // ============ Kael skins ============
 export interface SkinDef { id: string; name: string; desc: string; look: ChibiLook; }
 export const SKINS: SkinDef[] = [
@@ -259,6 +350,36 @@ export const ITEMS: ItemDef[] = [
 ];
 export const GACHA_COST = 100;
 export const GACHA_X10_COST = 900;
+export const GACHA_X100_COST = 8500;
+export const GACHA_X1000_COST = 80000;
+export const WGACHA_COST = 150;
+
+// ============ 200 vũ khí ============
+export interface WeaponDef { id: string; name: string; tier: Rarity; baseAtk: number; }
+export const WEAPONS: WeaponDef[] = (() => {
+  const PREFIX: Record<Rarity, string[]> = {
+    common: ['Sắt', 'Gỗ', 'Đồng', 'Thép Cùn'],
+    rare: ['Bạc', 'Lam Ngọc', 'Gai', 'Sói'],
+    epic: ['Huyết', 'Lôi', 'Băng', 'Hỏa'],
+    legendary: ['Hắc Nguyệt', 'Long Cốt', 'Thánh Quang', 'Vực Sâu'],
+    mythic: ['Khởi Nguồn', 'Hỗn Mang', 'Vĩnh Cửu', 'Thần Phạt'],
+  };
+  const BASE = ['Kiếm', 'Đại Đao', 'Thương', 'Cung', 'Trượng', 'Song Kiếm', 'Búa', 'Lưỡi Hái'];
+  const COUNT: Array<[Rarity, number, number]> = [
+    ['common', 60, 6], ['rare', 50, 18], ['epic', 40, 45], ['legendary', 35, 110], ['mythic', 15, 260],
+  ];
+  const out: WeaponDef[] = [];
+  let idx = 0;
+  for (const [tier, n, atk] of COUNT) {
+    const ps = PREFIX[tier];
+    for (let i = 0; i < n; i++) {
+      const name = `${ps[i % ps.length]} ${BASE[(i + idx) % BASE.length]} ${String.fromCharCode(65 + (i % 26))}${Math.floor(i / 26) || ''}`;
+      out.push({ id: `wp_${tier}_${i}`, name, tier, baseAtk: Math.round(atk * (1 + (i % 10) * 0.08)) });
+      idx++;
+    }
+  }
+  return out;
+})();
 
 // ============ 30 tầng & boss ============
 export const FLOOR_NAMES = [
@@ -545,9 +666,9 @@ export function renderChibiPortrait(canvas: HTMLCanvasElement, look: ChibiLook, 
   ctx.ellipse(w / 2, h * 0.93, w * 0.3, h * 0.035, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.save();
-  const s = h / 172;
+  const s = h / 64;
   ctx.translate(w / 2, h * 0.93 - Math.abs(Math.sin(t * 2.3)) * h * 0.022);
-  drawChibiHero(ctx, look, t, 0, 0, s, 1, 0);
+  drawPixelHero(ctx, look, t, 0, 0, s, 1, 0);
   ctx.restore();
 }
 
@@ -846,6 +967,17 @@ export class GameIdle {
   private equippedItems: string[] = [];
   private pullsSinceEpic = 0;
 
+  // vũ khí
+  private ownedWeapons: Record<string, number> = {};
+  private equippedWeapon: string | null = null;
+  // endless
+  private endlessUnlocked = false;
+  private endless = false;
+  // đội dự bị (legion)
+  private legionAtk = 0;
+  private legionCount = 0;
+  private legionCd = 0;
+
   private shake = 0;
   private flash = 0;
   private flashColor = '#ff3b52';
@@ -914,8 +1046,13 @@ export class GameIdle {
   private gw(): number { return this.floor * WAVES_PER_FLOOR + this.wave + 1; }
   private zone(): number { return Math.floor(this.floor / 10) % 3; }
   private bossDef(): BossDef { return BOSSES[bossIndexForFloor(this.floor)]; }
-  private foeHpBase(): number { return 5 * Math.pow(this.gw(), 2.45); }
-  private foeAtkBase(): number { return 3.2 * Math.pow(this.gw(), 2.1); }
+  // hệ số khó tăng mạnh sau tầng 100 (endless)
+  private hardMul(): number {
+    if (this.floor < TOTAL_FLOORS) return 1;
+    return Math.pow(1.55, this.floor - TOTAL_FLOORS + 1);
+  }
+  private foeHpBase(): number { return 5 * Math.pow(this.gw(), 2.62) * this.hardMul(); }
+  private foeAtkBase(): number { return 3.2 * Math.pow(this.gw(), 2.28) * Math.pow(this.hardMul(), 0.8); }
   private goldPerKill(): number { return Math.round((5 + this.gw() * 1.5) * Math.pow(this.gw(), 1.15) * 10 * this.partyGoldAura); }
   private itemBonus(): { atk: number; hp: number; crit: number; aspd: number } {
     const b = { atk: 0, hp: 0, crit: 0, aspd: 0 };
@@ -945,29 +1082,26 @@ export class GameIdle {
     const prevHp: Record<string, number> = {};
     for (const h of this.heroes) prevHp[h.uid] = h.hp / h.maxHp;
     const bonus = this.itemBonus();
+    const wpn = this.weaponAtk();
     const cands = COMPANIONS.filter((c) => (this.ownedCompanions[c.id] ?? 0) > 0);
     // aura
     this.partyAtkAura = 1; this.partyGoldAura = 1; this.partyGemAura = 1;
     for (const c of cands) {
       if (c.skill.id === 'buff' || c.skill.id === 'holysplash') this.partyAtkAura *= 1.12;
     }
+    // triển khai TẤT CẢ đồng hành sở hữu (xếp hạng mạnh trước)
     const ranked = [...cands].sort((a, b) => this.compPower(b) - this.compPower(a));
-    const picked: CompanionDef[] = [];
-    for (const c of ranked) {
-      if (picked.length >= 5) break;
-      picked.push(c);
-    }
-    // ensure at least one front if any front owned
-    if (!picked.some((c) => c.pos === 'front')) {
-      const front = ranked.find((c) => c.pos === 'front' && !picked.includes(c));
-      if (front && picked.length > 0) picked[picked.length - 1] = front;
-    }
-    const slots: Record<Pos, number[]> = { front: [505, 465], mid: [425, 385], back: [290, 248, 206] };
+    const MAX_FIELD = 12;
+    const slots: Record<Pos, number[]> = {
+      front: [505, 468, 432, 500, 464],
+      mid: [400, 366, 332, 396, 362],
+      back: [296, 264, 232, 292, 260, 228],
+    };
     const used: Record<Pos, number> = { front: 0, mid: 0, back: 0 };
     const newHeroes: HeroUnit[] = [];
     // Kael always front-most
     const kL = this.kaelLevel;
-    const kAtk = (15 * Math.pow(1.1, kL - 1) + bonus.atk) * this.kaelAsc();
+    const kAtk = (15 * Math.pow(1.1, kL - 1) + bonus.atk + wpn) * this.kaelAsc();
     const kHp = 150 * Math.pow(1.085, kL - 1) + bonus.hp;
     newHeroes.push({
       uid: 'kael', isKael: true, defId: 'kael', level: kL,
@@ -975,23 +1109,28 @@ export class GameIdle {
       ranged: false, pos: 'front', x: 560, slotY: 0, atkCd: 0.4, swing: 0, hurtT: 0, frozenT: 0, hitCount: 0, dead: false,
       look: this.kaelLook(), skill: 'double', def: null,
     });
-    for (const c of picked) {
+    this.legionAtk = 0; this.legionCount = 0;
+    ranked.forEach((c, i) => {
       const lvl = this.ownedCompanions[c.id] ?? 1;
-      const g = Math.pow(1.095, lvl - 1);
-      const atk = (c.atkBase * g + bonus.atk * 0.4) * this.partyAtkAura;
-      const hp = c.hpBase * g + bonus.hp * 0.4;
+      const g = Math.pow(1.11, lvl - 1);
+      const rarMul = 1 + RARITY_ORDER.indexOf(c.rarity) * 0.15;
+      const atk = (c.atkBase * g * rarMul + bonus.atk * 0.4 + wpn * 0.5) * this.partyAtkAura;
+      const hp = (c.hpBase * g * rarMul + bonus.hp * 0.4) * (1 + RARITY_ORDER.indexOf(c.rarity) * 0.1);
       const aspd = c.atkSpd * (1 + bonus.aspd) * (c.skill.id === 'flurry' ? 1.2 : 1);
-      const slot = slots[c.pos][used[c.pos] % slots[c.pos].length];
-      used[c.pos] += 1;
-      const uid = c.id;
-      newHeroes.push({
-        uid, isKael: false, defId: c.id, level: lvl,
-        atk, maxHp: hp, hp, aspd, crit: c.crit + bonus.crit * 0.5,
-        ranged: c.ranged, pos: c.pos, x: slot + (c.pos === 'back' ? 0 : 0), slotY: 0,
-        atkCd: rand(0.2, 0.6), swing: 0, hurtT: 0, frozenT: 0, hitCount: 0, dead: false,
-        look: c.look, skill: c.skill.id, def: c,
-      });
-    }
+      if (i < MAX_FIELD) {
+        const slot = slots[c.pos][used[c.pos] % slots[c.pos].length];
+        used[c.pos] += 1;
+        newHeroes.push({
+          uid: c.id, isKael: false, defId: c.id, level: lvl,
+          atk, maxHp: hp, hp, aspd, crit: c.crit + bonus.crit * 0.5,
+          ranged: c.ranged, pos: c.pos, x: slot, slotY: 0,
+          atkCd: rand(0.2, 0.6), swing: 0, hurtT: 0, frozenT: 0, hitCount: 0, dead: false,
+          look: c.look, skill: c.skill.id, def: c,
+        });
+      } else {
+        this.legionAtk += atk * 0.5; this.legionCount += 1;
+      }
+    });
     // preserve hp pct
     for (const h of newHeroes) {
       const r = prevHp[h.uid];
@@ -1001,8 +1140,9 @@ export class GameIdle {
   }
   private compPower(c: CompanionDef): number {
     const lvl = this.ownedCompanions[c.id] ?? 1;
-    const g = Math.pow(1.095, lvl - 1);
-    return c.atkBase * g * 2 + c.hpBase * g * 0.25 + ({ common: 0, rare: 60, epic: 200, legendary: 500 } as Record<Rarity, number>)[c.rarity];
+    const g = Math.pow(1.11, lvl - 1);
+    const rar = ({ common: 0, rare: 60, epic: 200, legendary: 500, mythic: 1200 } as Record<Rarity, number>)[c.rarity];
+    return c.atkBase * g * 2 + c.hpBase * g * 0.25 + rar;
   }
   upgradeCompanion(id: string): boolean {
     const lvl = this.ownedCompanions[id] ?? 0;
@@ -1018,8 +1158,65 @@ export class GameIdle {
     this.pushMeta();
     return true;
   }
-  private upgradeCost(lvl: number): number { return Math.round(25 + 12 * Math.pow(lvl, 1.85)); }
+  private upgradeCost(lvl: number): number { return Math.round(60 + 45 * Math.pow(lvl, 2.05)); }
   upgradeCostOf(lvl: number): number { return this.upgradeCost(Math.max(1, lvl)); }
+
+  // ---------- vũ khí ----------
+  private weaponAtk(): number {
+    if (!this.equippedWeapon) return 0;
+    const def = WEAPONS.find((w) => w.id === this.equippedWeapon);
+    if (!def) return 0;
+    const lvl = this.ownedWeapons[def.id] ?? 1;
+    return def.baseAtk * (1 + 0.3 * (lvl - 1));
+  }
+  equippedWeaponDef(): { def: WeaponDef; level: number; atk: number } | null {
+    if (!this.equippedWeapon) return null;
+    const def = WEAPONS.find((w) => w.id === this.equippedWeapon);
+    if (!def) return null;
+    const lvl = this.ownedWeapons[def.id] ?? 1;
+    return { def, level: lvl, atk: Math.round(def.baseAtk * (1 + 0.3 * (lvl - 1))) };
+  }
+  private bestWeaponId(): string | null {
+    let best: string | null = null; let bestAtk = -1;
+    for (const id of Object.keys(this.ownedWeapons)) {
+      const def = WEAPONS.find((w) => w.id === id);
+      if (!def) continue;
+      const atk = def.baseAtk * (1 + 0.3 * ((this.ownedWeapons[id] ?? 1) - 1));
+      if (atk > bestAtk) { bestAtk = atk; best = id; }
+    }
+    return best;
+  }
+  private addWeapon(id: string): boolean {
+    const isNew = !(id in this.ownedWeapons);
+    this.ownedWeapons[id] = (this.ownedWeapons[id] ?? 0) + 1;
+    // tự động trang bị vũ khí mạnh nhất
+    const best = this.bestWeaponId();
+    if (best && best !== this.equippedWeapon) {
+      this.equippedWeapon = best;
+      const d = WEAPONS.find((w) => w.id === best);
+      if (d) this.toast(`Đã trang bị ${d.name}!`, '#ffb43c');
+    }
+    this.recomputeParty();
+    this.save(); this.pushMeta();
+    return isNew;
+  }
+  weaponGacha(): { def: WeaponDef; isNew: boolean } | null {
+    if (this.gems < WGACHA_COST) return null;
+    this.gems -= WGACHA_COST;
+    const r = Math.random();
+    const tier: Rarity = r < 0.03 ? 'mythic' : r < 0.12 ? 'legendary' : r < 0.35 ? 'epic' : r < 0.7 ? 'rare' : 'common';
+    const pool = WEAPONS.filter((w) => w.tier === tier);
+    const def = pool[Math.floor(Math.random() * pool.length)];
+    const isNew = this.addWeapon(def.id);
+    sfx.pickup();
+    return { def, isNew };
+  }
+  getWeapons(): Array<{ def: WeaponDef; level: number }> {
+    return Object.keys(this.ownedWeapons)
+      .map((id) => ({ def: WEAPONS.find((w) => w.id === id)!, level: this.ownedWeapons[id] ?? 1 }))
+      .filter((w) => w.def)
+      .sort((a, b) => b.def.baseAtk * (1 + 0.3 * (b.level - 1)) - a.def.baseAtk * (1 + 0.3 * (a.level - 1)));
+  }
 
   // ---------- flow ----------
   startGame(): void {
@@ -1079,7 +1276,10 @@ export class GameIdle {
     this.projs = [];
     this.bossActive = false;
     for (const h of this.heroes) { h.hp = h.maxHp; h.dead = false; }
-    this.showBanner(`TẦNG ${this.floor + 1}/${TOTAL_FLOORS}`, FLOOR_NAMES[this.floor], ZONES[this.zone()].accent, 2.4);
+    this.showBanner(
+      this.floor >= TOTAL_FLOORS ? `VỰC VÔ TẬN ${this.floor - TOTAL_FLOORS + 1}` : `TẦNG ${this.floor + 1}/${TOTAL_FLOORS}`,
+      floorNameOf(this.floor), ZONES[this.zone()].accent, 2.4,
+    );
     sfx.warn();
     this.startWave();
   }
@@ -1240,7 +1440,8 @@ export class GameIdle {
     this.bossActive = false;
     this.enemies = this.enemies.filter((e) => !e.dead);
     const cleared = this.floor;
-    if (cleared === TOTAL_FLOORS - 1) {
+    if (cleared === TOTAL_FLOORS - 1 && !this.endlessUnlocked) {
+      this.endlessUnlocked = true;
       this.state = 'victory';
       this.save();
       this.onEvent({ type: 'victory', stats: { kills: this.kills, gold: this.gold, playTime: this.playTime } });
@@ -1265,12 +1466,12 @@ export class GameIdle {
   // ---------- gacha ----------
   private rollOne(): GachaResult {
     const r = Math.random();
-    let rarity: Rarity = r < 0.04 ? 'legendary' : r < 0.16 ? 'epic' : r < 0.5 ? 'rare' : 'common';
+    let rarity: Rarity = r < 0.015 ? 'mythic' : r < 0.055 ? 'legendary' : r < 0.175 ? 'epic' : r < 0.5 ? 'rare' : 'common';
     this.pullsSinceEpic += 1;
-    if (this.pullsSinceEpic >= 10 && rarity === 'common') {
-      rarity = Math.random() < 0.2 ? 'legendary' : 'epic';
+    if (this.pullsSinceEpic >= 10 && (rarity === 'common' || rarity === 'rare')) {
+      rarity = Math.random() < 0.15 ? 'legendary' : 'epic';
     }
-    if (rarity === 'epic' || rarity === 'legendary') this.pullsSinceEpic = 0;
+    if (rarity === 'epic' || rarity === 'legendary' || rarity === 'mythic') this.pullsSinceEpic = 0;
     const poolR = Math.random();
     if (poolR < 0.55) {
       const pool = COMPANIONS.filter((c) => c.rarity === rarity);
@@ -1302,8 +1503,8 @@ export class GameIdle {
     this.recomputeParty();
     return { kind: 'item', id: item.id, name: item.name, rarity, isNew: (this.ownedItems[item.id] ?? 0) === 1, dupeText: `Bản sao ×${this.ownedItems[item.id] ?? 1} — cộng dồn chỉ số` };
   }
-  gacha(times: 1 | 10): GachaResult[] | null {
-    const cost = times === 1 ? GACHA_COST : GACHA_X10_COST;
+  gacha(times: 1 | 10 | 100 | 1000): GachaResult[] | null {
+    const cost = times === 1 ? GACHA_COST : times === 10 ? GACHA_X10_COST : times === 100 ? GACHA_X100_COST : GACHA_X1000_COST;
     if (this.gems < cost) {
       this.toast('Không đủ Ngọc Huyết Nguyệt!', '#ff3b52');
       sfx.warn();
@@ -1312,13 +1513,17 @@ export class GameIdle {
     this.gems -= cost;
     const results: GachaResult[] = [];
     for (let i = 0; i < times; i++) results.push(this.rollOne());
-    if (times === 10 && !results.some((r) => r.rarity === 'epic' || r.rarity === 'legendary')) {
-      const pool = COMPANIONS.filter((c) => c.rarity === 'epic');
-      const c = pick(pool);
-      const owned = this.ownedCompanions[c.id] ?? 0;
-      this.ownedCompanions[c.id] = owned === 0 ? 1 : owned + 2;
-      this.recomputeParty();
-      results[9] = { kind: 'companion', id: c.id, name: c.name, rarity: 'epic', isNew: owned === 0, dupeText: owned === 0 ? 'Đồng hành mới gia nhập!' : `Đã sở hữu → +2 cấp (Lv ${owned + 2})` };
+    // bảo hiểm: mỗi nhóm 10 có ít nhất 1 Cực Hiếm+
+    for (let g0 = 0; g0 < times; g0 += 10) {
+      const slice = results.slice(g0, g0 + 10);
+      if (!slice.some((r) => r.rarity === 'epic' || r.rarity === 'legendary' || r.rarity === 'mythic')) {
+        const pool = COMPANIONS.filter((c) => c.rarity === 'epic');
+        const c = pick(pool);
+        const owned = this.ownedCompanions[c.id] ?? 0;
+        this.ownedCompanions[c.id] = owned === 0 ? 1 : owned + 2;
+        this.recomputeParty();
+        results[g0 + 9] = { kind: 'companion', id: c.id, name: c.name, rarity: 'epic', isNew: owned === 0, dupeText: owned === 0 ? 'Đồng hành mới gia nhập!' : `Đã sở hữu → +2 cấp (Lv ${owned + 2})` };
+      }
     }
     sfx.levelup();
     this.save();
@@ -1675,6 +1880,25 @@ export class GameIdle {
     }
     this.projs = this.projs.filter((p) => p.t < 90);
 
+    // ---------- legion strike (đội dự bị) ----------
+    if (this.legionCount > 0 && this.legionAtk > 0) {
+      this.legionCd -= dt;
+      if (this.legionCd <= 0) {
+        this.legionCd = 1.1;
+        const lead = this.enemies.find((e) => !e.dead);
+        if (lead) {
+          const dmg = this.legionAtk * rand(0.9, 1.15);
+          lead.hp -= dmg; lead.hurtT = 0.15;
+          this.texts.push({ x: lead.x + rand(-20, 20), y: GROUND - 120 * lead.scale, text: `⚔${fmt(dmg)}`, color: '#b8a0ff', life: 0.8, size: 13 });
+          this.burst(lead.x, GROUND - 70 * lead.scale, 4, '#b8a0ff', 'spark');
+          if (lead.hp <= 0 && !lead.dead) {
+            const killer = this.heroes[0];
+            if (killer) this.killEnemy(lead, killer);
+          }
+        }
+      }
+    }
+
     // ---------- wave flow ----------
     if (this.spawnQueue.length === 0 && this.enemies.filter((e) => !e.dead).length === 0 && !this.bossActive) {
       this.waveDelay -= dt;
@@ -1697,7 +1921,7 @@ export class GameIdle {
       floor: this.floor, wave: this.wave + 1, inBoss: this.bossActive,
       bossName: hasBossOnFloor(this.floor) ? this.bossDef().name : '', bossHpPct: boss ? clamp(boss.hp / boss.maxHp, 0, 1) : 0,
       gold: this.gold, gems: this.gems, kaelLevel: this.kaelLevel, asc: this.kaelAsc(), power: this.power(),
-      floorName: FLOOR_NAMES[this.floor],
+      floorName: floorNameOf(this.floor),
     };
     if (this.globalT - this.lastMetaPush > 0.35) {
       this.lastMetaPush = this.globalT;
@@ -1862,7 +2086,7 @@ export class GameIdle {
     const look = this.kaelLook();
     ctx.save();
     ctx.translate(VIEW_W / 2, GROUND);
-    drawChibiHero(ctx, look, t, t * 2.2, 0, 2.3, 1, 0);
+    drawPixelHero(ctx, look, t, t * 2.2, 0, 2.3, 1, 0);
     ctx.restore();
     // companions preview bobbing behind
     const previews = COMPANIONS.filter((c) => (this.ownedCompanions[c.id] ?? 0) > 0).slice(0, 4);
@@ -1870,7 +2094,7 @@ export class GameIdle {
       ctx.save();
       ctx.translate(VIEW_W / 2 - 190 + i * 126, GROUND + 6);
       ctx.globalAlpha = 0.9;
-      drawChibiHero(ctx, c.look, t + i, t * 2.2 + i, 0, 1.5, i % 2 === 0 ? 1 : -1, 0);
+      drawPixelHero(ctx, c.look, t + i, t * 2.2 + i, 0, 1.5, i % 2 === 0 ? 1 : -1, 0);
       ctx.restore();
     });
     ctx.globalAlpha = 1;
@@ -1922,15 +2146,16 @@ export class GameIdle {
       }
       if (e.hurtT > 0) { ctx.filter = 'brightness(2.2) saturate(0.6)'; }
       const swing = e.swing > 0 ? clamp(Math.sin(clamp(e.swing, 0, 1) * Math.PI), 0, 1) : 0;
-      drawMonsterChibi(ctx, e.kind, e.tint, e.eye, t + e.uid, e.walk, swing, e.scale, e.stunT, e.boss);
+      drawPixelMonster(ctx, e.kind, e.tint, e.eye, t + e.uid, e.walk, swing, e.scale, e.stunT, e.boss);
       ctx.filter = 'none';
       // hp bar
       if (!e.boss && e.hp < e.maxHp) {
-        const w = 52 * e.scale;
+        const w = 46 * e.scale;
+        const top = -52 * e.scale - 8;
         ctx.fillStyle = 'rgba(10,8,14,0.8)';
-        rr(ctx, -w / 2, -130 * e.scale, w, 6, 3); ctx.fill();
+        rr(ctx, -w / 2, top, w, 6, 3); ctx.fill();
         ctx.fillStyle = '#ff3b52';
-        rr(ctx, -w / 2 + 1, -130 * e.scale + 1, (w - 2) * clamp(e.hp / e.maxHp, 0, 1), 4, 2); ctx.fill();
+        rr(ctx, -w / 2 + 1, top + 1, (w - 2) * clamp(e.hp / e.maxHp, 0, 1), 4, 2); ctx.fill();
       }
       ctx.restore();
     }
@@ -1939,12 +2164,10 @@ export class GameIdle {
       if (h.dead) continue;
       ctx.save();
       ctx.translate(h.x, GROUND);
-      ctx.fillStyle = 'rgba(0,0,0,0.4)';
-      ctx.beginPath(); ctx.ellipse(0, 2, 26, 7, 0, 0, Math.PI * 2); ctx.fill();
       if (h.hurtT > 0) ctx.filter = 'brightness(2) saturate(0.5)';
       const lunge = h.swing > 0 ? clamp(Math.sin(clamp(h.swing, 0, 1) * Math.PI), 0, 1) : 0;
-      const scale = h.isKael ? 1.5 : 1.22;
-      drawChibiHero(ctx, h.look, t + h.x * 0.01, t * 7, lunge, scale, 1, h.frozenT);
+      const scale = h.isKael ? 1.4 : 1.05;
+      drawPixelHero(ctx, h.look, t + h.x * 0.01, t * 7, lunge, scale, 1, h.frozenT);
       ctx.filter = 'none';
       // slash arc
       if (lunge > 0.25 && !h.ranged) {
@@ -1952,16 +2175,17 @@ export class GameIdle {
         ctx.globalAlpha = lunge * 0.8;
         ctx.lineWidth = 5;
         ctx.beginPath();
-        ctx.arc(26, -70, 52 * scale, -1.6 + lunge * 1.4, -0.2 + lunge * 1.4);
+        ctx.arc(26, -40, 40 * scale, -1.6 + lunge * 1.4, -0.2 + lunge * 1.4);
         ctx.stroke();
         ctx.globalAlpha = 1;
       }
       // mini hp
-      const w = 44;
+      const w = 40;
+      const top = -64 * scale - 12;
       ctx.fillStyle = 'rgba(10,8,14,0.8)';
-      rr(ctx, -w / 2, -148 * scale + 8, w, 6, 3); ctx.fill();
+      rr(ctx, -w / 2, top, w, 6, 3); ctx.fill();
       ctx.fillStyle = h.hp / h.maxHp > 0.35 ? '#3fe0b0' : '#ff3b52';
-      rr(ctx, -w / 2 + 1, -148 * scale + 9, (w - 2) * clamp(h.hp / h.maxHp, 0, 1), 4, 2); ctx.fill();
+      rr(ctx, -w / 2 + 1, top + 1, (w - 2) * clamp(h.hp / h.maxHp, 0, 1), 4, 2); ctx.fill();
       ctx.restore();
     }
     // projectiles

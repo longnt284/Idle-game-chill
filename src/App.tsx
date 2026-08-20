@@ -4,7 +4,7 @@ import type { MetaInfo, EndStats, EngineEvent, OfflineReport } from './game/engi
 import { TitleScreen, StoryScreen, EndScreen } from './ui/screens';
 import {
   HudOverlay, SummonModal, PartyModal, EquipModal, SkinModal, WeaponModal,
-  PauseModal, PrestigeModal, OfflineModal,
+  PauseModal, PrestigeModal, OfflineModal, KaelModal,
 } from './ui/panels';
 import type { PanelId } from './ui/panels';
 
@@ -140,6 +140,7 @@ export default function App(): React.JSX.Element {
           {inGame && eng && meta && panel === 'skin' && <SkinModal meta={meta} engine={eng} onClose={closePanel} />}
           {inGame && eng && meta && panel === 'weapon' && <WeaponModal meta={meta} engine={eng} onClose={closePanel} />}
           {inGame && eng && meta && panel === 'prestige' && <PrestigeModal meta={meta} engine={eng} onClose={closePanel} />}
+          {inGame && eng && meta && panel === 'kael' && <KaelModal meta={meta} engine={eng} onClose={closePanel} />}
           {inGame && eng && meta && panel === 'pause' && (
             <PauseModal
               engine={eng}

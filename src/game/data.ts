@@ -349,37 +349,74 @@ export const GACHA_X500_COST = 40000;
 export const WGACHA_COST = 150;
 export const WGACHA_X10_COST = 1350;
 
-// ---------- 200 vũ khí ----------
-export interface WeaponDef { id: string; name: string; tier: Rarity; baseAtk: number }
-export const WEAPONS: WeaponDef[] = (() => {
-  const PREFIX: Record<Rarity, string[]> = {
-    common: ['Sắt', 'Gỗ', 'Đồng', 'Thép Cùn'],
-    rare: ['Bạc', 'Lam Ngọc', 'Gai', 'Sói'],
-    epic: ['Huyết', 'Lôi', 'Băng', 'Hỏa'],
-    legendary: ['Hắc Nguyệt', 'Long Cốt', 'Thánh Quang', 'Vực Sâu'],
-    mythic: ['Khởi Nguồn', 'Hỗn Mang', 'Vĩnh Cửu', 'Thần Phạt'],
-  };
-  const BASE = ['Kiếm', 'Đại Đao', 'Thương', 'Cung', 'Trượng', 'Song Kiếm', 'Búa', 'Lưỡi Hái'];
-  const COUNT: Array<[Rarity, number, number]> = [
-    ['common', 60, 6], ['rare', 50, 18], ['epic', 40, 45], ['legendary', 35, 110], ['mythic', 15, 260],
-  ];
-  const out: WeaponDef[] = [];
-  let idx = 0;
-  for (const [tier, n, atk] of COUNT) {
-    const ps = PREFIX[tier];
-    for (let i = 0; i < n; i++) {
-      const suffix = `${String.fromCharCode(65 + (i % 26))}${Math.floor(i / 26) || ''}`;
-      out.push({
-        id: `wp_${tier}_${i}`,
-        name: `${ps[i % ps.length]} ${BASE[(i + idx) % BASE.length]} ${suffix}`,
-        tier,
-        baseAtk: Math.round(atk * (1 + (i % 10) * 0.08)),
-      });
-      idx++;
-    }
-  }
-  return out;
-})();
+// ---------- vũ khí: 5 bậc × 6 loại ----------
+// Trùng lặp không còn là "cộng thêm chút công" mà là nguyên liệu: đủ 6 mảnh
+// thì vũ khí lột xác lên bậc trên cùng loại, nên mỗi lần rèn ra đồ trùng vẫn
+// là một bước tiến rõ ràng.
+export type WeaponType = 'sword' | 'greatsword' | 'spear' | 'scythe' | 'twinblade' | 'hammer';
+
+export interface WeaponTypeDef {
+  id: WeaponType;
+  name: string;
+  /** Hình dáng mà renderer dùng khi Kael cầm vũ khí này. */
+  anim: WeaponKind;
+  /** Hệ số nhân tốc đánh. */
+  aspd: number;
+  /** Hệ số nhân phần công do vũ khí cộng. */
+  atk: number;
+  /** Chí mạng cộng thêm. */
+  crit: number;
+  trait: string;
+}
+export const WEAPON_TYPES: WeaponTypeDef[] = [
+  { id: 'sword', name: 'Kiếm', anim: 'sword', aspd: 1, atk: 1, crit: 0, trait: 'Cân bằng mọi mặt' },
+  { id: 'greatsword', name: 'Đại Đao', anim: 'greatsword', aspd: 0.88, atk: 1.15, crit: 0, trait: 'Nặng đòn, chậm tay' },
+  { id: 'spear', name: 'Thương', anim: 'spear', aspd: 1.08, atk: 1, crit: 0, trait: 'Tầm xa, ra đòn nhanh' },
+  { id: 'scythe', name: 'Lưỡi Hái', anim: 'scythe', aspd: 0.96, atk: 1.02, crit: 0.06, trait: '+6% chí mạng' },
+  { id: 'twinblade', name: 'Song Kiếm', anim: 'twinblade', aspd: 1.2, atk: 0.92, crit: 0.02, trait: 'Đánh rất nhanh' },
+  { id: 'hammer', name: 'Chuỳ', anim: 'hammer', aspd: 0.82, atk: 1.22, crit: 0, trait: 'Sát thương cao nhất' },
+];
+export const weaponTypeDef = (t: WeaponType): WeaponTypeDef =>
+  WEAPON_TYPES.find((w) => w.id === t) ?? WEAPON_TYPES[0];
+
+/** Phần trăm công mà vũ khí cộng cho Kael, theo bậc. */
+const WEAPON_TIER_PCT: Record<Rarity, number> = {
+  common: 0.15, rare: 0.45, epic: 1.1, legendary: 2.6, mythic: 6,
+};
+const WEAPON_NAMES: Record<WeaponType, string[]> = {
+  sword: ['Thiết Kiếm', 'Ngân Nguyệt Kiếm', 'Huyết Vân Kiếm', 'Hắc Nguyệt Trảm Long', 'Khởi Nguyên Thần Kiếm'],
+  greatsword: ['Đại Đao Gỉ', 'Cự Phách Đao', 'Liệt Hoả Cuồng Đao', 'Long Cốt Trảm Thiên', 'Hỗn Mang Phá Giới'],
+  spear: ['Mộc Thương', 'Thanh Lang Thương', 'Lôi Đình Thương', 'Xuyên Vân Long Thương', 'Vĩnh Cửu Định Thiên'],
+  scythe: ['Lưỡi Hái Gãy', 'Nguyệt Nha Liêm', 'Huyết Nguyệt Liêm', 'Tử Thần Câu Hồn', 'Thần Phạt Đoạt Mệnh'],
+  twinblade: ['Song Chuỷ', 'Phong Ảnh Song Kiếm', 'Lôi Ảnh Song Sát', 'Vô Ảnh Tuyệt Mệnh', 'Hỗn Độn Song Sinh'],
+  hammer: ['Búa Đá', 'Thiết Chuỳ', 'Liệt Địa Chuỳ', 'Sơn Hà Trấn Nhạc', 'Thiên Băng Chi Chuỳ'],
+};
+
+export interface WeaponDef {
+  id: string; name: string; type: WeaponType; tier: Rarity;
+  /** Phần công cộng thêm, dạng tỉ lệ (0.45 = +45%). */
+  atkPct: number;
+}
+export const WEAPONS: WeaponDef[] = WEAPON_TYPES.flatMap((t) =>
+  RARITY_ORDER.map((tier, ti) => ({
+    id: `wp_${t.id}_${tier}`,
+    name: WEAPON_NAMES[t.id][ti],
+    type: t.id,
+    tier,
+    atkPct: WEAPON_TIER_PCT[tier] * t.atk,
+  })),
+);
+export const weaponById = (id: string): WeaponDef | undefined => WEAPONS.find((w) => w.id === id);
+/** Vũ khí bậc kế tiếp cùng loại; null nếu đã ở bậc cao nhất. */
+export function nextWeaponOf(def: WeaponDef): WeaponDef | null {
+  const ti = rarityIdx(def.tier);
+  if (ti >= RARITY_ORDER.length - 1) return null;
+  return weaponById(`wp_${def.type}_${RARITY_ORDER[ti + 1]}`) ?? null;
+}
+/** Số bản trùng cần gom để lột xác lên bậc trên. */
+export const WEAPON_MERGE = 6;
+/** Mỗi lần tinh luyện (khi đã ở bậc cao nhất) cộng thêm bấy nhiêu phần công. */
+export const WEAPON_REFINE_STEP = 0.35;
 
 // ---------- tên tầng ----------
 export const FLOOR_NAMES = [
@@ -419,16 +456,135 @@ export const BOSSES: BossDef[] = [
   { name: 'CHÚA TỂ HỖN MANG — Khởi Nguồn', kind: 'demon' },
 ];
 
+// ============ NGỌC HUYẾT — nâng chỉ số cho Kael ============
+// Ngọc vốn chỉ dùng để triệu hồi; đây là nơi tiêu thứ hai, và là cách để
+// người chơi dồn sức vào nhân vật chính thay vì rải đều cho đồng hành.
+export type RuneId = 'atk' | 'hp' | 'crit' | 'cdmg' | 'aspd' | 'rage';
+export interface RuneDef {
+  id: RuneId; name: string; desc: string; color: string;
+  /** Mức cộng mỗi cấp. */
+  per: number;
+  /** Trần số cấp — các chỉ số theo tỉ lệ phần trăm cần trần để không vỡ. */
+  max: number;
+  kind: 'mul' | 'add';
+}
+export const RUNES: RuneDef[] = [
+  { id: 'atk', name: 'Ngọc Sát Phạt', desc: 'Sát thương của Kael', color: '#ff5a4a', per: 0.08, max: 400, kind: 'mul' },
+  { id: 'hp', name: 'Ngọc Kiên Cường', desc: 'Máu tối đa của Kael', color: '#3fe0b0', per: 0.08, max: 400, kind: 'mul' },
+  { id: 'crit', name: 'Ngọc Tử Huyệt', desc: 'Tỉ lệ chí mạng', color: '#ffd23c', per: 0.012, max: 50, kind: 'add' },
+  { id: 'cdmg', name: 'Ngọc Trí Mạng', desc: 'Sát thương chí mạng', color: '#ff4fd8', per: 0.06, max: 120, kind: 'add' },
+  { id: 'aspd', name: 'Ngọc Phong Hành', desc: 'Tốc độ đánh', color: '#8cdcff', per: 0.015, max: 60, kind: 'add' },
+  { id: 'rage', name: 'Ngọc Cuồng Nộ', desc: 'Tốc độ tích Nộ Khí', color: '#a78bfa', per: 0.05, max: 60, kind: 'add' },
+];
+/** Chi phí Ngọc để nâng khảm từ cấp `lvl` lên `lvl+1`. */
+export function runeCostAt(lvl: number): number {
+  return Math.ceil(70 * Math.pow(1.2, Math.max(0, lvl)));
+}
+export function runeCostRange(lvl: number, n: number): number {
+  if (n <= 0) return 0;
+  const r = 1.2;
+  const first = 70 * Math.pow(r, Math.max(0, lvl));
+  return Math.ceil(first * (Math.pow(r, n) - 1) / (r - 1));
+}
+
+// ============ TIẾN HOÁ — cứ 50 cấp Kael đổi hình hài ============
+export const EVO_EVERY = 50;
+export interface EvoStage {
+  name: string;
+  /** Chiêu thức mở khoá ở bậc này (bậc 0 là chiêu khởi đầu). */
+  skill: SkillId;
+  skillName: string;
+  skillDesc: string;
+  aura: string;
+  accessory: AccessoryKind;
+  /** Hệ số nhân sát thương cộng dồn theo bậc. */
+  mul: number;
+}
+export const EVOLUTIONS: EvoStage[] = [
+  {
+    name: 'Kiếm Sĩ Lưu Vong', skill: 'double', skillName: 'Song Kiếm',
+    skillDesc: 'Mỗi đòn chém thêm một nhát (70% sát thương).',
+    aura: '#c2172f', accessory: 'none', mul: 1,
+  },
+  {
+    name: 'Huyết Nghiệp Giả', skill: 'lifesteal', skillName: 'Huyết Ẩm',
+    skillDesc: 'Hút 30% sát thương gây ra thành máu.',
+    aura: '#ff3b52', accessory: 'headband', mul: 1.35,
+  },
+  {
+    name: 'Đồ Tể Vực Sâu', skill: 'execute', skillName: 'Tử Hình',
+    skillDesc: 'Nhân đôi sát thương lên kẻ địch dưới 30% máu.',
+    aura: '#ff7a3c', accessory: 'horns', mul: 1.82,
+  },
+  {
+    name: 'Hộ Pháp Trảm Long', skill: 'splash', skillName: 'Chấn Địa',
+    skillDesc: 'Nhát chém lan ra kẻ địch xung quanh (55% sát thương).',
+    aura: '#ffb43c', accessory: 'horns', mul: 2.46,
+  },
+  {
+    name: 'Cuồng Thần Huyết Nguyệt', skill: 'berserk', skillName: 'Cuồng Chiến',
+    skillDesc: 'Dưới 50% máu, sát thương nhân 1.6.',
+    aura: '#ff4fd8', accessory: 'crown', mul: 3.32,
+  },
+  {
+    name: 'Thiên Trảm Sứ', skill: 'flurry', skillName: 'Loạn Trảm',
+    skillDesc: 'Chém liên hoàn, chí mạng nhân 2.5, tốc đánh tăng 20%.',
+    aura: '#a78bfa', accessory: 'crown', mul: 4.48,
+  },
+  {
+    name: 'Vô Diện Nghịch Tử', skill: 'meteor', skillName: 'Thiên Thạch',
+    skillDesc: 'Cứ 4 đòn gọi thiên thạch nổ diện rộng ×2.5 sát thương.',
+    aura: '#8cdcff', accessory: 'mask', mul: 6.05,
+  },
+  {
+    name: 'Khởi Nguồn Đoạt Vị', skill: 'annihilate', skillName: 'Diệt Thế',
+    skillDesc: 'Chém lan diện rộng, Tử Hình và phản đòn 60%.',
+    aura: '#7dff5a', accessory: 'halo', mul: 8.16,
+  },
+];
+export const MAX_EVO = EVOLUTIONS.length - 1;
+export const evoStageOf = (kaelLevel: number): number =>
+  Math.max(0, Math.min(MAX_EVO, Math.floor(kaelLevel / EVO_EVERY)));
+
+// ============ DANH HIỆU & KHUNG HỒ SƠ ============
+// Mỗi 100 cấp mở một bộ khung mới kèm danh hiệu mới. Mười bậc, càng về sau
+// càng nặng ký — đây là phần thưởng thuần trưng bày, không đụng tới chỉ số.
+export interface TitleDef {
+  level: number;
+  title: string;
+  /** Màu viền khung. */
+  frame: string;
+  /** Màu phát sáng quanh khung. */
+  glow: string;
+  /** Số hoạ tiết góc khung (0–4) — bậc càng cao khung càng cầu kỳ. */
+  ornament: number;
+  desc: string;
+}
+export const TITLES: TitleDef[] = [
+  { level: 1, title: 'Kẻ Mang Dấu Ấn', frame: '#9db0c4', glow: '#4a5a6e', ornament: 0, desc: 'Vết khắc trên cổ vẫn còn rỉ máu mỗi đêm.' },
+  { level: 100, title: 'Lưỡi Kiếm Trăng Máu', frame: '#3fb9ff', glow: '#1868a8', ornament: 0, desc: 'Trăm tầng máu đã mài sắc lưỡi Trảm Long.' },
+  { level: 200, title: 'Sát Tinh Vực Sâu', frame: '#3fe0b0', glow: '#178a6a', ornament: 1, desc: 'Quỷ dưới vực gọi tên anh để doạ nhau.' },
+  { level: 300, title: 'Chấp Chưởng Huyết Nghiệp', frame: '#ffd23c', glow: '#a8741e', ornament: 1, desc: 'Nghiệp máu không còn là gánh nặng, mà là vũ khí.' },
+  { level: 400, title: 'Đồ Thần Giả', frame: '#ff9a3c', glow: '#a8541e', ornament: 2, desc: 'Kẻ đã chém ngã thứ từng được thờ phụng.' },
+  { level: 500, title: 'Nghịch Thiên Kiếm Chủ', frame: '#ff3b52', glow: '#8a1020', ornament: 2, desc: 'Trời định một đường, anh chém ra đường khác.' },
+  { level: 600, title: 'Vô Thượng Huyết Đế', frame: '#ff4fd8', glow: '#8a1e6e', ornament: 3, desc: 'Ngai vàng dựng bằng xương của những kẻ chắn đường.' },
+  { level: 700, title: 'Bất Diệt Chi Hồn', frame: '#a78bfa', glow: '#5a3aa8', ornament: 3, desc: 'Chết đi sống lại nhiều tới mức thần chết bỏ đếm.' },
+  { level: 800, title: 'Chúa Tể Vực Vô Tận', frame: '#8cdcff', glow: '#2a6a9a', ornament: 4, desc: 'Dưới đáy không còn đáy, và anh vẫn đang đi xuống.' },
+  { level: 900, title: 'Khởi Nguồn Tái Thế', frame: '#7dff5a', glow: '#2a9e1e', ornament: 4, desc: 'Nơi mọi dấu ấn được khắc, giờ khắc theo ý anh.' },
+];
+export const titleTierOf = (kaelLevel: number): number =>
+  Math.max(0, Math.min(TITLES.length - 1, Math.floor(kaelLevel / 100)));
+
 // ============ HẰNG SỐ CÂN BẰNG ============
 // Bất biến cốt lõi: sức mạnh người chơi mua bằng vàng tăng theo
 //   growthPerWave = GOLD_RATE ^ (ln(LEVEL_POWER) / ln(LEVEL_COST))
 // nên FOE_HP_RATE được chọn khớp con số đó, cộng thêm biên an toàn nhỏ mà
 // các nguồn nhân khác (cấp từ boss, trang bị, vũ khí, Thăng Hoa) sẽ bù vào.
 export const BAL = {
-  /** Máu quái đợt 1 tầng 1. */
-  FOE_HP0: 34,
-  /** Sát thương quái đợt 1 tầng 1. */
-  FOE_ATK0: 5.5,
+  /** Máu quái đợt 1 tầng 1 (đã nâng 10% theo yêu cầu cân bằng). */
+  FOE_HP0: 37.4,
+  /** Sát thương quái đợt 1 tầng 1 (đã nâng 10%). */
+  FOE_ATK0: 6.05,
   /** Máu quái nhân lên mỗi đợt (7 đợt = 1 tầng → ×1.29/tầng). */
   FOE_HP_RATE: 1.0375,
   /** Sát thương quái tăng chậm hơn máu → về sau đội hình bền hơn. */
@@ -459,6 +615,15 @@ export const BAL = {
   /** Cửa sổ nối chuỗi Liên Trảm (giây). */
   COMBO_WINDOW: 3.2,
   COMBO_MAX: 50,
+  /**
+   * Đồng hành chỉ còn 25% sức mạnh: sát thương chính phải đến từ Kael.
+   * Bù lại chỉ số gốc của Kael được nâng mạnh và có thêm Ngọc + Tiến Hoá.
+   */
+  COMPANION_POWER: 0.25,
+  /** Sát thương gốc của Kael ở cấp 1. */
+  KAEL_ATK0: 95,
+  /** Máu gốc của Kael ở cấp 1. */
+  KAEL_HP0: 320,
 } as const;
 
 /** Chi phí nâng 1 cấp từ `lvl` lên `lvl+1`. */

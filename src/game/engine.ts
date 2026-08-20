@@ -1,22 +1,26 @@
 import { sfx, initAudio, setMuted as setAudioMuted, getMuted, setZoneMood } from './audio';
 import { drawHero, drawMonster, renderPortrait } from './sprites';
 import { drawBackground, drawForeground, drawGrade, withReflection, zoneOf } from './scene';
+import { alpha as alphaOf } from './color';
 import type { AnimState, ChibiLook } from './types';
 import { makeAnim } from './types';
 import {
   BAL, BOSSES, COMPANIONS, FLOOR_NAMES, GACHA_COST, GACHA_X10_COST, GACHA_X100_COST,
   GACHA_X500_COST, ITEMS, MAX_FIELD, MAX_ITEM_SLOTS, MAX_PARTY, RARITY_ORDER, SKINS, SKIN_COST,
   STORY_AFTER, TOTAL_FLOORS, WAVES_PER_FLOOR, WEAPONS, WGACHA_COST, WGACHA_X10_COST,
-  bossIndexForFloor, floorNameOf, fmt, hasBossOnFloor, levelsAffordable, rarityIdx,
-  upgradeCostAt, upgradeCostRange,
+  bossIndexForFloor, evoStageOf, floorNameOf, fmt, hasBossOnFloor, levelsAffordable,
+  rarityIdx, upgradeCostAt, upgradeCostRange, runeCostAt,
+  EVOLUTIONS, EVO_EVERY, MAX_EVO, RUNES, TITLES, titleTierOf,
+  WEAPON_MERGE, WEAPON_REFINE_STEP, RARITY, nextWeaponOf, weaponById, weaponTypeDef,
 } from './data';
 import type {
-  BossDef, CompanionDef, ItemDef, Pos, Rarity, SkillId, SkinDef, WeaponDef,
+  BossDef, CompanionDef, ItemDef, Pos, Rarity, RuneId, SkillId, SkinDef, WeaponDef,
 } from './data';
 
 // ---- tái xuất cho tầng UI ----
 export * from './data';
 export type { ChibiLook, AnimState } from './types';
+import type { WeaponKind } from './types';
 export { renderPortrait } from './sprites';
 export { zoneOf } from './scene';
 /** Tương thích ngược với tên gọi cũ trong UI. */
@@ -31,13 +35,31 @@ export const VIEW_H = 540;
  * Đường chân tường; sàn nằm bên dưới và chia làm 3 làn có chiều sâu.
  * Toàn bộ đội hình nằm phía trên vùng HUD ở đáy màn hình (y ≳ 470).
  */
-const HORIZON = 372;
-const LANE_Y = [462, 426, 392];
-const LANE_SCALE = [1.22, 1.0, 0.82];
+const HORIZON = 356;
+/**
+ * Ba hàng dàn trận tách hẳn nhau theo cả ba trục để nhìn là phân biệt được
+ * ngay: chiều sâu (y), tỉ lệ (xa thì nhỏ) và vị trí ngang (hàng sau lùi hẳn
+ * về trái). Trước đây ba hàng chỉ cách nhau 34px nên dính thành một khối.
+ */
+const LANE_Y = [478, 416, 360];
+const LANE_SCALE = [1.26, 0.97, 0.75];
+/**
+ * Điểm neo của từng hàng. Ba dải x được chọn để KHÔNG chồng lên nhau:
+ * với tối đa LANE_CAP người mỗi hàng và khoảng cách LANE_GAP, hàng trước
+ * chiếm 416–548, hàng giữa 268–400, hàng sau 120–252.
+ */
+const LANE_ANCHOR = [548, 400, 252];
+/** Khoảng cách giữa hai người cùng hàng. */
+const LANE_GAP = 44;
+/** Số người tối đa mỗi hàng — vượt quá thì dồn sang hàng còn chỗ. */
+const LANE_CAP = 4;
+/** Màu nhận diện của từng hàng, dùng cho vạch nền và huy hiệu trên giao diện. */
+const LANE_TINT = ['#ff8a5a', '#ffd23c', '#8cdcff'];
+const LANE_LABEL = ['TIỀN PHONG', 'TRUNG QUÂN', 'HẬU QUÂN'];
 const LANE_OF: Record<Pos, number> = { front: 0, mid: 1, back: 2 };
 /** Điểm dừng của quái — cách đội hình đủ xa để đọc được đòn đánh. */
-const CLASH_X = 600;
-const BOSS_CLASH_X = 660;
+const CLASH_X = 636;
+const BOSS_CLASH_X = 694;
 const MELEE_REACH = 74;
 /** Cận chiến chỉ xông lên khi mục tiêu đã vào vùng giao tranh… */
 const ENGAGE_X = CLASH_X + 150;
@@ -55,6 +77,12 @@ const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
 const approach = (v: number, target: number, step: number): number =>
   (v < target ? Math.min(target, v + step) : Math.max(target, v - step));
 
+/**
+ * Kael mở thêm chiêu qua từng bậc Tiến Hoá nên mọi kiểm tra kỹ năng phải hỏi
+ * cả danh sách, không thể so sánh với một giá trị duy nhất như trước.
+ */
+const has = (h: { skills: SkillId[] }, id: SkillId): boolean => h.skills.includes(id);
+
 // ============ kiểu dữ liệu runtime ============
 export interface HeroUnit {
   uid: string; isKael: boolean; defId: string; level: number;
@@ -65,7 +93,10 @@ export interface HeroUnit {
   hurtT: number; frozenT: number;
   act: AnimState['action']; actT: number; actDur: number; hitFired: boolean;
   anim: AnimState;
-  look: ChibiLook; skill: SkillId; def: CompanionDef | null;
+  look: ChibiLook;
+  /** Kael mở thêm chiêu theo bậc Tiến Hoá nên phải là danh sách, không phải một. */
+  skills: SkillId[];
+  def: CompanionDef | null;
 }
 export interface Enemy {
   uid: number; kind: string; boss: boolean;
@@ -107,9 +138,35 @@ export interface HudState {
   gold: number; gems: number; power: number; floorName: string; zoneName: string;
   combo: number; comboPct: number; rage: number; enemiesLeft: number;
 }
+export interface RuneInfo {
+  id: RuneId; level: number; max: number; cost: number; total: number; maxed: boolean;
+}
+export interface EvoInfo {
+  stage: number; max: number; name: string; skillName: string; skillDesc: string;
+  aura: string; mul: number;
+  /** Cấp cần đạt để lên bậc kế tiếp; null nếu đã ở bậc cuối. */
+  nextLevel: number | null;
+  /** Tiến độ tới bậc kế tiếp, 0..1. */
+  progress: number;
+  /** Toàn bộ chiêu đã mở, theo thứ tự tiến hoá. */
+  unlocked: Array<{ name: string; desc: string }>;
+}
+export interface TitleInfo {
+  tier: number; title: string; frame: string; glow: string; ornament: number; desc: string;
+  /** Cấp mở danh hiệu kế tiếp; null nếu đã là danh hiệu cuối. */
+  nextLevel: number | null;
+  nextTitle: string | null;
+  progress: number;
+  /** Toàn bộ danh hiệu, kèm trạng thái đã mở hay chưa. */
+  all: Array<{ title: string; level: number; frame: string; unlocked: boolean }>;
+}
 export interface MetaInfo {
   gold: number; gems: number; kaelLevel: number; kaelXp: number; kaelXpNext: number;
   kaelUpgradeCost: number; kaelAtk: number; kaelHp: number;
+  kaelCrit: number; kaelAspd: number;
+  runes: RuneInfo[];
+  evo: EvoInfo;
+  title: TitleInfo;
   floor: number; wave: number; kills: number; playTime: number; bestFloor: number;
   speed: number; muted: boolean; paused: boolean; farmMode: boolean;
   seals: number; sealsPending: number; sealMul: number; canPrestige: boolean;
@@ -209,7 +266,15 @@ export class GameIdle {
   private ownedItems: Record<string, number> = {};
   private equippedItems: string[] = [];
   private pullsSinceEpic = 0;
+  /** Cấp khảm của từng loại Ngọc Huyết. */
+  private runes: Partial<Record<RuneId, number>> = {};
+  /** Bậc Tiến Hoá đã thông báo, để chỉ hiện hoạt cảnh một lần mỗi bậc. */
+  private evoSeen = 0;
+  /** Bậc danh hiệu đã thông báo. */
+  private titleSeen = 0;
   private ownedWeapons: Record<string, number> = {};
+  /** Số lần tinh luyện của vũ khí đã ở bậc cao nhất. */
+  private weaponRefine: Record<string, number> = {};
   private equippedWeapon: string | null = null;
   private deployedIds: string[] | null = null;
 
@@ -389,16 +454,78 @@ export class GameIdle {
     return d + this.legionAtk;
   }
 
+  // ---------- Ngọc Huyết ----------
+  runeLevel(id: RuneId): number { return this.runes[id] ?? 0; }
+  /** Tổng mức cộng của một loại ngọc (đã nhân số cấp). */
+  private runeBonus(id: RuneId): number {
+    const def = RUNES.find((r) => r.id === id);
+    if (!def) return 0;
+    return Math.min(this.runeLevel(id), def.max) * def.per;
+  }
+  runeCostOf(id: RuneId): number { return runeCostAt(this.runeLevel(id)); }
+  runeMaxed(id: RuneId): boolean {
+    const def = RUNES.find((r) => r.id === id);
+    return def ? this.runeLevel(id) >= def.max : true;
+  }
+  upgradeRune(id: RuneId, times = 1): number {
+    const def = RUNES.find((r) => r.id === id);
+    if (!def) return 0;
+    let done = 0;
+    while (done < times && this.runeLevel(id) < def.max) {
+      const cost = runeCostAt(this.runeLevel(id));
+      if (this.gems < cost) break;
+      this.gems -= cost;
+      this.runes[id] = this.runeLevel(id) + 1;
+      done += 1;
+    }
+    if (done === 0) {
+      this.toast(this.runeMaxed(id) ? 'Ngọc này đã đạt cấp tối đa' : 'Không đủ Ngọc để khảm!', '#ff5a6a');
+      sfx.warn();
+      return 0;
+    }
+    this.recomputeParty();
+    this.toast(`${def.name} +${done} → cấp ${this.runeLevel(id)}`, def.color);
+    sfx.levelup();
+    this.save();
+    this.pushMeta();
+    return done;
+  }
+
+  // ---------- Tiến Hoá ----------
+  evoStage(): number { return evoStageOf(this.kaelLevel); }
+  /** Chiêu thức Kael đã mở — mọi bậc đã qua đều còn hiệu lực. */
+  private kaelSkills(): SkillId[] {
+    return EVOLUTIONS.slice(0, this.evoStage() + 1).map((e) => e.skill);
+  }
+  private evoMul(): number { return EVOLUTIONS[this.evoStage()].mul; }
+
   // ---------- đội hình ----------
   private kaelLook(): ChibiLook {
-    return (SKINS.find((k) => k.id === this.equippedSkin) ?? SKINS[0]).look;
+    const base = (SKINS.find((k) => k.id === this.equippedSkin) ?? SKINS[0]).look;
+    const stage = this.evoStage();
+    // Vũ khí đang trang bị quyết định hình dáng và độ hào nhoáng trên tay.
+    const armed = { ...base, weapon: this.weaponAnim(), weaponTier: this.weaponTier() };
+    if (stage === 0) return { ...armed, evoTier: 0 };
+    const evo = EVOLUTIONS[stage];
+    // Tiến Hoá phủ lên skin: đổi hào quang và phụ kiện, giữ nguyên phần còn
+    // lại để người chơi vẫn nhận ra bộ skin mình đang mặc.
+    return { ...armed, aura: evo.aura, accessory: evo.accessory, evoTier: stage };
   }
   private kaelAtkValue(bonus = this.itemBonus()): number {
-    return 16 * Math.pow(BAL.LEVEL_POWER, this.kaelLevel - 1)
+    return BAL.KAEL_ATK0 * Math.pow(BAL.LEVEL_POWER, this.kaelLevel - 1)
+      * this.evoMul() * (1 + this.runeBonus('atk'))
       * this.weaponMul() * (1 + bonus.atk) * this.partyAtkAura * this.sealMul();
   }
   private kaelHpValue(bonus = this.itemBonus()): number {
-    return 240 * Math.pow(BAL.LEVEL_HP, this.kaelLevel - 1) * (1 + bonus.hp) * Math.sqrt(this.sealMul());
+    return BAL.KAEL_HP0 * Math.pow(BAL.LEVEL_HP, this.kaelLevel - 1)
+      * (1 + this.runeBonus('hp')) * (1 + bonus.hp) * Math.sqrt(this.sealMul());
+  }
+  private kaelAspd(bonus = this.itemBonus()): number {
+    return Math.min(2.6, (1.12 + this.kaelLevel * 0.003)
+      * (1 + bonus.aspd + this.runeBonus('aspd')) * this.weaponAspdMul());
+  }
+  private kaelCrit(bonus = this.itemBonus()): number {
+    return clamp(0.08 + bonus.crit + this.runeBonus('crit') + this.weaponCritAdd(), 0, 0.85);
   }
 
   private recomputeParty(): void {
@@ -432,8 +559,9 @@ export class GameIdle {
     newHeroes.push(this.makeHero({
       uid: 'kael', isKael: true, defId: 'kael', level: this.kaelLevel,
       atk: this.kaelAtkValue(bonus), maxHp: this.kaelHpValue(bonus),
-      aspd: Math.min(1.8, 1.12 + this.kaelLevel * 0.003), crit: 0.08 + bonus.crit,
-      ranged: false, pos: 'front', look: this.kaelLook(), skill: 'double', def: null,
+      aspd: this.kaelAspd(bonus), crit: this.kaelCrit(bonus),
+      ranged: false, pos: 'front', look: this.kaelLook(),
+      skills: this.kaelSkills(), def: null,
       slot: 0,
     }, laneCount));
 
@@ -445,7 +573,7 @@ export class GameIdle {
         newHeroes.push(this.makeHero({
           uid: c.id, isKael: false, defId: c.id, level: st.level,
           atk: st.atk, maxHp: st.hp, aspd: st.aspd, crit: st.crit,
-          ranged: c.ranged, pos: c.pos, look: c.look, skill: c.skill.id, def: c,
+          ranged: c.ranged, pos: c.pos, look: c.look, skills: [c.skill.id], def: c,
           slot: i + 1,
         }, laneCount));
       } else {
@@ -471,17 +599,22 @@ export class GameIdle {
   private makeHero(
     o: {
       uid: string; isKael: boolean; defId: string; level: number; atk: number; maxHp: number;
-      aspd: number; crit: number; ranged: boolean; pos: Pos; look: ChibiLook; skill: SkillId;
+      aspd: number; crit: number; ranged: boolean; pos: Pos; look: ChibiLook; skills: SkillId[];
       def: CompanionDef | null; slot: number;
     },
     laneCount: number[],
   ): HeroUnit {
-    const lane = LANE_OF[o.pos];
+    // Hàng ưu tiên theo vai trò; nếu đã đủ chỗ thì dồn sang hàng kế bên để
+    // ba dải vị trí không bao giờ tràn vào nhau.
+    let lane = LANE_OF[o.pos];
+    if (laneCount[lane] >= LANE_CAP) {
+      for (let k = 1; k < 3; k++) {
+        const alt = (lane + k) % 3;
+        if (laneCount[alt] < LANE_CAP) { lane = alt; break; }
+      }
+    }
     const n = laneCount[lane]++;
-    // Toạ độ nhà: làn trước đứng gần vạch giao chiến nhất, mỗi người lùi
-    // thêm một khoảng đủ rộng để hình không chồng lên nhau khi xông lên.
-    const laneStart = [486, 402, 322][lane];
-    const homeX = laneStart - n * 58 + (n % 2 === 0 ? 0 : 10);
+    const homeX = LANE_ANCHOR[lane] - Math.min(n, LANE_CAP - 1) * LANE_GAP;
     return {
       uid: o.uid, isKael: o.isKael, defId: o.defId, level: o.level,
       atk: o.atk, maxHp: o.maxHp, hp: o.maxHp, aspd: o.aspd, crit: clamp(o.crit, 0, 0.85),
@@ -491,7 +624,7 @@ export class GameIdle {
       hurtT: 0, frozenT: 0,
       act: 'idle', actT: 0, actDur: 0, hitFired: false,
       anim: makeAnim(o.slot * 1.37 + 0.3),
-      look: o.look, skill: o.skill, def: o.def,
+      look: o.look, skills: o.skills, def: o.def,
     };
   }
 
@@ -507,8 +640,8 @@ export class GameIdle {
     return {
       level,
       atk: c.atkBase * g * rarAtk * this.weaponMulParty()
-        * (1 + bonus.atk) * this.partyAtkAura * this.sealMul(),
-      hp: c.hpBase * gh * rarHp * (1 + bonus.hp) * Math.sqrt(this.sealMul()),
+        * (1 + bonus.atk) * this.partyAtkAura * this.sealMul() * BAL.COMPANION_POWER,
+      hp: c.hpBase * gh * rarHp * (1 + bonus.hp) * Math.sqrt(this.sealMul()) * BAL.COMPANION_POWER,
       aspd: c.atkSpd * (1 + bonus.aspd) * (c.skill.id === 'flurry' ? 1.2 : 1),
       crit: clamp(c.crit + bonus.crit + (c.skill.id === 'crit' ? 0.18 : c.skill.id === 'flurry' ? 0.25 : 0), 0, 0.85),
     };
@@ -642,6 +775,8 @@ export class GameIdle {
     }
     if (done === 0) { this.toast('Không đủ Vàng để tôi luyện!', '#ff5a6a'); sfx.warn(); return 0; }
     this.recomputeParty();
+    this.checkEvolution();
+    this.checkTitle();
     this.toast(`KAEL tôi luyện → Lv ${this.kaelLevel}`, '#ffd23c');
     sfx.levelup();
     this.save();
@@ -698,67 +833,126 @@ export class GameIdle {
    * Cộng cố định sẽ vô nghĩa ở tầng sâu (khi chỉ số đã tăng theo cấp số nhân),
    * còn cộng theo tỉ lệ thì luôn đáng để đi săn vũ khí tốt hơn.
    */
+  private equippedDef(): WeaponDef | null {
+    return this.equippedWeapon ? weaponById(this.equippedWeapon) ?? null : null;
+  }
+  /** Tổng phần trăm công của một vũ khí, đã tính số lần tinh luyện. */
+  private weaponPct(id: string): number {
+    const def = weaponById(id);
+    if (!def) return 0;
+    return def.atkPct * (1 + WEAPON_REFINE_STEP * (this.weaponRefine[id] ?? 0));
+  }
   private weaponMul(): number {
-    if (!this.equippedWeapon) return 1;
-    const def = WEAPONS.find((w) => w.id === this.equippedWeapon);
-    if (!def) return 1;
-    const lvl = this.ownedWeapons[def.id] ?? 1;
-    return 1 + Math.min(9, (def.baseAtk * (1 + 0.3 * (lvl - 1))) / 200);
+    const def = this.equippedDef();
+    return def ? 1 + this.weaponPct(def.id) : 1;
   }
   /** Đồng hành hưởng một phần hiệu lực vũ khí của Kael. */
   private weaponMulParty(): number { return 1 + (this.weaponMul() - 1) * 0.35; }
+  /** Mỗi loại vũ khí đổi nhịp đánh và chí mạng theo cách riêng. */
+  private weaponAspdMul(): number {
+    const def = this.equippedDef();
+    return def ? weaponTypeDef(def.type).aspd : 1;
+  }
+  private weaponCritAdd(): number {
+    const def = this.equippedDef();
+    return def ? weaponTypeDef(def.type).crit : 0;
+  }
+  private weaponAnim(): WeaponKind {
+    const def = this.equippedDef();
+    return def ? weaponTypeDef(def.type).anim : 'sword';
+  }
+  private weaponTier(): number {
+    const def = this.equippedDef();
+    return def ? rarityIdx(def.tier) : 0;
+  }
 
-  equippedWeaponDef(): { def: WeaponDef; level: number; pct: number; partyPct: number } | null {
-    if (!this.equippedWeapon) return null;
-    const def = WEAPONS.find((w) => w.id === this.equippedWeapon);
+  equippedWeaponDef(): {
+    def: WeaponDef; refine: number; pct: number; partyPct: number; trait: string;
+    aspd: number; crit: number;
+  } | null {
+    const def = this.equippedDef();
     if (!def) return null;
+    const t = weaponTypeDef(def.type);
     return {
       def,
-      level: this.ownedWeapons[def.id] ?? 1,
-      pct: Math.round((this.weaponMul() - 1) * 100),
+      refine: this.weaponRefine[def.id] ?? 0,
+      pct: Math.round(this.weaponPct(def.id) * 100),
       partyPct: Math.round((this.weaponMulParty() - 1) * 100),
+      trait: t.trait, aspd: t.aspd, crit: t.crit,
     };
   }
-  private weaponScore(id: string): number {
-    const def = WEAPONS.find((w) => w.id === id);
-    if (!def) return -1;
-    return def.baseAtk * (1 + 0.3 * ((this.ownedWeapons[id] ?? 1) - 1));
-  }
+  private weaponScore(id: string): number { return this.weaponPct(id); }
+
   equipWeapon(id: string): void {
-    if (!(id in this.ownedWeapons)) return;
+    if ((this.ownedWeapons[id] ?? 0) <= 0) return;
     this.equippedWeapon = id;
     this.recomputeParty();
     sfx.click();
     this.save();
     this.pushMeta();
   }
-  private addWeapon(id: string): boolean {
-    const isNew = !(id in this.ownedWeapons);
+
+  /**
+   * Nhận một vũ khí. Bản trùng được gom lại; đủ WEAPON_MERGE bản thì lột xác
+   * lên bậc trên cùng loại — và vì bản mới cũng có thể đủ số, phép ghép chạy
+   * lan truyền cho tới khi không còn gộp được nữa.
+   */
+  private addWeapon(id: string): { isNew: boolean; merged: WeaponDef | null } {
+    const isNew = (this.ownedWeapons[id] ?? 0) === 0;
     this.ownedWeapons[id] = (this.ownedWeapons[id] ?? 0) + 1;
+    let merged: WeaponDef | null = null;
+    let cur = id;
+    for (let guard = 0; guard < 8; guard++) {
+      const count = this.ownedWeapons[cur] ?? 0;
+      if (count < WEAPON_MERGE) break;
+      const def = weaponById(cur);
+      if (!def) break;
+      const next = nextWeaponOf(def);
+      this.ownedWeapons[cur] = count - WEAPON_MERGE + 1; // giữ lại một bản gốc
+      if (!next) {
+        // Đã ở bậc cao nhất: dồn thành tinh luyện thay vì lột xác.
+        this.weaponRefine[cur] = (this.weaponRefine[cur] ?? 0) + 1;
+        this.toast(`${def.name} tinh luyện +${this.weaponRefine[cur]}`, '#7dff5a');
+        break;
+      }
+      this.ownedWeapons[next.id] = (this.ownedWeapons[next.id] ?? 0) + 1;
+      merged = next;
+      this.toast(`${def.name} ×${WEAPON_MERGE} → ${next.name}!`, RARITY[next.tier].color);
+      sfx.levelup();
+      cur = next.id;
+    }
+    // luôn cầm món mạnh nhất
     let best = this.equippedWeapon;
     let bestScore = best ? this.weaponScore(best) : -1;
     for (const k of Object.keys(this.ownedWeapons)) {
+      if ((this.ownedWeapons[k] ?? 0) <= 0) continue;
       const sc = this.weaponScore(k);
       if (sc > bestScore) { bestScore = sc; best = k; }
     }
     if (best && best !== this.equippedWeapon) {
       this.equippedWeapon = best;
-      const d = WEAPONS.find((w) => w.id === best);
+      const d = weaponById(best);
       if (d) this.toast(`Đã trang bị ${d.name}!`, '#ffb43c');
     }
-    return isNew;
+    return { isNew, merged };
   }
-  weaponGacha(times: 1 | 10 = 1): Array<{ def: WeaponDef; isNew: boolean }> | null {
+
+  weaponGacha(times: 1 | 10 = 1): Array<{ def: WeaponDef; isNew: boolean; merged: WeaponDef | null }> | null {
     const cost = times === 1 ? WGACHA_COST : WGACHA_X10_COST;
     if (this.gems < cost) { this.toast('Không đủ Ngọc để rèn!', '#ff5a6a'); sfx.warn(); return null; }
     this.gems -= cost;
-    const out: Array<{ def: WeaponDef; isNew: boolean }> = [];
+    const out: Array<{ def: WeaponDef; isNew: boolean; merged: WeaponDef | null }> = [];
     for (let i = 0; i < times; i++) {
       const r = Math.random();
-      const tier: Rarity = r < 0.03 ? 'mythic' : r < 0.12 ? 'legendary' : r < 0.35 ? 'epic' : r < 0.7 ? 'rare' : 'common';
-      const pool = WEAPONS.filter((w) => w.tier === tier);
-      const def = pick(pool);
-      out.push({ def, isNew: this.addWeapon(def.id) });
+      // Tỉ lệ ra thẳng bậc cao được giữ rất thấp: con đường chính lên bậc
+      // phải là gom mảnh trùng, nếu không hệ thống ghép sẽ vô nghĩa.
+      const tier: Rarity = r < 0.002 ? 'mythic'
+        : r < 0.03 ? 'legendary'
+          : r < 0.14 ? 'epic'
+            : r < 0.42 ? 'rare' : 'common';
+      const def = pick(WEAPONS.filter((w) => w.tier === tier));
+      const res = this.addWeapon(def.id);
+      out.push({ def, ...res });
     }
     this.recomputeParty();
     sfx.pickup();
@@ -766,12 +960,22 @@ export class GameIdle {
     this.pushMeta();
     return out;
   }
-  getWeapons(): Array<{ def: WeaponDef; level: number }> {
+
+  getWeapons(): Array<{ def: WeaponDef; count: number; refine: number; pct: number; toMerge: number }> {
     return Object.keys(this.ownedWeapons)
-      .map((id) => ({ def: WEAPONS.find((w) => w.id === id), level: this.ownedWeapons[id] ?? 1 }))
-      .filter((w): w is { def: WeaponDef; level: number } => Boolean(w.def))
+      .filter((id) => (this.ownedWeapons[id] ?? 0) > 0)
+      .map((id) => ({ def: weaponById(id), id }))
+      .filter((w): w is { def: WeaponDef; id: string } => Boolean(w.def))
+      .map(({ def, id }) => ({
+        def,
+        count: this.ownedWeapons[id] ?? 0,
+        refine: this.weaponRefine[id] ?? 0,
+        pct: Math.round(this.weaponPct(id) * 100),
+        toMerge: Math.max(0, WEAPON_MERGE - (this.ownedWeapons[id] ?? 0)),
+      }))
       .sort((a, b) => this.weaponScore(b.def.id) - this.weaponScore(a.def.id));
   }
+
 
   // ---------- luồng trò chơi ----------
   startGame(): void {
@@ -814,7 +1018,8 @@ export class GameIdle {
     this.bestFloor = 0; this.seals = 0; this.clearedMilestones = []; this.victorySeen = false;
     this.ownedCompanions = {}; this.ownedSkins = ['default']; this.equippedSkin = 'default';
     this.ownedItems = {}; this.equippedItems = []; this.pullsSinceEpic = 0;
-    this.ownedWeapons = {}; this.equippedWeapon = null; this.deployedIds = null;
+    this.ownedWeapons = {}; this.weaponRefine = {}; this.equippedWeapon = null; this.deployedIds = null;
+    this.runes = {}; this.evoSeen = 0; this.titleSeen = 0;
     this.combo = 0; this.rage = 0; this.farmMode = false;
     this.recomputeParty();
     this.state = 'playing';
@@ -908,7 +1113,8 @@ export class GameIdle {
 
   // ---------- chiến đấu ----------
   private critMul(h: HeroUnit): number {
-    return h.skill === 'crit' || h.skill === 'flurry' ? 2.5 : 2;
+    const base = has(h, 'crit') || has(h, 'flurry') ? 2.5 : 2;
+    return h.isKael ? base + this.runeBonus('cdmg') : base;
   }
 
   private dealHeroDamage(
@@ -917,17 +1123,17 @@ export class GameIdle {
     if (e.dead) return;
     const crit = Math.random() < h.crit;
     let dmg = h.atk * mult * rand(0.93, 1.07) * (crit ? this.critMul(h) : 1);
-    if (h.skill === 'berserk' && h.hp < h.maxHp * 0.5) dmg *= 1.6;
-    if ((h.skill === 'execute' || h.skill === 'annihilate') && e.hp < e.maxHp * 0.3) dmg *= 2;
+    if (has(h, 'berserk') && h.hp < h.maxHp * 0.5) dmg *= 1.6;
+    if ((has(h, 'execute') || has(h, 'annihilate')) && e.hp < e.maxHp * 0.3) dmg *= 2;
     h.hitCount += 1;
 
     this.applyEnemyDamage(e, dmg, crit ? '#ffd23c' : (h.isKael ? '#ffb27a' : '#f2ead8'), crit, h);
 
     // sát thương lan
     const splashR = opts?.splashOverride ?? (
-      h.skill === 'splash' ? 108
-        : h.skill === 'holysplash' ? 132
-          : h.skill === 'annihilate' ? 126
+      has(h, 'splash') ? 108
+        : has(h, 'holysplash') ? 132
+          : has(h, 'annihilate') ? 126
             : 0);
     if (splashR > 0) {
       for (const o of this.enemies) {
@@ -939,7 +1145,7 @@ export class GameIdle {
     }
 
     // khống chế
-    const stunChance = h.skill === 'stun' ? 0.25 : h.skill === 'freeze' ? (h.defId === 'vex' ? 0.35 : 0.3) : 0;
+    const stunChance = has(h, 'stun') ? 0.25 : has(h, 'freeze') ? (h.defId === 'vex' ? 0.35 : 0.3) : 0;
     if (stunChance > 0 && Math.random() < stunChance && !e.dead) {
       e.stunT = h.defId === 'vex' ? 0.9 : 0.8;
       this.burst(e.x, e.y - 60 * e.scale, 9, '#8cdcff', 'ice');
@@ -947,10 +1153,10 @@ export class GameIdle {
     }
 
     // hồi máu
-    if (h.skill === 'heal' || h.skill === 'strongheal' || h.skill === 'holysplash') {
-      this.healLowest(dmg * (h.skill === 'strongheal' ? 0.9 : 0.4));
+    if (has(h, 'heal') || has(h, 'strongheal') || has(h, 'holysplash')) {
+      this.healLowest(dmg * (has(h, 'strongheal') ? 0.9 : 0.4));
     }
-    if (h.skill === 'lifesteal' && !h.dead) {
+    if (has(h, 'lifesteal') && !h.dead) {
       const amt = Math.min(h.maxHp - h.hp, dmg * 0.3);
       if (amt > 0) {
         h.hp += amt;
@@ -959,7 +1165,7 @@ export class GameIdle {
     }
 
     // thiên thạch mỗi 4 đòn
-    if (h.skill === 'meteor' && h.hitCount % 4 === 0) {
+    if (has(h, 'meteor') && h.hitCount % 4 === 0) {
       this.projs.push({
         x: e.x + rand(-40, 40), y: -70, tx: e.x, ty: e.y - 20, target: 0, speed: 700,
         dmg: h.atk * 2.5, kind: 'meteor', t: 0, pierce: 0, splash: 130, crit: h.crit,
@@ -1024,7 +1230,7 @@ export class GameIdle {
     this.pushText(`+${fmt(gold)}`, e.x, e.y - 116 * e.scale, '#ffd23c', 14, false);
 
     const gemChance = BAL.GEM_CHANCE * this.partyGemAura * (e.boss ? 3 : 1)
-      + (killer?.skill === 'holysplash' ? 0.08 : 0);
+      + (killer && has(killer, 'holysplash') ? 0.08 : 0);
     if (Math.random() < gemChance) {
       const amt = Math.max(1, Math.round((2 + this.gw() * 0.4) * this.sealMul()));
       this.gems += amt;
@@ -1064,6 +1270,8 @@ export class GameIdle {
     }
     if (leveled > 0) {
       this.toast(`KAEL THĂNG CẤP ${this.kaelLevel}!`, '#ffd23c');
+      this.checkEvolution();
+      this.checkTitle();
       this.burst(this.heroes[0]?.x ?? 500, LANE_Y[0] - 80, 24, '#ffd23c', 'spark');
       sfx.levelup();
       this.recomputeParty();
@@ -1080,6 +1288,49 @@ export class GameIdle {
    * cơ số lớn hơn thì hệ thống sẽ chết hẳn sau vài chục cấp.
    */
   private kaelXpNeed(): number { return Math.round(45 * Math.pow(this.kaelLevel, 1.55)); }
+
+  /** Mở danh hiệu và khung hồ sơ mới sau mỗi 100 cấp. */
+  private checkTitle(): void {
+    const tier = titleTierOf(this.kaelLevel);
+    if (tier === this.titleSeen) return;
+    const up = tier > this.titleSeen;
+    this.titleSeen = tier;
+    if (!up) return;
+    const t = TITLES[tier];
+    this.showBanner('DANH HIỆU MỚI', t.title, t.frame, 2.8);
+    this.toast(`Mở danh hiệu: ${t.title}`, t.frame);
+    this.burst(this.heroes[0]?.x ?? LANE_ANCHOR[0], LANE_Y[0] - 90, 34, t.frame, 'spark');
+    sfx.levelup();
+  }
+
+  /**
+   * Gọi sau mỗi lần cấp của Kael thay đổi. Chỉ phát hoạt cảnh khi thật sự
+   * bước lên một bậc mới, và ghi lại bậc đã thấy vào bản lưu để không phát
+   * lại mỗi lần vào game.
+   */
+  private checkEvolution(): void {
+    const stage = this.evoStage();
+    if (stage === this.evoSeen) return;
+    const levelledUp = stage > this.evoSeen;
+    this.evoSeen = stage;
+    if (!levelledUp) return;
+    const evo = EVOLUTIONS[stage];
+    this.recomputeParty();
+    this.showBanner('TIẾN HOÁ', `${evo.name} · mở ${evo.skillName}`, evo.aura, 3.2);
+    this.toast(`Kael tiến hoá — ${evo.name}!`, evo.aura);
+    this.toast(`Chiêu mới: ${evo.skillName} — ${evo.skillDesc}`, evo.aura);
+    const kael = this.heroes.find((h) => h.isKael);
+    const x = kael?.x ?? LANE_ANCHOR[0];
+    const y = kael?.y ?? LANE_Y[0];
+    this.burst(x, y - 70, 60, evo.aura, 'ember');
+    this.burst(x, y - 70, 34, '#ffffff', 'spark');
+    this.ring(x, y - 40, 90, evo.aura);
+    this.shake = Math.max(this.shake, 16);
+    this.flash = 0.8; this.flashColor = evo.aura;
+    this.slowmo = 0.6;
+    sfx.levelup();
+    sfx.berserk();
+  }
   /** Kinh nghiệm cơ bản theo độ sâu — dùng chung cho quái, đợt và boss. */
   private xpUnit(): number { return 10 * Math.pow(1 + this.floor, 1.35); }
 
@@ -1130,7 +1381,7 @@ export class GameIdle {
   // ---------- nộ khí & tuyệt kỹ ----------
   private addRage(x: number): void {
     if (this.ultT > 0) return;
-    this.rage = Math.min(BAL.RAGE_MAX, this.rage + x);
+    this.rage = Math.min(BAL.RAGE_MAX, this.rage + x * (1 + this.runeBonus('rage')));
     if (this.rage >= BAL.RAGE_MAX) this.unleashUltimate();
   }
   private unleashUltimate(): void {
@@ -1179,14 +1430,14 @@ export class GameIdle {
   private hitHero(tgt: HeroUnit, rawDmg: number, source: Enemy | null, color: string): void {
     if (tgt.dead) return;
     let dmg = rawDmg;
-    if (tgt.skill === 'skinwall') dmg *= 0.7;
+    if (has(tgt, 'skinwall')) dmg *= 0.7;
     tgt.hp -= dmg;
     tgt.hurtT = 0.3;
     if (tgt.act !== 'attack') { tgt.act = 'hurt'; tgt.actT = 0; tgt.actDur = 0.26; }
     this.pushText(`-${fmt(dmg)}`, tgt.x, tgt.y - 110, color, 13, false);
     this.burst(tgt.x, tgt.y - 60, 5, color, 'spark');
     this.addRage(1.4);
-    if (source && (tgt.skill === 'thorns' || tgt.skill === 'annihilate')) {
+    if (source && (has(tgt, 'thorns') || has(tgt, 'annihilate'))) {
       this.applyEnemyDamage(source, dmg * 0.6, '#8cdcff', false, tgt);
     }
     if (tgt.hp <= 0) this.heroDown(tgt);
@@ -1435,6 +1686,8 @@ export class GameIdle {
         ownedCompanions: this.ownedCompanions, ownedSkins: this.ownedSkins, equippedSkin: this.equippedSkin,
         ownedItems: this.ownedItems, equippedItems: this.equippedItems, pullsSinceEpic: this.pullsSinceEpic,
         ownedWeapons: this.ownedWeapons, equippedWeapon: this.equippedWeapon,
+        runes: this.runes, evoSeen: this.evoSeen, titleSeen: this.titleSeen,
+        weaponRefine: this.weaponRefine,
         deployedIds: this.deployedIds, farmMode: this.farmMode, speedIdx: this.speedIdx,
         clearedMilestones: this.clearedMilestones, victorySeen: this.victorySeen,
         savedAt: Date.now(),
@@ -1506,14 +1759,41 @@ export class GameIdle {
         .slice(0, MAX_ITEM_SLOTS);
     }
     this.pullsSinceEpic = Math.round(num('pullsSinceEpic', 0, 100, 0));
+    if (d.runes && typeof d.runes === 'object') {
+      const valid = new Set(RUNES.map((r) => r.id as string));
+      this.runes = {};
+      for (const [k, v] of Object.entries(d.runes as Record<string, unknown>)) {
+        if (valid.has(k) && typeof v === 'number' && v > 0) {
+          const def = RUNES.find((r) => r.id === k);
+          this.runes[k as RuneId] = Math.min(def ? def.max : 0, Math.round(v));
+        }
+      }
+    }
+    this.evoSeen = Math.round(num('evoSeen', 0, MAX_EVO, evoStageOf(this.kaelLevel)));
+    this.titleSeen = Math.round(num('titleSeen', 0, TITLES.length - 1, titleTierOf(this.kaelLevel)));
     if (d.ownedWeapons && typeof d.ownedWeapons === 'object') {
       const valid = new Set(WEAPONS.map((w) => w.id));
       this.ownedWeapons = {};
+      let dropped = 0;
       for (const [k, v] of Object.entries(d.ownedWeapons as Record<string, unknown>)) {
-        if (valid.has(k) && typeof v === 'number' && v > 0) this.ownedWeapons[k] = Math.round(v);
+        if (typeof v !== 'number' || v <= 0) continue;
+        if (valid.has(k)) this.ownedWeapons[k] = Math.round(v);
+        else dropped += 1; // vũ khí của hệ cũ, không còn tồn tại
+      }
+      if (dropped > 0) {
+        const refund = dropped * WGACHA_COST;
+        this.gems += refund;
+        this.toast(`Kho vũ khí cũ đã đổi thành ${fmt(refund)} Ngọc`, '#ffb43c');
       }
     }
-    if (typeof d.equippedWeapon === 'string' && d.equippedWeapon in this.ownedWeapons) {
+    if (d.weaponRefine && typeof d.weaponRefine === 'object') {
+      const valid = new Set(WEAPONS.map((w) => w.id));
+      this.weaponRefine = {};
+      for (const [k, v] of Object.entries(d.weaponRefine as Record<string, unknown>)) {
+        if (valid.has(k) && typeof v === 'number' && v > 0) this.weaponRefine[k] = Math.round(v);
+      }
+    }
+    if (typeof d.equippedWeapon === 'string' && (this.ownedWeapons[d.equippedWeapon] ?? 0) > 0) {
       this.equippedWeapon = d.equippedWeapon;
     }
     if (Array.isArray(d.deployedIds)) {
@@ -1552,6 +1832,39 @@ export class GameIdle {
   }
 
   // ---------- meta ----------
+  private evoInfo(): EvoInfo {
+    const stage = this.evoStage();
+    const evo = EVOLUTIONS[stage];
+    const nextLevel = stage >= MAX_EVO ? null : (stage + 1) * EVO_EVERY;
+    const from = stage * EVO_EVERY;
+    return {
+      stage, max: MAX_EVO, name: evo.name, skillName: evo.skillName,
+      skillDesc: evo.skillDesc, aura: evo.aura, mul: evo.mul,
+      nextLevel,
+      progress: nextLevel === null ? 1
+        : clamp((this.kaelLevel - from) / (nextLevel - from), 0, 1),
+      unlocked: EVOLUTIONS.slice(0, stage + 1).map((e) => ({ name: e.skillName, desc: e.skillDesc })),
+    };
+  }
+
+  private titleInfo(): TitleInfo {
+    const tier = titleTierOf(this.kaelLevel);
+    const cur = TITLES[tier];
+    const next = tier < TITLES.length - 1 ? TITLES[tier + 1] : null;
+    return {
+      tier, title: cur.title, frame: cur.frame, glow: cur.glow,
+      ornament: cur.ornament, desc: cur.desc,
+      nextLevel: next ? next.level : null,
+      nextTitle: next ? next.title : null,
+      progress: next
+        ? clamp((this.kaelLevel - cur.level) / (next.level - cur.level), 0, 1)
+        : 1,
+      all: TITLES.map((t, i) => ({
+        title: t.title, level: t.level, frame: t.frame, unlocked: i <= tier,
+      })),
+    };
+  }
+
   private pushMeta(): void { this.onEvent({ type: 'meta' }); }
   getMeta(): MetaInfo {
     const bonus = this.itemBonus();
@@ -1560,6 +1873,17 @@ export class GameIdle {
       kaelXp: this.kaelXp, kaelXpNext: this.kaelXpNeed(),
       kaelUpgradeCost: this.kaelUpgradeCost(),
       kaelAtk: this.kaelAtkValue(bonus), kaelHp: this.kaelHpValue(bonus),
+      kaelCrit: this.kaelCrit(bonus), kaelAspd: this.kaelAspd(bonus),
+      runes: RUNES.map((r) => ({
+        id: r.id,
+        level: this.runeLevel(r.id),
+        max: r.max,
+        cost: runeCostAt(this.runeLevel(r.id)),
+        total: this.runeBonus(r.id),
+        maxed: this.runeMaxed(r.id),
+      })),
+      evo: this.evoInfo(),
+      title: this.titleInfo(),
       floor: this.floor, wave: this.wave, kills: this.kills, playTime: this.playTime,
       bestFloor: this.bestFloor,
       speed: SPEEDS[this.speedIdx], muted: getMuted(), paused: this.paused, farmMode: this.farmMode,
@@ -1939,9 +2263,9 @@ export class GameIdle {
     if (!tgt) { sfx.dodge(); return; }
     sfx.slash();
     this.dealHeroDamage(h, tgt, 1);
-    if ((h.skill === 'double' || h.skill === 'flurry') && !tgt.dead) {
+    if ((has(h, 'double') || has(h, 'flurry')) && !tgt.dead) {
       this.dealHeroDamage(h, tgt, 0.7);
-    } else if (h.skill === 'double' || h.skill === 'flurry') {
+    } else if (has(h, 'double') || has(h, 'flurry')) {
       const next = this.meleeTarget(h);
       if (next) this.dealHeroDamage(h, next, 0.7);
     }
@@ -1951,13 +2275,13 @@ export class GameIdle {
     const tgt = this.enemies.filter((e) => !e.dead).sort((a, b) => a.x - b.x)[0];
     if (!tgt) return;
     const kind: Proj['kind'] = h.look.weapon === 'bow' ? 'arrow'
-      : (h.skill === 'holysplash' || h.look.weapon === 'orb') ? 'light' : 'magic';
-    const pierce = (h.skill === 'pierce' || (h.skill === 'crit' && h.defId === 'lyra')) ? 2 : 0;
+      : (has(h, 'holysplash') || h.look.weapon === 'orb') ? 'light' : 'magic';
+    const pierce = (has(h, 'pierce') || (has(h, 'crit') && h.defId === 'lyra')) ? 2 : 0;
     this.projs.push({
       x: h.x + 22, y: h.y - 74 * h.scale, tx: tgt.x, ty: tgt.y - 60 * tgt.scale,
       target: tgt.uid, speed: kind === 'arrow' ? 780 : 540, dmg: h.atk, kind, t: 0,
-      pierce, splash: h.skill === 'splash' ? 100 : 0, crit: h.crit,
-      ally: true, ownerSkill: h.skill, ownerUid: h.uid, spin: 0,
+      pierce, splash: has(h, 'splash') ? 100 : 0, crit: h.crit,
+      ally: true, ownerSkill: h.skills[0] ?? null, ownerUid: h.uid, spin: 0,
     });
     if (kind === 'arrow') sfx.shoot(); else sfx.beam();
   }
@@ -2030,8 +2354,8 @@ export class GameIdle {
               .slice(0, pr.pierce);
             for (const o of others) this.applyEnemyDamage(o, dmg * 0.6, '#8cdcff', false, owner);
           }
-          if (owner && (owner.skill === 'heal' || owner.skill === 'strongheal' || owner.skill === 'holysplash')) {
-            this.healLowest(dmg * (owner.skill === 'strongheal' ? 0.9 : 0.4));
+          if (owner && (has(owner, 'heal') || has(owner, 'strongheal') || has(owner, 'holysplash'))) {
+            this.healLowest(dmg * (has(owner, 'strongheal') ? 0.9 : 0.4));
           }
         }
       } else {
@@ -2133,8 +2457,45 @@ export class GameIdle {
     ctx.restore();
   }
 
+  /**
+   * Vạch nền của ba hàng dàn trận. Không có nó thì ba hàng chỉ khác nhau ở
+   * độ cao trên màn hình, người chơi khó nhận ra đội hình có chiều sâu.
+   */
+  private drawRankMarkers(): void {
+    const ctx = this.ctx;
+    const counts = [0, 0, 0];
+    for (const h of this.heroes) counts[h.lane] += 1;
+    ctx.save();
+    for (let lane = 2; lane >= 0; lane--) {
+      if (counts[lane] === 0) continue;
+      const y = LANE_Y[lane];
+      const right = LANE_ANCHOR[lane] + 34;
+      const left = LANE_ANCHOR[lane] - (LANE_CAP - 1) * LANE_GAP - 34;
+      const pulse = 0.3 + 0.08 * Math.sin(this.globalT * 1.6 + lane);
+      const g = ctx.createLinearGradient(left, 0, right, 0);
+      g.addColorStop(0, alphaOf(LANE_TINT[lane], 0));
+      g.addColorStop(0.5, alphaOf(LANE_TINT[lane], pulse));
+      g.addColorStop(1, alphaOf(LANE_TINT[lane], 0));
+      ctx.strokeStyle = g;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.ellipse((left + right) / 2, y + 3, (right - left) / 2, 8, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      // Nhãn đặt bên TRÁI dải: vùng đó luôn trống vì ba dải không chồng nhau.
+      ctx.globalAlpha = 0.5 - lane * 0.08;
+      ctx.fillStyle = LANE_TINT[lane];
+      ctx.font = '700 9px "Chakra Petch", sans-serif';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(LANE_LABEL[lane], left - 6, y + 3);
+      ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+  }
+
   private drawWorld(): void {
     const ctx = this.ctx;
+    this.drawRankMarkers();
 
     // vật phẩm rơi
     for (const pk of this.pickups) {

@@ -17,12 +17,26 @@ npm run typecheck
 | --- | --- |
 | `src/game/data.ts` | Toàn bộ dữ liệu tĩnh và **hằng số cân bằng** (`BAL`). Mọi con số ảnh hưởng tới độ khó nằm ở đây. |
 | `src/game/engine.ts` | Vòng lặp trò chơi, chiến đấu, kinh tế, lưu/tải. Không chứa mã vẽ nhân vật. |
-| `src/game/sprites.ts` | Dựng nhân vật bằng hệ xương khớp: tư thế là hàm thuần của `AnimState`. |
+| `src/game/sprites.ts` | Dựng nhân vật bằng hệ xương khớp: tư thế là hàm thuần của `AnimState`. Hành động dùng chuỗi khung khoá (`MELEE_TRACK`, `CAST_TRACK`) nội suy liên tục — đừng quay lại kiểu cộng chồng nhiều pha, nó gây gãy khúc ở chỗ nối. |
 | `src/game/scene.ts` | Bối cảnh thủ tục: 9 lớp parallax, 10 vùng, ánh sáng đuốc, thời tiết. |
 | `src/game/color.ts` | Phép biến đổi màu có ghi nhớ (renderer gọi hàng trăm lần mỗi khung hình). |
 | `src/game/types.ts` | Kiểu dùng chung giữa engine và renderer. |
 | `src/game/audio.ts` | Âm thanh tổng hợp bằng Web Audio, nền đổi cao độ theo vùng. |
 | `src/ui/` | Lớp giao diện React đặt trong hệ toạ độ 960×540 rồi phóng theo khung. |
+
+## Các hệ thống chính
+
+| Hệ thống | Nơi định nghĩa | Ghi chú |
+| --- | --- | --- |
+| **Tiến Hoá** | `EVOLUTIONS` trong `data.ts` | Mỗi 50 cấp Kael đổi hình hài và mở thêm một chiêu **giữ vĩnh viễn**. Chiêu cũ vẫn cộng dồn, nên `HeroUnit.skills` là mảng chứ không phải một giá trị. |
+| **Ngọc Huyết** | `RUNES` trong `data.ts` | Sáu loại khảm nâng chỉ số riêng cho Kael, mua bằng Ngọc. Đây là nơi tiêu Ngọc thứ hai ngoài Triệu Hồi. |
+| **Vũ khí** | `WEAPONS` trong `data.ts` | 6 loại × 5 bậc. Gom đủ `WEAPON_MERGE` bản trùng thì lột xác lên bậc trên cùng loại, và phép ghép chạy lan truyền. Ở bậc cao nhất, bản trùng đổi thành tinh luyện. |
+| **Danh hiệu** | `TITLES` trong `data.ts` | Mười bậc, mỗi 100 cấp một bậc; đổi khung hồ sơ và danh xưng, không đụng chỉ số. |
+| **Thăng Hoa** | `BAL.SEAL_*` | Đổi độ sâu lấy hệ số nhân vĩnh viễn. |
+
+Sát thương chủ yếu đến từ Kael: đồng hành chỉ còn `BAL.COMPANION_POWER` (25%)
+sức mạnh gốc, bù lại chỉ số nền của Kael cao hơn nhiều và còn được nhân thêm
+bởi Tiến Hoá, Ngọc Huyết và vũ khí.
 
 ## Nguyên tắc cân bằng
 

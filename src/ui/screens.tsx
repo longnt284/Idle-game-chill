@@ -41,18 +41,27 @@ function Embers({ n = 16 }: { n?: number }): React.JSX.Element {
   );
 }
 
-function TypePanel({ text, speed = 12, onDone }: { text: string; speed?: number; onDone?: () => void }): React.JSX.Element {
+/**
+ * Chữ chạy dần. Thay vì cố định số mili-giây cho MỖI ký tự (đoạn dài thành
+ * ra chờ rất lâu), ở đây cố định TỔNG thời gian chạy hết một trang rồi suy
+ * ngược ra số ký tự hiện mỗi nhịp — trang ngắn hay dài đều xong trong ~1,2 giây.
+ */
+const TYPE_TOTAL_MS = 1200;
+const TYPE_TICK_MS = 16;
+
+function TypePanel({ text, onDone }: { text: string; onDone?: () => void }): React.JSX.Element {
   const [len, setLen] = useState(0);
   useEffect(() => {
     setLen(0);
+    const step = Math.max(1, Math.ceil(text.length / (TYPE_TOTAL_MS / TYPE_TICK_MS)));
     const iv = window.setInterval(() => {
       setLen((l) => {
         if (l >= text.length) { window.clearInterval(iv); return l; }
-        return l + 1;
+        return Math.min(text.length, l + step);
       });
-    }, speed);
+    }, TYPE_TICK_MS);
     return () => window.clearInterval(iv);
-  }, [text, speed]);
+  }, [text]);
   useEffect(() => {
     const h = (e: KeyboardEvent): void => {
       if (e.code === 'Enter' || e.code === 'Space') setLen(text.length);
@@ -147,7 +156,10 @@ export function StoryScreen({ chapter, onDone }: { chapter: number; onDone: () =
     else { setPanel((p) => p + 1); setReady(false); }
   };
   useEffect(() => {
-    const h = (e: KeyboardEvent): void => { if (e.code === 'Enter') next(); };
+    const h = (e: KeyboardEvent): void => {
+      if (e.code === 'Enter') next();
+      if (e.code === 'Escape') onDone();
+    };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -159,6 +171,16 @@ export function StoryScreen({ chapter, onDone }: { chapter: number; onDone: () =
       <div className="absolute inset-0" style={{ background: 'linear-gradient(100deg, rgba(7,6,11,0.97) 0%, rgba(7,6,11,0.84) 48%, rgba(7,6,11,0.4) 100%)' }} />
       <div className="absolute inset-0 scanline-vignette" />
       <Embers n={10} />
+      {/* Bỏ qua cả chương — người chơi lặp lại vòng tầng nhiều lần nên phải
+          thoát được ngay, không bắt bấm hết từng trang. */}
+      <button
+        onClick={onDone}
+        className="hk-btn absolute top-4 right-4 z-10"
+        style={{ borderColor: `${ch.accent}66`, color: ch.accent }}
+        title="Bỏ qua toàn bộ chương truyện (Esc)"
+      >
+        BỎ QUA ▸▸
+      </button>
       <div className="relative h-full flex flex-col justify-center px-14 max-w-[620px]">
         <div className="kicker text-[10px] mb-1.5 anim-flicker" style={{ color: ch.accent }}>{ch.kicker}</div>
         <h2 className="font-display leading-tight mb-4 title-bone" style={{ fontSize: 40 }}>{ch.title}</h2>
@@ -180,7 +202,9 @@ export function StoryScreen({ chapter, onDone }: { chapter: number; onDone: () =
             <span className="anim-blink">▸</span>
           </button>
         </div>
-        <div className="font-ui text-[9px] text-[#6a6378] mt-2 tracking-widest">ENTER — LẬT TRANG · SPACE — HIỆN HẾT CHỮ</div>
+        <div className="font-ui text-[9px] text-[#6a6378] mt-2 tracking-widest">
+          ENTER — LẬT TRANG · SPACE — HIỆN HẾT CHỮ · ESC — BỎ QUA CHƯƠNG
+        </div>
       </div>
     </div>
   );

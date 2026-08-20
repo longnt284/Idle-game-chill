@@ -4,7 +4,8 @@
 export type HairStyle =
   | 'spiky' | 'long' | 'bun' | 'hood' | 'wild' | 'pony' | 'twin' | 'short' | 'mohawk' | 'none';
 export type WeaponKind =
-  | 'sword' | 'bow' | 'staff' | 'daggers' | 'orb' | 'shield' | 'spear' | 'none';
+  | 'sword' | 'bow' | 'staff' | 'daggers' | 'orb' | 'shield' | 'spear'
+  | 'greatsword' | 'scythe' | 'twinblade' | 'hammer' | 'none';
 export type AccessoryKind =
   | 'none' | 'halo' | 'horns' | 'crown' | 'mask' | 'ears' | 'headband';
 
@@ -15,6 +16,17 @@ export interface ChibiLook {
   accessory: AccessoryKind;
   cape?: string;
   aura: string;
+  /**
+   * Bậc Tiến Hoá của Kael (0–7). Renderer dùng nó để chồng thêm các lớp
+   * hiệu ứng — ấn ký bay quanh, cánh linh hồn, vòng hào quang — nên hình
+   * hài đổi rõ rệt mà vẫn dùng chung một bộ xương.
+   */
+  evoTier?: number;
+  /**
+   * Bậc vũ khí đang cầm (0 = Thường … 4 = Thần Thoại). Quyết định chất liệu,
+   * quầng sáng và vệt chém — bậc càng cao trông càng dữ.
+   */
+  weaponTier?: number;
 }
 
 /** Trạng thái hoạt ảnh mà renderer cần để dựng tư thế nhân vật. */

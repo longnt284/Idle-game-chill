@@ -58,6 +58,94 @@ function basePose(): Pose {
 }
 
 // ---------- bộ giải tư thế ----------
+/**
+ * Khung khoá của một hành động.
+ * Góc tay là giá trị TUYỆT ĐỐI (hành động chiếm quyền điều khiển tay), còn
+ * các kênh khác là độ lệch cộng thêm vào tư thế nền (thở / bước chân).
+ */
+interface ActKey {
+  ox: number; oy: number; lean: number; spine: number; head: number;
+  sF: number; eF: number;
+  sB: number;
+  wrist: number; squash: number; charge: number;
+  hB: number; kB: number; hF: number; kF: number;
+}
+
+const K = (o: Partial<ActKey>): ActKey => ({
+  ox: 0, oy: 0, lean: 0, spine: 0, head: 0,
+  sF: IDLE_ARM, eF: IDLE_ELBOW, sB: IDLE_ARM,
+  wrist: 0, squash: 1, charge: 0,
+  hB: 0, kB: 0, hF: 0, kF: 0,
+  ...o,
+});
+
+type Track = { keys: Array<[number, ActKey]>; eases: Array<(t: number) => number> };
+
+/**
+ * Chém: nghỉ → lấy đà → bung → theo đà → nghỉ.
+ * Khung đầu và khung cuối đều là tư thế nghỉ nên nối vào/ra hoạt ảnh không
+ * bị nhảy. Khung "theo đà" giữ cho đòn đánh có quán tính thay vì bật ngược
+ * lại ngay khi vừa chạm — đây là chỗ trước kia trông gãy khúc nhất.
+ */
+const MELEE_TRACK: Track = {
+  keys: [
+    [0.00, K({})],
+    [0.28, K({ ox: -9, lean: -0.2, spine: -0.24, head: -0.12, sF: -2.5, eF: 1.2, sB: 0.7, wrist: -0.6, squash: 0.95, kB: 0.34, hF: -0.3 })],
+    [0.46, K({ ox: 26, lean: 0.34, spine: 0.4, head: 0.16, sF: 0.95, eF: 0.1, sB: -0.85, wrist: 0.42, squash: 1.06, hB: -0.5, hF: 0.55, kF: 0.38 })],
+    [0.64, K({ ox: 15, lean: 0.15, spine: 0.19, head: 0.05, sF: 1.28, eF: 0.32, sB: -0.3, wrist: 0.58, squash: 1.0, hB: -0.22, hF: 0.28, kF: 0.18 })],
+    [1.00, K({})],
+  ],
+  eases: [easeOutCubic, easeOutQuint, easeOutCubic, easeInOutCubic],
+};
+
+/** Niệm phép: nâng tay tụ lực → phóng ra → thu về. */
+const CAST_TRACK: Track = {
+  keys: [
+    [0.00, K({})],
+    [0.42, K({ ox: -4, lean: -0.09, spine: -0.14, head: -0.16, sF: -1.95, eF: 0.92, sB: 0.44, squash: 0.98, kB: 0.16, charge: 1 })],
+    [0.58, K({ ox: 6, lean: -0.02, spine: 0.06, head: -0.04, sF: -1.05, eF: 0.1, sB: 0.2, squash: 1.03, charge: 0.25 })],
+    [0.74, K({ ox: 2, lean: 0, spine: 0.02, head: 0, sF: -0.75, eF: 0.16, sB: 0.18, squash: 1 })],
+    [1.00, K({})],
+  ],
+  eases: [easeOutCubic, easeOutQuint, easeOutCubic, easeInOutCubic],
+};
+
+/** Lấy mẫu chuỗi khung khoá tại thời điểm q — liên tục trên toàn miền [0,1]. */
+function sampleTrack(tr: Track, q: number): ActKey {
+  const { keys, eases } = tr;
+  let i = 0;
+  while (i < keys.length - 2 && q >= keys[i + 1][0]) i++;
+  const [t0, a] = keys[i];
+  const [t1, b] = keys[i + 1];
+  const raw = t1 > t0 ? (q - t0) / (t1 - t0) : 1;
+  const k = eases[i](clamp(raw, 0, 1));
+  const L = (x: number, y: number): number => x + (y - x) * k;
+  return {
+    ox: L(a.ox, b.ox), oy: L(a.oy, b.oy), lean: L(a.lean, b.lean),
+    spine: L(a.spine, b.spine), head: L(a.head, b.head),
+    sF: L(a.sF, b.sF), eF: L(a.eF, b.eF), sB: L(a.sB, b.sB),
+    wrist: L(a.wrist, b.wrist), squash: L(a.squash, b.squash), charge: L(a.charge, b.charge),
+    hB: L(a.hB, b.hB), kB: L(a.kB, b.kB), hF: L(a.hF, b.hF), kF: L(a.kF, b.kF),
+  };
+}
+
+function applyKey(p: Pose, k: ActKey): void {
+  p.ox += k.ox;
+  p.oy += k.oy;
+  p.lean += k.lean;
+  p.spine += k.spine;
+  p.head += k.head;
+  p.arms[1] = [k.sF, k.eF];
+  p.arms[0] = [k.sB, p.arms[0][1]];
+  p.wrist += k.wrist;
+  p.squash *= k.squash;
+  p.charge = k.charge;
+  p.legs[0][0] += k.hB;
+  p.legs[0][1] += k.kB;
+  p.legs[1][0] += k.hF;
+  p.legs[1][1] += k.kF;
+}
+
 export function solvePose(a: AnimState): Pose {
   const p = basePose();
   const t = a.t + a.seed * 1.7;
@@ -91,40 +179,11 @@ export function solvePose(a: AnimState): Pose {
 
   const q = clamp(a.actionT, 0, 1);
   if (a.action === 'attack') {
-    // 3 nhịp: lấy đà (co lại) → chém (bung ra) → thu về
-    if (q < 0.32) {
-      const k = easeOutCubic(q / 0.32);
-      applyMelee(p, k, -1);
-    } else if (q < 0.52) {
-      const k = easeOutQuint((q - 0.32) / 0.2);
-      applyMelee(p, 1, -1);
-      applyMelee(p, k, 1);
-    } else {
-      const k = easeInOutCubic((q - 0.52) / 0.48);
-      applyMelee(p, 1, -1);
-      applyMelee(p, 1 - k, 1);
-      applyMelee(p, 1 - k, -1, true);
-    }
+    applyKey(p, sampleTrack(MELEE_TRACK, q));
   } else if (a.action === 'cast') {
-    if (q < 0.45) {
-      const k = easeOutCubic(q / 0.45);
-      applyCast(p, k);
-      p.charge = k;
-    } else if (q < 0.62) {
-      const k = easeOutQuint((q - 0.45) / 0.17);
-      applyCast(p, 1);
-      p.arms[1][0] = lerp(-1.95, -1.05, k);
-      p.arms[1][1] = lerp(0.92, 0.1, k);
-      p.ox += k * 5;
-      p.lean -= k * 0.1;
-      p.charge = 1 - k;
-    } else {
-      const k = easeInOutCubic((q - 0.62) / 0.38);
-      applyCast(p, 1 - k);
-      p.ox += (1 - k) * 5;
-    }
+    applyKey(p, sampleTrack(CAST_TRACK, q));
   } else if (a.action === 'hurt') {
-    const k = 1 - q;
+    const k = 1 - easeOutCubic(q);
     p.ox -= 9 * k;
     p.lean -= 0.24 * k;
     p.head -= 0.3 * k;
@@ -150,48 +209,6 @@ export function solvePose(a: AnimState): Pose {
   }
 
   return p;
-}
-
-/** dirSign −1 = pha lấy đà, +1 = pha bung đòn. */
-function applyMelee(p: Pose, k: number, dirSign: number, reset = false): void {
-  if (dirSign < 0) {
-    const s = reset ? k : k;
-    p.ox += -8 * s;
-    p.lean += -0.18 * s;
-    p.spine += -0.22 * s;
-    p.head += -0.1 * s;
-    p.arms[1][0] += (-2.45 - IDLE_ARM) * s;
-    p.arms[1][1] += (1.15 - IDLE_ELBOW) * s;
-    p.arms[0][0] += 0.55 * s;
-    p.wrist += -0.55 * s;
-    p.legs[0][1] += 0.3 * s;
-    p.legs[1][0] += -0.28 * s;
-    p.squash -= 0.05 * s;
-  } else {
-    p.ox += 30 * k;
-    p.lean += 0.5 * k;
-    p.spine += 0.58 * k;
-    p.head += 0.22 * k;
-    p.arms[1][0] += 3.42 * k;
-    p.arms[1][1] += -1.1 * k;
-    p.arms[0][0] += -1.0 * k;
-    p.wrist += 0.95 * k;
-    p.legs[0][0] += -0.55 * k;
-    p.legs[1][0] += 0.62 * k;
-    p.legs[1][1] += 0.4 * k;
-    p.squash += 0.06 * k;
-  }
-}
-
-function applyCast(p: Pose, k: number): void {
-  p.ox += -3 * k;
-  p.lean += -0.07 * k;
-  p.spine += -0.12 * k;
-  p.head += -0.14 * k;
-  p.arms[1][0] += (-1.95 - IDLE_ARM) * k;
-  p.arms[1][1] += (0.92 - IDLE_ELBOW) * k;
-  p.arms[0][0] += 0.3 * k;
-  p.legs[0][1] += 0.14 * k;
 }
 
 // ---------- nguyên thủy vẽ ----------
@@ -286,8 +303,86 @@ function handOf(p: Pose): Joint {
 }
 
 const WEAPON_LEN: Record<WeaponKind, number> = {
-  sword: 44, spear: 60, daggers: 20, staff: 50, bow: 0, orb: 0, shield: 0, none: 0,
+  sword: 44, spear: 60, daggers: 20, staff: 50, bow: 0, orb: 0, shield: 0,
+  greatsword: 58, scythe: 54, twinblade: 34, hammer: 46, none: 0,
 };
+/** Các loại cầm hai tay hoặc lưỡi dài thì khi nghỉ phải chúc xuống nhiều hơn. */
+const WEAPON_REST: Record<WeaponKind, number> = {
+  sword: 2.3, spear: 2.3, greatsword: 2.45, scythe: 2.5, hammer: 2.4,
+  twinblade: 0.9, daggers: 0.7, staff: 0, bow: 0, orb: 0, shield: 0, none: 0,
+};
+/** Vũ khí nào có vệt chém khi bổ xuống. */
+const WEAPON_TRAIL = new Set<WeaponKind>(['sword', 'spear', 'daggers', 'greatsword', 'scythe', 'twinblade', 'hammer']);
+
+/**
+ * Bảng chất liệu theo bậc vũ khí (0 Thường … 4 Thần Thoại).
+ * Bậc càng cao lưỡi càng sáng, quầng càng mạnh, và từ bậc 3 trở lên có thêm
+ * ấn văn phát sáng chạy dọc thân — đủ để nhìn là biết mình đang cầm gì.
+ */
+interface WeaponSkin { edge: string; core: string; glowR: number; runes: boolean; sparks: boolean }
+const WEAPON_SKINS: WeaponSkin[] = [
+  { edge: '#8b93a5', core: '#d5dbe7', glowR: 0, runes: false, sparks: false },
+  { edge: '#7fb6d8', core: '#e8f4ff', glowR: 5, runes: false, sparks: false },
+  { edge: '#e0a24a', core: '#fff0cf', glowR: 8, runes: false, sparks: false },
+  { edge: '#e05ac0', core: '#ffdcf6', glowR: 12, runes: true, sparks: false },
+  { edge: '#7de05a', core: '#e6ffdc', glowR: 17, runes: true, sparks: true },
+];
+const skinOf = (look: ChibiLook): WeaponSkin =>
+  WEAPON_SKINS[clamp(look.weaponTier ?? 0, 0, WEAPON_SKINS.length - 1)];
+
+/** Gradient kim loại lấy màu theo bậc vũ khí. */
+function bladeGrad(ctx: CanvasRenderingContext2D, sk: WeaponSkin, halfWidth: number): CanvasGradient {
+  const g = ctx.createLinearGradient(-halfWidth, 0, halfWidth, 0);
+  g.addColorStop(0, darken(sk.edge, 0.45));
+  g.addColorStop(0.32, sk.edge);
+  g.addColorStop(0.55, sk.core);
+  g.addColorStop(0.78, sk.edge);
+  g.addColorStop(1, darken(sk.edge, 0.5));
+  return g;
+}
+
+/** Quầng sáng và ấn văn phủ lên lưỡi — chỉ vẽ khi bậc đủ cao. */
+function bladeAura(
+  ctx: CanvasRenderingContext2D, sk: WeaponSkin, a: AnimState, len: number, halfWidth: number,
+): void {
+  if (sk.glowR <= 0) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.2 + 0.06 * Math.sin(a.t * 4 + a.seed);
+  ctx.fillStyle = sk.core;
+  ctx.beginPath();
+  ctx.ellipse(0, -len * 0.5, halfWidth + sk.glowR * 0.45, len * 0.6, 0, 0, TAU);
+  ctx.fill();
+  ctx.restore();
+  if (sk.runes) {
+    ctx.save();
+    ctx.globalAlpha = 0.55 + 0.25 * Math.sin(a.t * 5 + a.seed * 2);
+    ctx.strokeStyle = sk.core;
+    ctx.lineWidth = 1;
+    for (let i = 1; i <= 3; i++) {
+      const y = -len * (i / 4);
+      ctx.beginPath();
+      ctx.moveTo(-halfWidth * 0.45, y);
+      ctx.lineTo(halfWidth * 0.45, y - 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  if (sk.sparks) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 3; i++) {
+      const ph = (a.t * 0.9 + i / 3) % 1;
+      ctx.globalAlpha = 0.6 * (1 - ph);
+      ctx.fillStyle = sk.core;
+      ctx.beginPath();
+      ctx.arc(Math.sin(i * 2.3 + a.t) * halfWidth, -len * ph, 1.6, 0, TAU);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
 
 export function drawHero(ctx: CanvasRenderingContext2D, look: ChibiLook, a: AnimState): void {
   const p = solvePose(a);
@@ -334,6 +429,10 @@ export function drawHero(ctx: CanvasRenderingContext2D, look: ChibiLook, a: Anim
   const rim = alpha(look.aura, 0.55);
   const skinD = darken(look.skin, 0.22);
 
+  // ---- lớp Tiến Hoá phía sau (cánh linh hồn) ----
+  const evo = look.evoTier ?? 0;
+  if (evo >= 4) drawEvoWings(ctx, look.aura, a, evo);
+
   // ---- áo choàng (sau lưng) ----
   if (look.cape) drawCape(ctx, look.cape, a, p);
 
@@ -375,6 +474,10 @@ export function drawHero(ctx: CanvasRenderingContext2D, look: ChibiLook, a: Anim
   const hand = drawArm(ctx, 1, p.arms[1], look.outfit, look.skin, rim);
   drawWeapon(ctx, look, a, p, hand);
 
+  // ---- lớp Tiến Hoá phía trước (ấn ký bay quanh, vòng hào quang) ----
+  if (evo >= 2) drawEvoRunes(ctx, look.aura, a, evo);
+  if (evo >= 6) drawEvoHalo(ctx, look.aura, a, evo);
+
   // ---- lớp phủ băng / choáng ----
   if (a.frozen > 0) {
     ctx.fillStyle = 'rgba(150,215,255,0.28)';
@@ -393,6 +496,79 @@ export function drawHero(ctx: CanvasRenderingContext2D, look: ChibiLook, a: Anim
     ctx.fillRect(-16 * s, -140 * s, 32 * s, 140 * s);
     ctx.restore();
   }
+}
+
+/**
+ * Cánh linh hồn — mở từ bậc Tiến Hoá 4.
+ * Vẽ trước thân nên trông như mọc ra từ sau lưng; sải cánh và số lông rộng
+ * dần theo bậc để mỗi lần tiến hoá đều nhìn thấy được sự khác biệt.
+ */
+function drawEvoWings(ctx: CanvasRenderingContext2D, aura: string, a: AnimState, tier: number): void {
+  const beat = Math.sin(a.t * 2.1 + a.seed) * 0.16;
+  const span = 26 + (tier - 4) * 7;
+  const feathers = 3 + (tier - 4);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const sd of [-1, 1]) {
+    ctx.save();
+    ctx.translate(sd * 8, SHO_Y + 2);
+    ctx.rotate(sd * (0.5 + beat));
+    for (let i = 0; i < feathers; i++) {
+      const k = i / Math.max(1, feathers - 1);
+      const len = span * (1 - k * 0.34);
+      ctx.globalAlpha = 0.3 - k * 0.06;
+      ctx.strokeStyle = aura;
+      ctx.lineWidth = 5 - k * 1.2;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.quadraticCurveTo(sd * len * 0.6, -len * 0.5 + k * len * 0.7, sd * len, -len * 0.15 + k * len * 0.9);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+/** Ấn ký quay quanh thân — mở từ bậc 2, càng cao càng nhiều. */
+function drawEvoRunes(ctx: CanvasRenderingContext2D, aura: string, a: AnimState, tier: number): void {
+  const n = Math.min(6, tier);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < n; i++) {
+    const ang = a.t * 1.1 + (i * TAU) / n;
+    const x = Math.cos(ang) * 24;
+    const y = -52 + Math.sin(ang * 1.3) * 13;
+    const depth = 0.45 + 0.55 * ((Math.sin(ang) + 1) / 2);
+    ctx.globalAlpha = 0.35 * depth;
+    ctx.fillStyle = aura;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(ang * 1.6);
+    ctx.fillRect(-2.2 * depth, -2.2 * depth, 4.4 * depth, 4.4 * depth);
+    ctx.restore();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+/** Vòng hào quang sau đầu — chỉ bậc cao nhất mới có. */
+function drawEvoHalo(ctx: CanvasRenderingContext2D, aura: string, a: AnimState, tier: number): void {
+  const r = 19 + (tier - 6) * 4;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.28 + 0.08 * Math.sin(a.t * 2.4);
+  ctx.strokeStyle = aura;
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.arc(0, HEAD_Y - 2, r, 0, TAU);
+  ctx.stroke();
+  ctx.globalAlpha *= 0.5;
+  ctx.lineWidth = 7;
+  ctx.stroke();
+  ctx.restore();
+  ctx.globalAlpha = 1;
 }
 
 function drawLeg(
@@ -847,19 +1023,20 @@ function drawWeapon(
   } else if (a.action === 'cast' || a.action === 'dead') {
     engaged = 1;
   }
-  const restAng = (w === 'sword' || w === 'spear' ? 2.3 : w === 'daggers' ? 0.7 : 0) * (1 - engaged);
+  const restAng = WEAPON_REST[w] * (1 - engaged);
   const ang = p.arms[1][0] + p.arms[1][1] + p.wrist + restAng;
 
   // vệt chém: lấy mẫu tư thế ở các thời điểm trước đó
-  if ((w === 'sword' || w === 'spear' || w === 'daggers') && a.action === 'attack'
-    && a.actionT > 0.3 && a.actionT < 0.62) {
+  if (WEAPON_TRAIL.has(w) && a.action === 'attack' && a.actionT > 0.3 && a.actionT < 0.66) {
     drawSlashTrail(ctx, look, a);
   }
+  const sk = skinOf(look);
 
   ctx.save();
   ctx.translate(hand.x, hand.y);
   ctx.rotate(ang);
   if (w === 'sword') {
+    bladeAura(ctx, sk, a, 44, 5);
     ctx.fillStyle = '#3a2a24';
     ctx.beginPath(); ctx.roundRect(-2.6, -2, 5.2, 11, 2); ctx.fill();
     ctx.strokeStyle = INK; ctx.lineWidth = 1.6; ctx.stroke();
@@ -868,11 +1045,86 @@ function drawWeapon(
     ctx.beginPath();
     ctx.moveTo(-4.4, -5); ctx.lineTo(-3, -40); ctx.lineTo(0, -47); ctx.lineTo(3, -40);
     ctx.lineTo(4.4, -5); ctx.closePath();
-    ctx.fillStyle = metalGrad(ctx, 44, look.aura); ctx.fill();
+    ctx.fillStyle = bladeGrad(ctx, sk, 4.4); ctx.fill();
     ctx.strokeStyle = INK; ctx.lineWidth = 1.7; ctx.stroke();
     ctx.strokeStyle = alpha('#ffffff', 0.7); ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(0.5, -8); ctx.lineTo(0.5, -40); ctx.stroke();
+  } else if (w === 'greatsword') {
+    // Đại đao: lưỡi bản rộng, chuôi dài hai tay.
+    bladeAura(ctx, sk, a, 58, 8);
+    ctx.fillStyle = '#2f241d';
+    ctx.beginPath(); ctx.roundRect(-3, -2, 6, 17, 2.4); ctx.fill();
+    ctx.strokeStyle = INK; ctx.lineWidth = 1.6; ctx.stroke();
+    ctx.fillStyle = darken(sk.edge, 0.3);
+    ctx.beginPath(); ctx.roundRect(-11, -7, 22, 5.4, 2); ctx.fill(); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-7.5, -6); ctx.lineTo(-6.5, -46); ctx.lineTo(-3, -60); ctx.lineTo(3.5, -58);
+    ctx.lineTo(7.5, -44); ctx.lineTo(7.5, -6); ctx.closePath();
+    ctx.fillStyle = bladeGrad(ctx, sk, 7.5); ctx.fill();
+    ctx.strokeStyle = INK; ctx.lineWidth = 1.8; ctx.stroke();
+    ctx.strokeStyle = alpha(sk.core, 0.6); ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(0, -10); ctx.lineTo(0, -50); ctx.stroke();
+  } else if (w === 'scythe') {
+    // Lưỡi hái: cán dài, lưỡi cong vắt ngang đầu cán.
+    bladeAura(ctx, sk, a, 40, 5);
+    ctx.fillStyle = '#4a3428';
+    ctx.beginPath(); ctx.roundRect(-2.2, -50, 4.4, 64, 2); ctx.fill();
+    ctx.strokeStyle = INK; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, -50);
+    ctx.quadraticCurveTo(-26, -58, -34, -38);
+    ctx.quadraticCurveTo(-22, -48, -2, -44);
+    ctx.closePath();
+    ctx.fillStyle = bladeGrad(ctx, sk, 16); ctx.fill();
+    ctx.strokeStyle = INK; ctx.lineWidth = 1.7; ctx.stroke();
+    ctx.strokeStyle = alpha(sk.core, 0.75); ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(-2, -49); ctx.quadraticCurveTo(-24, -56, -32, -39);
+    ctx.stroke();
+    ellipse(ctx, 0, -47, 3.4, 3.4, 0, sk.core, INK, 1.4);
+  } else if (w === 'hammer') {
+    // Chuỳ: đầu khối vuông nặng, cán ngắn.
+    bladeAura(ctx, sk, a, 34, 10);
+    ctx.fillStyle = '#4a3428';
+    ctx.beginPath(); ctx.roundRect(-2.6, -32, 5.2, 46, 2.4); ctx.fill();
+    ctx.strokeStyle = INK; ctx.lineWidth = 1.6; ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-12, -34); ctx.lineTo(-14, -48); ctx.lineTo(14, -48);
+    ctx.lineTo(12, -34); ctx.closePath();
+    ctx.fillStyle = bladeGrad(ctx, sk, 13); ctx.fill();
+    ctx.strokeStyle = INK; ctx.lineWidth = 1.9; ctx.stroke();
+    ctx.fillStyle = alpha(sk.core, 0.55);
+    ctx.beginPath(); ctx.roundRect(-9, -46, 18, 3.4, 1.4); ctx.fill();
+    for (const sd of [-1, 1]) {
+      ctx.fillStyle = darken(sk.edge, 0.2);
+      ctx.beginPath();
+      ctx.moveTo(sd * 13, -46); ctx.lineTo(sd * 19, -41); ctx.lineTo(sd * 12.5, -36);
+      ctx.closePath(); ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 1.4; ctx.stroke();
+    }
+  } else if (w === 'twinblade') {
+    // Song kiếm: hai lưỡi ngắn tréo nhau, lưỡi sau mờ hơn cho có chiều sâu.
+    bladeAura(ctx, sk, a, 30, 4);
+    for (const [sd, sc, al] of [[-1, 0.86, 0.7], [1, 1, 1]] as Array<[number, number, number]>) {
+      ctx.save();
+      ctx.globalAlpha = al;
+      ctx.translate(sd * 4.5, 1);
+      ctx.rotate(sd * 0.3);
+      ctx.scale(sc, sc);
+      ctx.fillStyle = '#2f2620';
+      ctx.beginPath(); ctx.roundRect(-2.4, -1, 4.8, 10, 2); ctx.fill();
+      ctx.strokeStyle = INK; ctx.lineWidth = 1.4; ctx.stroke();
+      ctx.fillStyle = darken(sk.edge, 0.25);
+      ctx.beginPath(); ctx.roundRect(-6, -4, 12, 3.4, 1.6); ctx.fill(); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-3.4, -3.6); ctx.lineTo(-2, -26); ctx.lineTo(0, -32); ctx.lineTo(2, -26);
+      ctx.lineTo(3.4, -3.6); ctx.closePath();
+      ctx.fillStyle = bladeGrad(ctx, sk, 3.4); ctx.fill();
+      ctx.strokeStyle = INK; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
   } else if (w === 'spear') {
+    bladeAura(ctx, sk, a, 60, 5);
     ctx.fillStyle = '#6d4a2c';
     ctx.beginPath(); ctx.roundRect(-1.8, -46, 3.6, 60, 1.8); ctx.fill();
     ctx.strokeStyle = INK; ctx.lineWidth = 1.4; ctx.stroke();
@@ -880,7 +1132,7 @@ function drawWeapon(
     ctx.moveTo(-4.4, -44); ctx.lineTo(0, -60); ctx.lineTo(4.4, -44);
     ctx.quadraticCurveTo(0, -40, -4.4, -44);
     ctx.closePath();
-    ctx.fillStyle = metalGrad(ctx, 16, look.aura); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = bladeGrad(ctx, sk, 4.4); ctx.fill(); ctx.stroke();
   } else if (w === 'daggers') {
     drawDagger(ctx, { x: 0, y: 0 }, 0, look.aura, 1);
   } else if (w === 'staff') {
@@ -993,10 +1245,12 @@ function drawSlashTrail(ctx: CanvasRenderingContext2D, look: ChibiLook, a: AnimS
   for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
   for (let i = inner.length - 1; i >= 0; i--) ctx.lineTo(inner[i].x, inner[i].y);
   ctx.closePath();
+  const sk = skinOf(look);
+  const tint = (look.weaponTier ?? 0) > 0 ? sk.core : look.aura;
   const g = ctx.createLinearGradient(pts[0].x, pts[0].y, pts[pts.length - 1].x, pts[pts.length - 1].y);
-  g.addColorStop(0, alpha('#ffffff', 0.85));
-  g.addColorStop(0.35, alpha(lighten(look.aura, 0.4), 0.5));
-  g.addColorStop(1, alpha(look.aura, 0));
+  g.addColorStop(0, alpha('#ffffff', 0.85 + (look.weaponTier ?? 0) * 0.03));
+  g.addColorStop(0.35, alpha(lighten(tint, 0.4), 0.5 + (look.weaponTier ?? 0) * 0.06));
+  g.addColorStop(1, alpha(tint, 0));
   ctx.fillStyle = g;
   ctx.fill();
   ctx.restore();

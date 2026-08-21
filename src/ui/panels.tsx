@@ -1,19 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type {
-  ChibiLook, CompanionStats, GachaResult, MetaInfo, OfflineReport, Pos, Rarity,
+  AchStatId, ChibiLook, CompanionStats, GachaResult, MetaInfo, OfflineReport, Pos, Rarity,
   RuneId, WeaponDef,
 } from '../game/engine';
 import {
+  ACHIEVEMENTS, ACH_GROUPS, ACH_RANKS, ACH_TOTAL, rankOfTier,
   BAL, COMPANIONS, GACHA_COST, GACHA_X10_COST, GACHA_X100_COST, GACHA_X500_COST, ITEMS,
-  MAX_ITEM_SLOTS, MAX_PARTY, RARITY, RUNES, SKINS, SKIN_COST, TOTAL_FLOORS, WAVES_PER_FLOOR,
+  MAX_ITEM_SLOTS, MAX_PARTY, RARITY, RUNES, SKINS, TOTAL_FLOORS, WAVES_PER_FLOOR,
   WEAPONS, WEAPON_MERGE, WEAPON_TYPES, WGACHA_COST, WGACHA_X10_COST, EVO_EVERY,
   fmt, hasBossOnFloor, renderPortrait, weaponTypeDef, zoneOf,
 } from '../game/engine';
 import type { GameIdle } from '../game/engine';
 
 export type PanelId =
-  | 'none' | 'summon' | 'party' | 'equip' | 'skin' | 'weapon' | 'pause' | 'prestige' | 'kael';
+  | 'none' | 'summon' | 'party' | 'equip' | 'skin' | 'weapon' | 'pause' | 'prestige' | 'kael'
+  | 'daily' | 'achievement';
 
 // ============ nguyên thủy dùng chung ============
 
@@ -40,6 +42,10 @@ const ICONS = {
   seal: 'M12 1.6 14.6 7l5.9.9-4.3 4.1 1 5.9L12 15.1 6.8 17.9l1-5.9L3.5 7.9 9.4 7 12 1.6z',
   chevron: 'M9.4 6 8 7.4 12.6 12 8 16.6 9.4 18l6-6-6-6z',
   lock: 'M17 9V7a5 5 0 0 0-10 0v2H5v12h14V9h-2zM9 7a3 3 0 0 1 6 0v2H9V7z',
+  calendar: 'M7 2v2H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2V2h-2v2H9V2H7zM5 9h14v10H5V9z',
+  check: 'M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z',
+  trophy: 'M18 3h3v4a4 4 0 0 1-4 4h-.6A5 5 0 0 1 13 13.9V17h3v2H8v-2h3v-3.1A5 5 0 0 1 7.6 11H7a4 4 0 0 1-4-4V3h3V2h12v1zM5 5v2a2 2 0 0 0 1 1.7V5H5zm14 0h-1v3.7A2 2 0 0 0 19 7V5z',
+  cloth: 'M9 2 5 4 3 9l3 1.4V22h12V10.4L21 9l-2-5-4-2a3 3 0 0 1-6 0z',
 };
 
 /** Chân dung nhân vật vẽ trên canvas. Chỉ chạy vòng lặp khi thật sự cần động. */
@@ -452,12 +458,56 @@ function ToastStack({ toasts }: { toasts: MetaInfo['toasts'] }): React.JSX.Eleme
   );
 }
 
+/** Chấm số đỏ trên nút dock — thứ duy nhất được phép nhấp nháy trong HUD. */
+function DockBadge({ n, color }: { n: number; color: string }): React.JSX.Element | null {
+  if (n <= 0) return null;
+  return (
+    <span
+      className="anim-badge num text-[9px] px-1 rounded-sm leading-[1.5]"
+      style={{ background: color, color: '#0d0a14' }}
+    >
+      {n > 99 ? '99+' : n}
+    </span>
+  );
+}
+
 function DockBar({ meta, engine }: { meta: MetaInfo; engine: GameIdle }): React.JSX.Element {
   const canPrestige = meta.canPrestige;
+  const dailyReady = meta.daily.canClaim;
+  const achReady = meta.ach.claimable;
   return (
     <div className="absolute bottom-3 right-3 flex flex-col items-end gap-1.5 pointer-events-auto">
       {/* hàng tiện ích — chỉ biểu tượng, gọn để chừa chỗ cho sân khấu */}
       <div className="flex items-stretch gap-1.5">
+        <button
+          className="hk-dock"
+          style={{
+            borderColor: dailyReady ? '#7dff5a' : '#3a3350',
+            color: dailyReady ? '#c8ffb0' : '#ece4d2',
+            padding: '5px 10px', fontSize: 11,
+            boxShadow: dailyReady ? '0 0 16px rgba(125,255,90,0.35)' : undefined,
+          }}
+          onClick={() => dispatchOpen('daily')}
+          title={dailyReady ? 'Hôm nay chưa điểm danh — có quà đang chờ' : 'Lịch điểm danh tháng này'}
+        >
+          <Svg d={ICONS.calendar} s={12} c={dailyReady ? '#7dff5a' : '#8fa3b8'} />
+          ĐIỂM DANH
+          {dailyReady && <DockBadge n={1} color="#7dff5a" />}
+        </button>
+        <button
+          className="hk-dock"
+          style={{
+            borderColor: achReady > 0 ? '#ffd23c' : '#3a3350',
+            color: achReady > 0 ? '#ffeaa0' : '#ece4d2',
+            padding: '5px 10px', fontSize: 11,
+          }}
+          onClick={() => dispatchOpen('achievement')}
+          title={achReady > 0 ? `${achReady} thành tựu đang chờ nhận Ngọc` : `Bia thành tựu — ${meta.ach.claimed}/${meta.ach.total} mốc`}
+        >
+          <Svg d={ICONS.trophy} s={12} c={achReady > 0 ? '#ffd23c' : '#8fa3b8'} />
+          THÀNH TỰU
+          <DockBadge n={achReady} color="#ffd23c" />
+        </button>
         <button
           className="hk-dock"
           data-on={meta.farmMode}
@@ -541,29 +591,174 @@ const PULLS: Array<{ n: 1 | 10 | 100 | 500; cost: number; accent: string }> = [
   { n: 500, cost: GACHA_X500_COST, accent: '#7dff5a' },
 ];
 
+type GachaPhase = 'idle' | 'charge' | 'burst' | 'reveal';
+
+const RARITY_RANK: Record<Rarity, number> = {
+  common: 0, rare: 1, epic: 2, legendary: 3, mythic: 4,
+};
+const bestRarityOf = (rs: GachaResult[]): Rarity =>
+  rs.reduce<Rarity>((b, r) => (RARITY_RANK[r.rarity] > RARITY_RANK[b] ? r.rarity : b), 'common');
+
+/** Màu trung tính lúc chưa "lộ bài" — người chơi chưa được đoán ra kết quả. */
+const NEUTRAL_AURA = '#7a6aa8';
+
+/**
+ * Trận pháp triệu hồi. Nhận sẵn màu của độ hiếm cao nhất trong lượt quay và
+ * chỉ hé lộ nó ở nửa sau pha nạp: khoảng lặng trước khi màu đổi chính là chỗ
+ * hồi hộp của gacha, mất nó thì hoạt cảnh chỉ còn là thời gian chờ.
+ */
+function GachaStage({ phase, aura, rank }: {
+  phase: GachaPhase; aura: string; rank: number;
+}): React.JSX.Element {
+  const charging = phase === 'charge';
+  const bursting = phase === 'burst';
+  const motes = 14;
+  // Sức nổ tỉ lệ với độ hiếm. Nếu lượt Thường cũng nổ tung như lượt Thần
+  // Thoại thì hoạt cảnh mất hết sức nặng — người chơi thôi không nhìn nữa.
+  const rays = 8 + rank * 4;
+  const shocks = 1 + Math.floor(rank / 2);
+  const power = 0.34 + rank * 0.165;
+  return (
+    <div
+      className={`gacha-stage ${bursting && rank >= 2 ? 'anim-shake' : ''}`}
+      style={{
+        ['--aura' as string]: aura,
+        ['--heat' as string]: bursting ? 0.5 + power * 0.5 : charging ? 0.72 : 0.4,
+      }}
+    >
+      {/* ba vòng trận pháp quay ngược chiều nhau */}
+      <div className="gacha-ring" style={{ width: 232, height: 232, ['--spin' as string]: charging ? '5s' : '26s', borderStyle: 'dashed' }} />
+      <div className="gacha-ring rev" style={{ width: 178, height: 178, ['--spin' as string]: charging ? '3.4s' : '18s' }} />
+      <div
+        className="gacha-ring"
+        style={{
+          width: 128, height: 128, ['--spin' as string]: charging ? '2.2s' : '12s',
+          borderStyle: 'dotted', borderWidth: 2,
+        }}
+      />
+      <svg
+        viewBox="0 0 200 200"
+        className="absolute"
+        style={{ width: 210, height: 210, opacity: 0.55, animation: `slowSpin ${charging ? '8s' : '44s'} linear infinite reverse` }}
+        aria-hidden="true"
+      >
+        <path d="M100 8 192 100 100 192 8 100z" fill="none" stroke={aura} strokeWidth="1" strokeDasharray="5 9" />
+        <path d="M100 30 170 100 100 170 30 100z" fill="none" stroke={aura} strokeWidth="0.8" opacity="0.6" />
+      </svg>
+
+      {/* linh khí bị hút vào tâm */}
+      {charging && Array.from({ length: motes }).map((_, i) => (
+        <span key={i} className="mote-arm" style={{ ['--a' as string]: `${(360 / motes) * i + 7}deg` }}>
+          <span
+            className="mote"
+            style={{
+              ['--r' as string]: `${132 + (i % 4) * 22}px`,
+              ['--dur' as string]: `${0.85 + (i % 5) * 0.12}s`,
+              ['--delay' as string]: `${(i % 7) * 0.11}s`,
+            }}
+          />
+        </span>
+      ))}
+
+      {/* lõi ngọc */}
+      <svg viewBox="0 0 100 100" className={`gacha-core ${bursting ? 'swell' : ''}`} style={{ width: 62, height: 62 }} aria-hidden="true">
+        <path d="M50 2 68 36 98 50 68 64 50 98 32 64 2 50 32 36z" fill={aura} opacity="0.92" />
+        <path d="M50 20 60 42 80 50 60 58 50 80 40 58 20 50 40 42z" fill="#fff" opacity="0.9" />
+      </svg>
+
+      {/* pha vỡ */}
+      {bursting && (
+        <>
+          <span className="gacha-flash" style={{ ['--pw' as string]: power }} />
+          {Array.from({ length: shocks }).map((_, i) => (
+            <span key={i} className="gacha-shock" style={{ ['--delay' as string]: `${i * 0.1}s` }} />
+          ))}
+          {Array.from({ length: rays }).map((_, i) => (
+            <span
+              key={i}
+              className="gacha-ray"
+              style={{ ['--a' as string]: `${(360 / rays) * i}deg`, ['--pw' as string]: power }}
+            />
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Vài đốm sáng lượn quanh những tấm bài hiếm. */
+function CardSparks({ color, n = 5 }: { color: string; n?: number }): React.JSX.Element {
+  return (
+    <>
+      {Array.from({ length: n }).map((_, i) => (
+        <span
+          key={i}
+          className="card-spark"
+          style={{
+            left: `${12 + (i * 73) % 76}%`,
+            bottom: `${18 + (i * 37) % 54}%`,
+            ['--rc' as string]: color,
+            ['--dur' as string]: `${1.3 + (i % 3) * 0.35}s`,
+            ['--delay' as string]: `${i * 0.28}s`,
+          }}
+        />
+      ))}
+    </>
+  );
+}
+
 export function SummonModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }): React.JSX.Element {
   const [results, setResults] = useState<GachaResult[] | null>(null);
-  const [spinning, setSpinning] = useState(false);
-  const timerRef = useRef<number | null>(null);
-  const pendingRef = useRef<1 | 10 | 100 | 500 | null>(null);
+  const [phase, setPhase] = useState<GachaPhase>('idle');
+  /** Đã hé lộ màu của độ hiếm cao nhất chưa. */
+  const [revealedAura, setRevealedAura] = useState(false);
+  const timers = useRef<number[]>([]);
+  /** Kết quả đã quay xong nhưng chưa cho xem — giữ ngoài state để nút Bỏ Qua dùng lại. */
+  const pending = useRef<GachaResult[] | null>(null);
 
-  const finish = (): void => {
-    const times = pendingRef.current;
-    if (times === null) return;
-    if (timerRef.current !== null) { window.clearTimeout(timerRef.current); timerRef.current = null; }
-    pendingRef.current = null;
-    setResults(engine.gacha(times));
-    setSpinning(false);
+  const clearTimers = (): void => {
+    for (const t of timers.current) window.clearTimeout(t);
+    timers.current = [];
   };
-  useEffect(() => () => { if (timerRef.current !== null) window.clearTimeout(timerRef.current); }, []);
+  useEffect(() => clearTimers, []);
+
+  const after = (ms: number, fn: () => void): void => {
+    timers.current.push(window.setTimeout(fn, ms));
+  };
+
+  const showResults = (): void => {
+    clearTimers();
+    if (pending.current) setResults(pending.current);
+    pending.current = null;
+    setPhase('reveal');
+  };
 
   const roll = (times: 1 | 10 | 100 | 500): void => {
-    if (spinning) return;
-    setSpinning(true);
+    if (phase === 'charge' || phase === 'burst') return;
+    // Quay NGAY rồi mới diễn hoạt cảnh: nhờ vậy trận pháp biết trước độ hiếm
+    // cao nhất để đổi màu, và nút Bỏ Qua không bao giờ làm mất lượt.
+    const res = engine.gacha(times);
+    if (!res) return;
+    clearTimers();
+    pending.current = res;
     setResults(null);
-    pendingRef.current = times;
-    timerRef.current = window.setTimeout(finish, times === 1 ? 480 : times === 10 ? 820 : 1150);
+    setRevealedAura(false);
+    setPhase('charge');
+    const chargeMs = times === 1 ? 1350 : 1750;
+    after(chargeMs * 0.58, () => setRevealedAura(true));
+    after(chargeMs, () => setPhase('burst'));
+    after(chargeMs + 560, showResults);
   };
+
+  const bestPending = pending.current ? bestRarityOf(pending.current) : null;
+  const bestShown = results ? bestRarityOf(results) : null;
+  const aura = phase === 'reveal' && bestShown
+    ? RARITY[bestShown].color
+    : revealedAura && bestPending
+      ? RARITY[bestPending].color
+      : NEUTRAL_AURA;
+  const rank = bestPending ? RARITY_RANK[bestPending] : 1;
+  const busy = phase === 'charge' || phase === 'burst';
 
   const summary = useMemo(() => {
     if (!results || results.length < 20) return null;
@@ -596,7 +791,7 @@ export function SummonModal({ meta, engine, onClose }: { meta: MetaInfo; engine:
               <button
                 key={p.n}
                 className="hk-btn lg solid justify-center"
-                disabled={spinning || meta.gems < p.cost}
+                disabled={busy || meta.gems < p.cost}
                 onClick={() => roll(p.n)}
                 style={{ background: meta.gems >= p.cost ? p.accent : '#2c2738', color: meta.gems >= p.cost ? '#140c1c' : '#6f6780' }}
               >
@@ -611,20 +806,34 @@ export function SummonModal({ meta, engine, onClose }: { meta: MetaInfo; engine:
       }
     >
       <div className="flex flex-col items-center">
-        <div className="relative w-28 h-28 flex items-center justify-center mb-2">
-          <svg viewBox="0 0 200 200" className={`absolute inset-0 ${spinning ? 'anim-slow-spin' : ''}`} style={{ animationDuration: spinning ? '1.1s' : '3s' }}>
-            <circle cx="100" cy="100" r="92" fill="none" stroke="#ff4fd855" strokeWidth="2" strokeDasharray="14 8" />
-            <circle cx="100" cy="100" r="72" fill="none" stroke="#ff3b5277" strokeWidth="1.5" strokeDasharray="4 10" />
-            <path d="M100 12 188 100 100 188 12 100z" fill="none" stroke="#ffd23c44" strokeWidth="1.5" />
-          </svg>
-          <svg viewBox="0 0 100 100" className={`w-12 h-12 ${spinning ? 'animate-pulse' : ''}`}>
-            <path d="M50 4 66 38 98 50 66 62 50 96 34 62 2 50 34 38z" fill="#ff4fd8" opacity="0.9" />
-            <path d="M50 22 59 42 80 50 59 58 50 78 41 58 20 50 41 42z" fill="#fff" opacity="0.85" />
-          </svg>
-        </div>
+        {busy && (
+          <>
+            <GachaStage phase={phase} aura={aura} rank={revealedAura ? rank : 1} />
+            <div className="flex flex-col items-center gap-2 -mt-3">
+              <div
+                className="font-display text-[15px] tracking-[0.24em]"
+                style={{ color: aura, textShadow: `0 0 16px ${aura}` }}
+              >
+                {phase === 'burst' ? 'ẤN KÝ VỠ RA' : revealedAura ? 'LINH KHÍ TỤ ĐỦ' : 'ĐANG DẪN LINH KHÍ…'}
+              </div>
+              <button onClick={showResults} className="hk-btn">BỎ QUA HOẠT CẢNH ▸▸</button>
+            </div>
+          </>
+        )}
 
-        {spinning && (
-          <button onClick={finish} className="hk-btn mb-2">BỎ QUA HOẠT CẢNH ▸▸</button>
+        {!busy && !results && (
+          <div className="py-6">
+            <GachaStage phase="idle" aura="#ff4fd8" rank={1} />
+          </div>
+        )}
+
+        {phase === 'reveal' && bestShown && (
+          <div
+            className="anim-ribbon font-display text-[17px] mb-2"
+            style={{ color: RARITY[bestShown].color, textShadow: `0 0 22px ${RARITY[bestShown].color}` }}
+          >
+            ★ {RARITY[bestShown].name.toUpperCase()} ★
+          </div>
         )}
 
         {results && !summary && (
@@ -636,14 +845,15 @@ export function SummonModal({ meta, engine, onClose }: { meta: MetaInfo; engine:
               return (
                 <div
                   key={i}
-                  className={`card-in relative rounded-md p-2 flex flex-col items-center text-center ${shiny ? 'card-shine' : ''}`}
+                  className={`card-in relative rounded-md p-2 flex flex-col items-center text-center ${shiny ? 'card-shine card-aura' : ''}`}
                   style={{
-                    animationDelay: `${i * 60}ms`,
+                    animationDelay: `${i * 70}ms`,
                     background: `linear-gradient(165deg, ${rc.color}26, #0d0a14 72%)`,
                     border: `1.5px solid ${rc.color}`,
-                    boxShadow: shiny ? `0 0 18px ${rc.color}77` : 'none',
+                    ['--rc' as string]: rc.color,
                   }}
                 >
+                  {shiny && <CardSparks color={rc.color} n={big ? 9 : 4} />}
                   <PortraitFrame look={lookOfResult(r)} ring={rc.color} size={big ? 120 : 58} animate={big && shiny} />
                   <Stars r={r.rarity} />
                   <div className="font-display leading-tight mt-0.5" style={{ color: rc.color, fontSize: big ? 17 : 12 }}>{r.name}</div>
@@ -1068,41 +1278,148 @@ export function EquipModal({ meta, engine, onClose }: { meta: MetaInfo; engine: 
 // ============ SKIN ============
 
 export function SkinModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }): React.JSX.Element {
+  const gachaSkins = meta.skins.filter((s) => s.source === 'gacha');
+  const loginSkins = meta.skins.filter((s) => s.source === 'login');
+  const shards = meta.clothShards;
+  const cost = meta.daily.shardCost;
+  const forgedCount = loginSkins.filter((s) => s.owned).length;
+
   return (
-    <Modal title="TỦ ĐỒ KAEL" subtitle="Skin chỉ đổi diện mạo — không ảnh hưởng chỉ số" accent="#c2172f" onClose={onClose} wide>
-      <div className="grid grid-cols-3 gap-2.5">
-        {SKINS.map((s) => {
-          const owned = meta.ownedSkins.includes(s.id);
-          const equipped = meta.equippedSkin === s.id;
-          const cost = SKIN_COST[s.id] ?? 0;
+    <Modal
+      title="TỦ ĐỒ KAEL"
+      subtitle="Trang phục chỉ đổi diện mạo — không ảnh hưởng chỉ số"
+      accent="#c2172f"
+      onClose={onClose}
+      wide
+      footer={
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Svg d={ICONS.cloth} s={15} c="#8cdcff" />
+            <span className="num text-[15px] text-[#8cdcff]">{fmt(shards)}</span>
+            <span className="font-ui text-[9px] tracking-widest text-[var(--color-bone-faint)]">MẢNH TRANG PHỤC</span>
+          </div>
+          <div className="font-ui text-[10px] text-[var(--color-bone-dim)]">
+            Đã ghép <b className="text-[#8cdcff]">{forgedCount}</b>/{loginSkins.length} bộ điểm danh
+          </div>
+          <div className="num text-[13px] text-[#ff4fd8] flex items-center gap-1.5">
+            <Svg d={ICONS.gem} s={13} c="#ff4fd8" /> {fmt(meta.gems)}
+          </div>
+        </div>
+      }
+    >
+      {/* ---- Vân Cẩm Các: sáu bộ chỉ có từ điểm danh ---- */}
+      <div
+        className="rounded-md px-3 py-2 mb-2.5 flex items-center gap-3"
+        style={{ background: 'linear-gradient(120deg, rgba(140,220,255,0.14), #0d0a14 72%)', border: '1.5px solid #8cdcff66' }}
+      >
+        <Svg d={ICONS.cloth} s={22} c="#8cdcff" />
+        <div className="flex-1 min-w-0">
+          <div className="font-display text-[15px] leading-none text-[#8cdcff]">VÂN CẨM CÁC</div>
+          <div className="font-body text-[10px] text-[var(--color-bone-dim)] mt-1 leading-snug">
+            Sáu bộ dưới đây <b className="text-[var(--color-bone)]">không quay và không mua được</b> —
+            chỉ ghép từ Mảnh Trang Phục nhặt khi điểm danh. Đi đủ một tháng gom đúng {cost} mảnh, vừa tròn một bộ.
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2.5 mb-4">
+        {loginSkins.map((s) => {
+          const def = SKINS.find((x) => x.id === s.id);
+          if (!def) return null;
+          const ready = shards >= cost;
+          const pct = Math.min(1, shards / cost);
           return (
             <div
               key={s.id}
               className="rounded-md p-2.5 flex flex-col items-center text-center"
               style={{
-                background: equipped ? 'rgba(194,23,47,0.16)' : 'rgba(18,15,26,0.6)',
-                border: `1.5px solid ${equipped ? '#ff3b52' : owned ? '#7a688c66' : '#241f33'}`,
-                boxShadow: equipped ? '0 0 16px rgba(255,59,82,0.35)' : 'none',
+                background: s.equipped ? 'rgba(140,220,255,0.16)' : 'rgba(18,15,26,0.6)',
+                border: `1.5px solid ${s.equipped ? '#8cdcff' : s.owned ? '#7a688c66' : '#241f33'}`,
+                boxShadow: s.equipped ? '0 0 16px rgba(140,220,255,0.35)' : 'none',
               }}
             >
-              <PortraitFrame look={s.look} ring={s.look.aura} size={92} animate={equipped} />
-              <div className="font-display text-[13px] leading-tight mt-1.5" style={{ color: equipped ? '#ff3b52' : 'var(--color-bone)' }}>
+              {/* Bộ chưa ghép vẫn phải NHÌN THẤY được — đó chính là thứ kéo
+                  người chơi quay lại mỗi ngày. Chỉ làm nhạt màu và gắn ổ khoá
+                  ở góc, không phủ kín. */}
+              <div className="relative">
+                <div style={{ filter: s.owned ? 'none' : 'grayscale(0.45) brightness(0.68)' }}>
+                  <PortraitFrame look={def.look} ring={def.look.aura} size={88} animate={s.equipped} />
+                </div>
+                {!s.owned && (
+                  <span
+                    className="absolute -top-1 -right-1 flex items-center justify-center"
+                    style={{
+                      width: 20, height: 20, borderRadius: 4,
+                      background: '#0d1620', border: '1px solid #8cdcff88',
+                    }}
+                  >
+                    <Svg d={ICONS.lock} s={11} c="#8cdcff" />
+                  </span>
+                )}
+              </div>
+              <div className="font-display text-[12.5px] leading-tight mt-1.5" style={{ color: s.equipped ? '#8cdcff' : 'var(--color-bone)' }}>
                 {s.name}
               </div>
-              <div className="font-body text-[9.5px] text-[var(--color-bone-dim)] mt-1 leading-snug min-h-[26px]">{s.desc}</div>
+              <div className="font-body text-[9px] text-[var(--color-bone-dim)] mt-1 leading-snug min-h-[24px]">{s.desc}</div>
               <div className="mt-1.5 w-full">
-                {equipped ? (
+                {s.equipped ? (
+                  <span className="font-ui text-[10px] font-bold text-[#8cdcff]">ĐANG MẶC</span>
+                ) : s.owned ? (
+                  <button onClick={() => engine.equipSkin(s.id)} className="hk-btn solid w-full justify-center" style={{ background: '#ece4d2' }}>MẶC</button>
+                ) : (
+                  <>
+                    <Meter pct={pct} color="linear-gradient(90deg,#3fb9ff,#8cdcff)" h={4} className="mb-1" />
+                    <button
+                      onClick={() => engine.forgeSkin(s.id)}
+                      disabled={!ready}
+                      className="hk-btn w-full justify-center"
+                      style={{ color: ready ? '#8cdcff' : '#6f6780', borderColor: ready ? '#8cdcff88' : '#241f33' }}
+                    >
+                      <Svg d={ready ? ICONS.cloth : ICONS.lock} s={10} c={ready ? '#8cdcff' : '#6f6780'} />
+                      GHÉP {Math.min(shards, cost)}/{cost}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ---- bộ quay/mua bằng Ngọc ---- */}
+      <div className="kicker text-[9px] text-[var(--color-bone-faint)] mb-1.5">TRIỆU HỒI &amp; NGỌC</div>
+      <div className="grid grid-cols-3 gap-2.5">
+        {gachaSkins.map((s) => {
+          const def = SKINS.find((x) => x.id === s.id);
+          if (!def) return null;
+          return (
+            <div
+              key={s.id}
+              className="rounded-md p-2.5 flex flex-col items-center text-center"
+              style={{
+                background: s.equipped ? 'rgba(194,23,47,0.16)' : 'rgba(18,15,26,0.6)',
+                border: `1.5px solid ${s.equipped ? '#ff3b52' : s.owned ? '#7a688c66' : '#241f33'}`,
+                boxShadow: s.equipped ? '0 0 16px rgba(255,59,82,0.35)' : 'none',
+              }}
+            >
+              <PortraitFrame look={def.look} ring={def.look.aura} size={88} animate={s.equipped} />
+              <div className="font-display text-[12.5px] leading-tight mt-1.5" style={{ color: s.equipped ? '#ff3b52' : 'var(--color-bone)' }}>
+                {s.name}
+              </div>
+              <div className="font-body text-[9px] text-[var(--color-bone-dim)] mt-1 leading-snug min-h-[24px]">{s.desc}</div>
+              <div className="mt-1.5 w-full">
+                {s.equipped ? (
                   <span className="font-ui text-[10px] font-bold text-[#ff3b52]">ĐANG MẶC</span>
-                ) : owned ? (
+                ) : s.owned ? (
                   <button onClick={() => engine.equipSkin(s.id)} className="hk-btn solid w-full justify-center" style={{ background: '#ece4d2' }}>MẶC</button>
                 ) : (
                   <button
                     onClick={() => engine.buySkin(s.id)}
-                    disabled={meta.gems < cost}
+                    disabled={meta.gems < s.gemCost}
                     className="hk-btn w-full justify-center"
                     style={{ color: '#ff4fd8', borderColor: '#ff4fd888' }}
                   >
-                    <Svg d={meta.gems < cost ? ICONS.lock : ICONS.gem} s={10} c="#ff4fd8" /> {fmt(cost)}
+                    <Svg d={meta.gems < s.gemCost ? ICONS.lock : ICONS.gem} s={10} c="#ff4fd8" /> {fmt(s.gemCost)}
                   </button>
                 )}
               </div>
@@ -1698,6 +2015,280 @@ export function PauseModal({ engine, meta, onTitle }: { engine: GameIdle; meta: 
         <p className="font-ui text-[10px] text-[var(--color-bone-faint)] text-center mt-1 leading-relaxed">
           P / Esc — tạm dừng · M — tắt tiếng · F — đổi Trấn Giữ / Tiến Công · Tiến trình tự động lưu
         </p>
+      </div>
+    </Modal>
+  );
+}
+
+// ============ ĐIỂM DANH MỖI NGÀY ============
+
+const REWARD_ICON: Record<string, string> = {
+  gem: ICONS.gem, gold: ICONS.coin, wshard: ICONS.sword, cloth: ICONS.cloth, item: ICONS.bag,
+};
+
+export function DailyModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }): React.JSX.Element {
+  const d = meta.daily;
+  const [justClaimed, setJustClaimed] = useState<number | null>(null);
+  const clothPct = Math.min(1, d.clothShards / d.shardCost);
+
+  const claim = (): void => {
+    const slot = engine.claimDaily();
+    if (slot) setJustClaimed(slot.day);
+  };
+
+  return (
+    <Modal
+      title="ĐIỂM DANH HUYẾT NGUYỆT"
+      subtitle={`Chu kỳ ${d.cycle} · lịch mở lại vào đầu tháng sau · ô mở theo thứ tự lần điểm danh, bỏ lỡ một ngày chỉ làm chậm chứ không mất phần`}
+      accent="#7dff5a"
+      onClose={onClose}
+      wide
+      footer={
+        <div className="flex items-center gap-3">
+          <button
+            onClick={claim}
+            disabled={!d.canClaim}
+            className={`hk-btn lg solid flex-1 justify-center ${d.canClaim ? 'anim-pulse-glow' : ''}`}
+            style={{ background: d.canClaim ? '#7dff5a' : '#2c2738', color: d.canClaim ? '#0d1a08' : '#6f6780' }}
+          >
+            <Svg d={d.canClaim ? ICONS.calendar : ICONS.check} s={14} c={d.canClaim ? '#0d1a08' : '#6f6780'} />
+            {d.canClaim
+              ? `ĐIỂM DANH NGÀY ${d.claimedCount + 1}`
+              : d.claimedCount >= d.total ? 'ĐÃ NHẬN TRỌN LỊCH THÁNG NÀY' : 'HÔM NAY ĐÃ ĐIỂM DANH'}
+          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <Svg d={ICONS.cloth} s={13} c="#8cdcff" />
+            <span className="num text-[13px] text-[#8cdcff]">{fmt(d.clothShards)}</span>
+          </div>
+        </div>
+      }
+    >
+      {/* Trạng thái và tiến độ vải gộp một hàng: cả 30 ô phải nhìn thấy cùng
+          lúc, vì sức hút của lịch điểm danh nằm ở chỗ thấy được đích đến. */}
+      <div className="flex items-stretch gap-2 mb-2">
+        {([
+          { v: `${d.claimedCount}/${d.total}`, label: 'Ô ĐÃ MỞ', color: '#7dff5a' },
+          { v: `${d.streak}`, label: 'CHUỖI', color: '#ff9a3c' },
+          { v: `${d.totalDays}`, label: 'TỔNG', color: '#ffd23c' },
+          { v: `${d.daysLeft}`, label: 'CÒN LẠI', color: '#8cdcff' },
+        ]).map((x) => (
+          <div key={x.label} className="hk-cut-sm px-2.5 py-1 text-center shrink-0" style={{ background: `${x.color}14`, border: `1px solid ${x.color}55` }}>
+            <div className="font-display text-[15px] leading-none" style={{ color: x.color }}>{x.v}</div>
+            <div className="font-ui text-[7.5px] tracking-widest mt-0.5" style={{ color: x.color }}>{x.label}</div>
+          </div>
+        ))}
+        <div
+          className="rounded-sm px-2.5 py-1 flex items-center gap-2 flex-1 min-w-0"
+          style={{ background: 'linear-gradient(120deg, rgba(140,220,255,0.12), #0d0a14 74%)', border: '1px solid #8cdcff55' }}
+        >
+          <Svg d={ICONS.cloth} s={15} c="#8cdcff" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="font-ui text-[9px] font-bold text-[#8cdcff] tracking-wider">MẢNH TRANG PHỤC</span>
+              <span className="num text-[9px] text-[var(--color-bone-dim)] shrink-0">{fmt(d.clothShards)}/{d.shardCost} — một bộ</span>
+            </div>
+            <Meter pct={clothPct} color="linear-gradient(90deg,#3fb9ff,#8cdcff)" h={5} className="mt-1" />
+          </div>
+        </div>
+      </div>
+
+      {/* lịch 30 ô */}
+      <div className="grid grid-cols-6 gap-1.5">
+        {d.slots.map((s) => {
+          const tone = s.big ? '#ffd23c' : '#7dff5a';
+          const pop = justClaimed === s.day;
+          return (
+            <div
+              key={s.day}
+              className={`relative rounded-md px-1 py-1 flex flex-col items-center text-center ${s.next && d.canClaim ? 'slot-next' : ''} ${pop ? 'anim-claim' : ''}`}
+              style={{
+                ['--sc' as string]: tone,
+                background: s.claimed
+                  ? 'rgba(12,10,18,0.85)'
+                  : s.big ? `linear-gradient(160deg, ${tone}22, #0d0a14 74%)` : 'rgba(24,20,37,0.7)',
+                border: `1px solid ${s.claimed ? '#241f33' : s.big ? `${tone}88` : '#3a3350'}`,
+                opacity: s.claimed ? 0.55 : 1,
+                minHeight: 50,
+              }}
+            >
+              <div className="font-ui text-[7.5px] font-bold tracking-wider leading-none" style={{ color: s.big ? tone : 'var(--color-bone-faint)' }}>
+                NGÀY {s.day}
+              </div>
+              <div className="flex flex-col items-center gap-0.5 mt-0.5 w-full">
+                {s.rewards.map((r, i) => (
+                  <div key={i} className="flex items-center gap-1 w-full justify-center">
+                    <Svg d={REWARD_ICON[r.kind] ?? ICONS.gem} s={8} c={r.color} />
+                    <span className="num text-[8.5px] leading-none truncate" style={{ color: r.color }}>
+                      {r.kind === 'gold' ? fmt(r.amount) : r.kind === 'gem' ? fmt(r.amount) : `×${r.amount}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {s.claimed && (
+                <div className="absolute inset-0 flex items-center justify-center" style={{ background: 'rgba(6,5,10,0.5)', borderRadius: 6 }}>
+                  <Svg d={ICONS.check} s={18} c="#3fe0b0" />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <p className="font-ui text-[9px] text-[var(--color-bone-faint)] mt-2 text-center leading-relaxed">
+        Ngày 7 · 14 · 21 · 28 · 30 là mốc lớn — Ngọc và Mảnh Vũ Khí bậc cao ·
+        Vàng thưởng quy đổi theo nhịp farm hiện tại nên không bao giờ lỗi thời
+      </p>
+    </Modal>
+  );
+}
+
+// ============ THÀNH TỰU ============
+
+export function AchievementModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }): React.JSX.Element {
+  const a = meta.ach;
+  const [group, setGroup] = useState<AchStatId | 'pending'>('pending');
+  const claimed = useMemo(() => new Set(a.claimedIds), [a.claimedIds]);
+
+  const rows = useMemo(() => {
+    const pool = group === 'pending'
+      ? ACHIEVEMENTS.filter((x) => a.stats[x.stat] >= x.need && !claimed.has(x.id))
+      : (ACH_GROUPS.find((g) => g.stat === group)?.list ?? []);
+    // Trong tab "chờ nhận" ưu tiên mốc thưởng lớn; trong nhóm giữ nguyên thứ bậc.
+    return group === 'pending' ? [...pool].sort((x, y) => y.gems - x.gems) : pool;
+  }, [group, a.stats, claimed]);
+
+  const donePct = a.total > 0 ? a.claimed / a.total : 0;
+
+  return (
+    <Modal
+      title="BIA THÀNH TỰU"
+      subtitle={`${ACH_TOTAL} mốc từ dễ tới khó — mỗi mốc đạt được đổi lấy Ngọc Huyết Nguyệt`}
+      accent="#7dff5a"
+      onClose={onClose}
+      wide
+      footer={
+        <div className="flex items-center gap-3">
+          <div className="flex-1 min-w-0">
+            <Meter pct={donePct} color="linear-gradient(90deg,#3fe0b0,#7dff5a)" h={6} />
+            <div className="flex justify-between font-ui text-[9px] text-[var(--color-bone-faint)] mt-1">
+              <span>ĐÃ NHẬN {a.claimed}/{a.total}</span>
+              <span className="num">MỞ KHOÁ {a.unlocked}</span>
+            </div>
+          </div>
+          <button
+            onClick={() => engine.claimAllAch()}
+            disabled={a.claimable === 0}
+            className={`hk-btn lg solid justify-center shrink-0 ${a.claimable > 0 ? 'anim-pulse-glow' : ''}`}
+            style={{ background: a.claimable > 0 ? '#7dff5a' : '#2c2738', color: a.claimable > 0 ? '#0d1a08' : '#6f6780' }}
+          >
+            <Svg d={ICONS.trophy} s={14} c={a.claimable > 0 ? '#0d1a08' : '#6f6780'} />
+            NHẬN TẤT CẢ {a.claimable > 0 ? `(${a.claimable}) +${fmt(a.pendingGems)}` : ''}
+          </button>
+        </div>
+      }
+    >
+      <div className="flex gap-2.5" style={{ minHeight: 300 }}>
+        {/* rãnh nhóm */}
+        <div className="w-[150px] shrink-0 flex flex-col gap-1 max-h-[330px] overflow-y-auto pr-1">
+          <button
+            onClick={() => setGroup('pending')}
+            className="hk-btn justify-between w-full"
+            style={group === 'pending'
+              ? { background: '#7dff5a', color: '#0d1a08', borderColor: 'transparent' }
+              : { color: '#7dff5a', borderColor: '#7dff5a55' }}
+          >
+            CHỜ NHẬN
+            <span className="num text-[9px]">{a.claimable}</span>
+          </button>
+          {ACH_GROUPS.map((g) => {
+            const val = a.stats[g.stat];
+            const done = g.list.filter((x) => claimed.has(x.id)).length;
+            const on = group === g.stat;
+            return (
+              <button
+                key={g.stat}
+                onClick={() => setGroup(g.stat)}
+                className="hk-btn justify-between w-full"
+                title={`${g.name} — hiện tại ${fmt(val)}`}
+                style={on ? { background: g.color, color: '#0d0a14', borderColor: 'transparent' } : { color: g.color, borderColor: `${g.color}44` }}
+              >
+                <span className="truncate">{g.name}</span>
+                <span className="num text-[9px] shrink-0">{done}/{g.list.length}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* danh sách mốc */}
+        <div className="flex-1 min-w-0 flex flex-col gap-1.5 max-h-[330px] overflow-y-auto pr-1">
+          {rows.length === 0 && (
+            <div className="font-ui text-[11px] text-[var(--color-bone-faint)] text-center py-10">
+              {group === 'pending'
+                ? 'Chưa có mốc nào chờ nhận — cứ đánh tiếp, mốc sẽ tự mở.'
+                : 'Nhóm này chưa có mốc nào.'}
+            </div>
+          )}
+          {rows.map((x) => {
+            const val = a.stats[x.stat];
+            const unlocked = val >= x.need;
+            const got = claimed.has(x.id);
+            const rank = ACH_RANKS[rankOfTier(x.tier)];
+            const pct = Math.min(1, x.need > 0 ? val / x.need : 0);
+            return (
+              <div
+                key={x.id}
+                className="rounded-md px-2.5 py-1.5 flex items-center gap-2.5"
+                style={{
+                  background: got
+                    ? 'rgba(12,10,18,0.7)'
+                    : unlocked ? `linear-gradient(120deg, ${x.color}22, #0d0a14 74%)` : 'rgba(24,20,37,0.6)',
+                  border: `1px solid ${got ? '#241f33' : unlocked ? `${x.color}88` : '#2c2738'}`,
+                  opacity: got ? 0.6 : 1,
+                }}
+              >
+                <div
+                  className="w-[38px] shrink-0 text-center py-0.5 rounded-sm"
+                  style={{ background: `${rank.color}1e`, border: `1px solid ${rank.color}66` }}
+                  title={`Hạng ${rank.name}`}
+                >
+                  <div className="font-ui text-[7.5px] font-bold tracking-wider" style={{ color: rank.color }}>{rank.name}</div>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-display text-[12.5px] leading-none truncate" style={{ color: unlocked ? x.color : 'var(--color-bone-dim)' }}>
+                      {x.name}
+                    </span>
+                    <span className="font-body text-[9.5px] text-[var(--color-bone-faint)] truncate">{x.desc}</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <Meter pct={pct} color={unlocked ? x.color : '#4a4260'} h={3} className="flex-1" sharp />
+                    <span className="num text-[9px] shrink-0 text-[var(--color-bone-faint)]">
+                      {fmt(Math.min(val, x.need))}/{fmt(x.need)}
+                    </span>
+                  </div>
+                </div>
+                <div className="shrink-0 w-[92px] text-right">
+                  {got ? (
+                    <span className="font-ui text-[9.5px] font-bold text-[#3fe0b0] inline-flex items-center gap-1">
+                      <Svg d={ICONS.check} s={11} c="#3fe0b0" /> ĐÃ NHẬN
+                    </span>
+                  ) : unlocked ? (
+                    <button
+                      onClick={() => engine.claimAch(x.id)}
+                      className="hk-btn solid w-full justify-center"
+                      style={{ background: '#7dff5a', color: '#0d1a08' }}
+                    >
+                      <Svg d={ICONS.gem} s={10} c="#0d1a08" /> {fmt(x.gems)}
+                    </button>
+                  ) : (
+                    <span className="num text-[9.5px] text-[var(--color-bone-faint)] inline-flex items-center gap-1">
+                      <Svg d={ICONS.gem} s={10} c="#6f6780" /> {fmt(x.gems)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </Modal>
   );

@@ -4,7 +4,7 @@ import type { MetaInfo, EndStats, EngineEvent, OfflineReport } from './game/engi
 import { TitleScreen, StoryScreen, EndScreen } from './ui/screens';
 import {
   HudOverlay, SummonModal, PartyModal, EquipModal, SkinModal, WeaponModal,
-  PauseModal, PrestigeModal, OfflineModal, KaelModal,
+  PauseModal, PrestigeModal, OfflineModal, KaelModal, DailyModal, AchievementModal,
 } from './ui/panels';
 import type { PanelId } from './ui/panels';
 
@@ -100,6 +100,18 @@ export default function App(): React.JSX.Element {
   const eng = engineRef.current;
   const inGame = screen === 'game' && meta !== null && eng !== null;
 
+  // Lịch điểm danh tự mở đúng một lần mỗi phiên, và chỉ khi thật sự có quà
+  // chờ: đây là thứ dễ bỏ quên nhất, nhưng bật lại mỗi lần đóng thì thành
+  // phiền. Nhường chỗ cho bảng ngoại tuyến và cho bảng người chơi đang mở.
+  const dailyAutoShown = useRef(false);
+  useEffect(() => {
+    if (dailyAutoShown.current) return;
+    if (screen !== 'game' || !meta || offline !== null) return;
+    if (!meta.daily.canClaim) return;
+    dailyAutoShown.current = true;
+    setPanel((p) => (p === 'none' ? 'daily' : p));
+  }, [screen, meta, offline]);
+
   // Khi có bảng đang mở, engine bỏ qua phím tắt (P/Esc/M/F): mỗi phím chỉ
   // được xử lý bởi đúng một nơi. Bảng Tạm Dừng tự gọi togglePause khi đóng.
   const uiBlocked = panel !== 'none' || offline !== null || screen !== 'game';
@@ -141,6 +153,8 @@ export default function App(): React.JSX.Element {
           {inGame && eng && meta && panel === 'weapon' && <WeaponModal meta={meta} engine={eng} onClose={closePanel} />}
           {inGame && eng && meta && panel === 'prestige' && <PrestigeModal meta={meta} engine={eng} onClose={closePanel} />}
           {inGame && eng && meta && panel === 'kael' && <KaelModal meta={meta} engine={eng} onClose={closePanel} />}
+          {inGame && eng && meta && panel === 'daily' && <DailyModal meta={meta} engine={eng} onClose={closePanel} />}
+          {inGame && eng && meta && panel === 'achievement' && <AchievementModal meta={meta} engine={eng} onClose={closePanel} />}
           {inGame && eng && meta && panel === 'pause' && (
             <PauseModal
               engine={eng}

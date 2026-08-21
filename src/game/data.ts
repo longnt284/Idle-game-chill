@@ -297,30 +297,69 @@ export const COMPANIONS: CompanionDef[] = [
 })();
 
 // ---------- skin của Kael ----------
-export interface SkinDef { id: string; name: string; desc: string; look: ChibiLook }
+/**
+ * `source` quyết định con đường sở hữu, và nó là ranh giới cứng:
+ * - `gacha` — quay ra từ Đài Triệu Hồi hoặc mua thẳng bằng Ngọc.
+ * - `login` — CHỈ ghép được từ Mảnh Trang Phục nhặt khi điểm danh. Ngọc không
+ *   mua được, gacha không quay ra. Đây là phần thưởng cho việc quay lại đều đặn,
+ *   nên nếu để lọt vào bể gacha thì toàn bộ ý nghĩa của nó biến mất.
+ */
+export type SkinSource = 'gacha' | 'login';
+export interface SkinDef { id: string; name: string; desc: string; source: SkinSource; look: ChibiLook }
 export const SKINS: SkinDef[] = [
   {
-    id: 'default', name: 'Kiếm Sĩ Đen', desc: 'Bộ giáp ám đen nhuốm máu trận mạc.',
+    id: 'default', name: 'Kiếm Sĩ Đen', desc: 'Bộ giáp ám đen nhuốm máu trận mạc.', source: 'gacha',
     look: { hair: '#2a2a33', outfit: '#3a3a46', outfit2: '#22222c', skin: '#e8bd93', eyes: '#4a3520', hairStyle: 'spiky', weapon: 'sword', accessory: 'none', cape: '#3a1520', aura: '#c2172f' },
   },
   {
-    id: 'crimson', name: 'Huyết Nguyệt Cuồng Chiến', desc: 'Giáp đỏ rực như trăng máu đêm thực nhật.',
+    id: 'crimson', name: 'Huyết Nguyệt Cuồng Chiến', desc: 'Giáp đỏ rực như trăng máu đêm thực nhật.', source: 'gacha',
     look: { hair: '#f0f0f5', outfit: '#8a1626', outfit2: '#4e0c16', skin: '#e8bd93', eyes: '#e81e3a', hairStyle: 'spiky', weapon: 'sword', accessory: 'horns', cape: '#5a0a16', aura: '#ff3b52' },
   },
   {
-    id: 'gold', name: 'Thánh Kỵ Sĩ', desc: 'Giáp vàng ánh kim của đoàn kỵ sĩ vương đô.',
+    id: 'gold', name: 'Thánh Kỵ Sĩ', desc: 'Giáp vàng ánh kim của đoàn kỵ sĩ vương đô.', source: 'gacha',
     look: { hair: '#e8c25a', outfit: '#d8b848', outfit2: '#8a7428', skin: '#e8bd93', eyes: '#2a5a8a', hairStyle: 'short', weapon: 'sword', accessory: 'crown', cape: '#c83030', aura: '#ffd23c' },
   },
   {
-    id: 'shadow', name: 'Ảnh Sát Giả', desc: 'Tan vào bóng tối — chỉ còn ánh mắt đỏ.',
+    id: 'shadow', name: 'Ảnh Sát Giả', desc: 'Tan vào bóng tối — chỉ còn ánh mắt đỏ.', source: 'gacha',
     look: { hair: '#1a1a24', outfit: '#24243a', outfit2: '#12121e', skin: '#d8b898', eyes: '#e81e3a', hairStyle: 'hood', weapon: 'daggers', accessory: 'mask', cape: '#161628', aura: '#8a4ae8' },
   },
   {
-    id: 'void', name: 'Khởi Nguồn Hư Không', desc: 'Kẻ đã nhìn thấy đáy vực và bước ra nguyên vẹn.',
+    id: 'void', name: 'Khởi Nguồn Hư Không', desc: 'Kẻ đã nhìn thấy đáy vực và bước ra nguyên vẹn.', source: 'gacha',
     look: { hair: '#c9a8ff', outfit: '#241638', outfit2: '#140a20', skin: '#e0d0e8', eyes: '#a78bfa', hairStyle: 'wild', weapon: 'sword', accessory: 'horns', cape: '#1a0e2c', aura: '#a78bfa' },
+  },
+  // ---- sáu bộ chỉ có từ điểm danh ----
+  {
+    id: 'frost', name: 'Sương Tuyết Hành Giả', desc: 'Đi qua Hầm Băng Đen mà hơi thở vẫn không đóng băng.', source: 'login',
+    look: { hair: '#e8f6ff', outfit: '#2e5c86', outfit2: '#173248', skin: '#f0e4dc', eyes: '#8cdcff', hairStyle: 'long', weapon: 'sword', accessory: 'headband', cape: '#9fd8f5', aura: '#8cdcff' },
+  },
+  {
+    id: 'abyssal', name: 'Tế Tự Vực Sâu', desc: 'Áo lễ khâu bằng vảy của thứ ngủ dưới Biển Tĩnh Lặng.', source: 'login',
+    look: { hair: '#2fae8f', outfit: '#123a3c', outfit2: '#07211f', skin: '#cfe0d4', eyes: '#3fe0b0', hairStyle: 'hood', weapon: 'scythe', accessory: 'mask', cape: '#0b2a2c', aura: '#3fe0b0' },
+  },
+  {
+    id: 'storm', name: 'Lôi Đình Chiến Tướng', desc: 'Sấm không đánh xuống anh — sấm đi theo sau anh.', source: 'login',
+    look: { hair: '#ffe97a', outfit: '#26407e', outfit2: '#131f45', skin: '#e8bd93', eyes: '#ffe97a', hairStyle: 'spiky', weapon: 'spear', accessory: 'horns', cape: '#1a2c5e', aura: '#7ea8ff' },
+  },
+  {
+    id: 'sakura', name: 'Lãng Khách Anh Đào', desc: 'Mỗi nhát chém rụng đúng một cánh hoa, không hơn.', source: 'login',
+    look: { hair: '#3a2430', outfit: '#f0c6d8', outfit2: '#a86a88', skin: '#f5d6bd', eyes: '#e8628a', hairStyle: 'pony', weapon: 'twinblade', accessory: 'headband', cape: '#e8628a', aura: '#ffa8c8' },
+  },
+  {
+    id: 'obsidian', name: 'Hắc Diệu Thạch Đế', desc: 'Giáp tôi trong lò Liệt Địa, nguội đi rồi vẫn còn đỏ lõi.', source: 'login',
+    look: { hair: '#1a1418', outfit: '#241a1e', outfit2: '#0e0a0c', skin: '#c8a088', eyes: '#ff7a3c', hairStyle: 'mohawk', weapon: 'hammer', accessory: 'crown', cape: '#5e1c0c', aura: '#ff7a3c' },
+  },
+  {
+    id: 'celestial', name: 'Thiên Hà Chấp Kiếm', desc: 'Vải áo là một mảnh trời đêm bị cắt rời và may lại.', source: 'login',
+    look: { hair: '#cfe8ff', outfit: '#1b1b52', outfit2: '#0b0b28', skin: '#efe2f2', eyes: '#a8f0ff', hairStyle: 'wild', weapon: 'greatsword', accessory: 'halo', cape: '#2e2a86', aura: '#c0a8ff' },
   },
 ];
 export const SKIN_COST: Record<string, number> = { crimson: 500, gold: 800, shadow: 800, void: 2500 };
+/** Skin quay/mua được — bể gacha và tủ đồ bán Ngọc đều phải lọc qua đây. */
+export const GACHA_SKINS: SkinDef[] = SKINS.filter((s) => s.source === 'gacha');
+/** Skin chỉ ghép từ Mảnh Trang Phục. */
+export const LOGIN_SKINS: SkinDef[] = SKINS.filter((s) => s.source === 'login');
+/** Số Mảnh Trang Phục cần để ghép trọn một bộ. */
+export const SKIN_SHARD_COST = 10;
 
 // ---------- vật phẩm ----------
 export interface ItemDef {
@@ -342,12 +381,17 @@ export const ITEMS: ItemDef[] = [
 export const MAX_ITEM_SLOTS = 3;
 
 // ---------- chi phí triệu hồi ----------
-export const GACHA_COST = 100;
-export const GACHA_X10_COST = 900;
-export const GACHA_X100_COST = 8500;
-export const GACHA_X500_COST = 40000;
-export const WGACHA_COST = 150;
-export const WGACHA_X10_COST = 1350;
+// Toàn bộ giá quay đã được nâng 10% so với bảng cũ (100/900/8500/40000 và
+// 150/1350). Nguồn Ngọc mới từ Điểm Danh và Thành Tựu đủ để bù phần chênh này,
+// nên giá cao hơn chỉ làm chậm nhịp quay lại chứ không chặn tiến trình.
+const GACHA_HIKE = 1.1;
+const hike = (base: number): number => Math.round(base * GACHA_HIKE);
+export const GACHA_COST = hike(100);
+export const GACHA_X10_COST = hike(900);
+export const GACHA_X100_COST = hike(8500);
+export const GACHA_X500_COST = hike(40000);
+export const WGACHA_COST = hike(150);
+export const WGACHA_X10_COST = hike(1350);
 
 // ---------- vũ khí: 5 bậc × 6 loại ----------
 // Trùng lặp không còn là "cộng thêm chút công" mà là nguyên liệu: đủ 6 mảnh

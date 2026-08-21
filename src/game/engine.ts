@@ -6,7 +6,8 @@ import type { AnimState, ChibiLook } from './types';
 import { makeAnim } from './types';
 import {
   BAL, BOSSES, COMPANIONS, FLOOR_NAMES, GACHA_COST, GACHA_X10_COST, GACHA_X100_COST,
-  GACHA_X500_COST, ITEMS, MAX_FIELD, MAX_ITEM_SLOTS, MAX_PARTY, RARITY_ORDER, SKINS, SKIN_COST,
+  GACHA_X500_COST, GACHA_SKINS, ITEMS, MAX_FIELD, MAX_ITEM_SLOTS, MAX_PARTY, RARITY_ORDER,
+  SKINS, SKIN_COST, SKIN_SHARD_COST,
   STORY_AFTER, TOTAL_FLOORS, WAVES_PER_FLOOR, WEAPONS, WGACHA_COST, WGACHA_X10_COST,
   bossIndexForFloor, evoStageOf, floorNameOf, fmt, hasBossOnFloor, levelsAffordable,
   rarityIdx, upgradeCostAt, upgradeCostRange, runeCostAt,
@@ -16,9 +17,17 @@ import {
 import type {
   BossDef, CompanionDef, ItemDef, Pos, Rarity, RuneId, SkillId, SkinDef, WeaponDef,
 } from './data';
+import {
+  DAILY_CALENDAR, DAILY_CYCLE_DAYS, REWARD_META, cycleKeyOf, dayKeyOf, daysLeftInCycle, prevDayKey,
+} from './daily';
+import type { DailyDay, DailyReward } from './daily';
+import { ACHIEVEMENTS, ACH_TOTAL } from './achievements';
+import type { AchStatId } from './achievements';
 
 // ---- tái xuất cho tầng UI ----
 export * from './data';
+export * from './daily';
+export * from './achievements';
 export type { ChibiLook, AnimState } from './types';
 import type { WeaponKind } from './types';
 export { renderPortrait } from './sprites';
@@ -160,6 +169,50 @@ export interface TitleInfo {
   /** Toàn bộ danh hiệu, kèm trạng thái đã mở hay chưa. */
   all: Array<{ title: string; level: number; frame: string; unlocked: boolean }>;
 }
+/** Một ô trên lịch điểm danh, đã gắn trạng thái của người chơi hiện tại. */
+export interface DailySlot {
+  day: number;
+  rewards: Array<{ kind: DailyReward['kind']; amount: number; label: string; color: string }>;
+  big: boolean;
+  claimed: boolean;
+  /** Ô sẽ mở ở lần điểm danh kế tiếp. */
+  next: boolean;
+}
+export interface DailyInfo {
+  /** Chu kỳ hiện tại, ví dụ `2026-08`. */
+  cycle: string;
+  claimedCount: number;
+  total: number;
+  /** Hôm nay đã điểm danh chưa. */
+  claimedToday: boolean;
+  /** Có ô nào nhận được ngay bây giờ không. */
+  canClaim: boolean;
+  streak: number;
+  bestStreak: number;
+  totalDays: number;
+  /** Số ngày còn lại của tháng, tính cả hôm nay. */
+  daysLeft: number;
+  slots: DailySlot[];
+  clothShards: number;
+  shardCost: number;
+}
+export interface SkinInfo {
+  id: string; name: string; desc: string; source: 'gacha' | 'login';
+  owned: boolean; equipped: boolean;
+  /** Giá Ngọc — chỉ có nghĩa với skin nguồn `gacha`. */
+  gemCost: number;
+}
+export interface AchInfo {
+  unlocked: number;
+  claimed: number;
+  total: number;
+  claimable: number;
+  /** Tổng Ngọc đang chờ nhận. */
+  pendingGems: number;
+  /** Giá trị hiện tại của từng chỉ số, để giao diện vẽ thanh tiến độ. */
+  stats: Record<AchStatId, number>;
+  claimedIds: string[];
+}
 export interface MetaInfo {
   gold: number; gems: number; kaelLevel: number; kaelXp: number; kaelXpNext: number;
   kaelUpgradeCost: number; kaelAtk: number; kaelHp: number;
@@ -176,6 +229,10 @@ export interface MetaInfo {
   banner: BannerState | null;
   toasts: Toast[];
   hud: HudState;
+  daily: DailyInfo;
+  ach: AchInfo;
+  skins: SkinInfo[];
+  clothShards: number;
 }
 export type EngineEvent =
   | { type: 'story'; chapter: number }
@@ -277,6 +334,35 @@ export class GameIdle {
   private weaponRefine: Record<string, number> = {};
   private equippedWeapon: string | null = null;
   private deployedIds: string[] | null = null;
+
+  // ---- điểm danh & trang phục ----
+  /** Mảnh Trang Phục — tiền tệ duy nhất đổi được sáu bộ skin điểm danh. */
+  private clothShards = 0;
+  private dailyCycle = cycleKeyOf();
+  /** Số ô đã mở trong chu kỳ này; ô kế tiếp luôn là `dailyClaimed + 1`. */
+  private dailyClaimed = 0;
+  /** Khoá ngày của lần điểm danh gần nhất — chặn nhận hai lần cùng ngày. */
+  private dailyLastDay = '';
+  private dailyStreak = 0;
+  private dailyBestStreak = 0;
+  private dailyTotalDays = 0;
+
+  // ---- thành tựu ----
+  /**
+   * Bộ đếm cộng dồn cho những chỉ số không suy ra được từ trạng thái hiện tại.
+   * Các chỉ số suy ra được (cấp Kael, tầng sâu nhất, số skin…) KHÔNG nằm ở đây
+   * để tránh hai nguồn sự thật lệch nhau.
+   */
+  private ctr = {
+    kills: 0, bossKills: 0, goldEarned: 0, gemsEarned: 0, pulls: 0, forges: 0,
+    maxCombo: 0, wavesCleared: 0, crits: 0, ults: 0, clothEarned: 0,
+    prestiges: 0, downs: 0, upgrades: 0,
+  };
+  /** Mọi vũ khí từng cầm trên tay — bản trùng bị nung chảy khi ghép nên phải ghi riêng. */
+  private weaponDex = new Set<string>();
+  private achUnlocked = new Set<string>();
+  private achClaimed = new Set<string>();
+  private achCheckT = 0;
 
   // ---- chỉ số phái sinh ----
   private legionAtk = 0;
@@ -483,9 +569,11 @@ export class GameIdle {
       sfx.warn();
       return 0;
     }
+    this.ctr.upgrades += done;
     this.recomputeParty();
     this.toast(`${def.name} +${done} → cấp ${this.runeLevel(id)}`, def.color);
     sfx.levelup();
+    this.checkAchievements();
     this.save();
     this.pushMeta();
     return done;
@@ -687,10 +775,12 @@ export class GameIdle {
     }
     this.gold -= upgradeCostRange(lvl, done);
     this.ownedCompanions[id] = lvl + done;
+    this.ctr.upgrades += done;
     this.recomputeParty();
     const def = COMPANIONS.find((c) => c.id === id);
     this.toast(`${def?.name ?? id} ${done > 1 ? `+${done} cấp → ` : '→ '}Lv ${lvl + done}`, '#3fe0b0');
     sfx.levelup();
+    this.checkAchievements();
     this.save();
     this.pushMeta();
     return done;
@@ -755,9 +845,11 @@ export class GameIdle {
       return 0;
     }
     this.gold -= spent;
+    this.ctr.upgrades += gained;
     this.recomputeParty();
     this.toast(`Toàn đội +${gained} cấp — tốn ${fmt(spent)} Vàng`, '#3fe0b0');
     sfx.levelup();
+    this.checkAchievements();
     this.save();
     this.pushMeta();
     return gained;
@@ -774,11 +866,13 @@ export class GameIdle {
       done += 1;
     }
     if (done === 0) { this.toast('Không đủ Vàng để tôi luyện!', '#ff5a6a'); sfx.warn(); return 0; }
+    this.ctr.upgrades += done;
     this.recomputeParty();
     this.checkEvolution();
     this.checkTitle();
     this.toast(`KAEL tôi luyện → Lv ${this.kaelLevel}`, '#ffd23c');
     sfx.levelup();
+    this.checkAchievements();
     this.save();
     this.pushMeta();
     return done;
@@ -900,6 +994,7 @@ export class GameIdle {
   private addWeapon(id: string): { isNew: boolean; merged: WeaponDef | null } {
     const isNew = (this.ownedWeapons[id] ?? 0) === 0;
     this.ownedWeapons[id] = (this.ownedWeapons[id] ?? 0) + 1;
+    this.weaponDex.add(id);
     let merged: WeaponDef | null = null;
     let cur = id;
     for (let guard = 0; guard < 8; guard++) {
@@ -916,6 +1011,7 @@ export class GameIdle {
         break;
       }
       this.ownedWeapons[next.id] = (this.ownedWeapons[next.id] ?? 0) + 1;
+      this.weaponDex.add(next.id);
       merged = next;
       this.toast(`${def.name} ×${WEAPON_MERGE} → ${next.name}!`, RARITY[next.tier].color);
       sfx.levelup();
@@ -941,6 +1037,7 @@ export class GameIdle {
     const cost = times === 1 ? WGACHA_COST : WGACHA_X10_COST;
     if (this.gems < cost) { this.toast('Không đủ Ngọc để rèn!', '#ff5a6a'); sfx.warn(); return null; }
     this.gems -= cost;
+    this.ctr.forges += times;
     const out: Array<{ def: WeaponDef; isNew: boolean; merged: WeaponDef | null }> = [];
     for (let i = 0; i < times; i++) {
       const r = Math.random();
@@ -956,6 +1053,7 @@ export class GameIdle {
     }
     this.recomputeParty();
     sfx.pickup();
+    this.checkAchievements();
     this.save();
     this.pushMeta();
     return out;
@@ -976,6 +1074,321 @@ export class GameIdle {
       .sort((a, b) => this.weaponScore(b.def.id) - this.weaponScore(a.def.id));
   }
 
+  // ---------- điểm danh mỗi ngày ----------
+  /**
+   * Đưa lịch về đúng chu kỳ của hôm nay. Gọi ở mọi điểm vào (tải bản lưu, mở
+   * bảng, nhấn nhận) chứ không hẹn giờ: người chơi để tab mở qua đêm hoặc qua
+   * mùng một là chuyện thường, và cả hai trường hợp đều phải tự đúng.
+   */
+  private syncDaily(now = new Date()): void {
+    const cycle = cycleKeyOf(now);
+    if (cycle !== this.dailyCycle) {
+      this.dailyCycle = cycle;
+      this.dailyClaimed = 0;
+    }
+    // Chuỗi ngày đứt khi lần điểm danh gần nhất không phải hôm qua hay hôm nay.
+    const today = dayKeyOf(now);
+    if (this.dailyLastDay && this.dailyLastDay !== today && this.dailyLastDay !== prevDayKey(now)) {
+      this.dailyStreak = 0;
+    }
+  }
+  private dailyClaimedToday(now = new Date()): boolean {
+    return this.dailyLastDay === dayKeyOf(now);
+  }
+  canClaimDaily(): boolean {
+    this.syncDaily();
+    return !this.dailyClaimedToday() && this.dailyClaimed < DAILY_CYCLE_DAYS;
+  }
+
+  /** Nhãn hiển thị của một phần thưởng — dùng chung cho lịch và cho thông báo. */
+  private rewardLabel(r: DailyReward): string {
+    switch (r.kind) {
+      case 'gem': return `${fmt(r.amount)} Ngọc`;
+      case 'gold': return `${fmt(this.dailyGoldValue(r.amount))} Vàng`;
+      case 'wshard': return `${r.amount} Mảnh ${RARITY[r.tier ?? 'rare'].name}`;
+      case 'cloth': return `${r.amount} Mảnh Trang Phục`;
+      case 'item': return `${r.amount} Vật Phẩm`;
+    }
+  }
+  /**
+   * Vàng của lịch điểm danh quy đổi theo nhịp farm hiện tại chứ không phải số
+   * cố định: vàng trong game tăng theo cấp số nhân, một con số cứng sẽ thành
+   * vô nghĩa chỉ sau chục tầng.
+   */
+  private dailyGoldValue(minutes: number): number {
+    return Math.max(100, Math.round(this.goldPerKill() * 1.4 * 60 * minutes));
+  }
+
+  claimDaily(): DailySlot | null {
+    this.syncDaily();
+    if (this.dailyClaimedToday()) {
+      this.toast('Hôm nay đã điểm danh rồi — quay lại vào ngày mai!', '#ff9a3c');
+      sfx.warn();
+      return null;
+    }
+    if (this.dailyClaimed >= DAILY_CYCLE_DAYS) {
+      this.toast('Đã nhận trọn lịch tháng này. Lịch mới mở đầu tháng sau.', '#8cdcff');
+      sfx.warn();
+      return null;
+    }
+    const now = new Date();
+    const day: DailyDay = DAILY_CALENDAR[this.dailyClaimed];
+    this.dailyClaimed += 1;
+    // Chuỗi chỉ nối khi lần trước là đúng hôm qua; syncDaily đã cắt các trường hợp khác.
+    this.dailyStreak = this.dailyLastDay === prevDayKey(now) ? this.dailyStreak + 1 : 1;
+    this.dailyBestStreak = Math.max(this.dailyBestStreak, this.dailyStreak);
+    this.dailyLastDay = dayKeyOf(now);
+    this.dailyTotalDays += 1;
+
+    for (const r of day.rewards) this.grantDailyReward(r);
+
+    const slot = this.dailySlotOf(day, this.dailyClaimed);
+    this.showBanner(
+      `ĐIỂM DANH NGÀY ${day.day}`,
+      slot.rewards.map((x) => x.label).join(' · '),
+      day.big ? '#ffd23c' : '#7dff5a',
+      2.6,
+    );
+    sfx.levelup();
+    this.recomputeParty();
+    this.checkAchievements();
+    this.save();
+    this.pushMeta();
+    return slot;
+  }
+
+  private grantDailyReward(r: DailyReward): void {
+    switch (r.kind) {
+      case 'gem':
+        this.addGems(r.amount);
+        break;
+      case 'gold':
+        this.addGold(this.dailyGoldValue(r.amount));
+        break;
+      case 'wshard': {
+        const tier = r.tier ?? 'rare';
+        for (let i = 0; i < r.amount; i++) {
+          const def = pick(WEAPONS.filter((w) => w.tier === tier));
+          this.addWeapon(def.id);
+        }
+        break;
+      }
+      case 'cloth':
+        this.clothShards += r.amount;
+        this.ctr.clothEarned += r.amount;
+        break;
+      case 'item': {
+        for (let i = 0; i < r.amount; i++) {
+          const it = pick(ITEMS);
+          this.ownedItems[it.id] = (this.ownedItems[it.id] ?? 0) + 1;
+          if (!this.equippedItems.includes(it.id) && this.equippedItems.length < MAX_ITEM_SLOTS) {
+            this.equippedItems.push(it.id);
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  private dailySlotOf(day: DailyDay, claimedCount: number): DailySlot {
+    return {
+      day: day.day,
+      rewards: day.rewards.map((r) => ({
+        kind: r.kind,
+        amount: r.kind === 'gold' ? this.dailyGoldValue(r.amount) : r.amount,
+        label: this.rewardLabel(r),
+        color: r.kind === 'wshard' ? RARITY[r.tier ?? 'rare'].color : REWARD_META[r.kind].color,
+      })),
+      big: day.big === true,
+      claimed: day.day <= claimedCount,
+      next: day.day === claimedCount + 1,
+    };
+  }
+
+  dailyInfo(): DailyInfo {
+    this.syncDaily();
+    return {
+      cycle: this.dailyCycle,
+      claimedCount: this.dailyClaimed,
+      total: DAILY_CYCLE_DAYS,
+      claimedToday: this.dailyClaimedToday(),
+      canClaim: this.canClaimDaily(),
+      streak: this.dailyStreak,
+      bestStreak: this.dailyBestStreak,
+      totalDays: this.dailyTotalDays,
+      daysLeft: daysLeftInCycle(),
+      slots: DAILY_CALENDAR.map((d) => this.dailySlotOf(d, this.dailyClaimed)),
+      clothShards: this.clothShards,
+      shardCost: SKIN_SHARD_COST,
+    };
+  }
+
+  // ---------- ghép trang phục từ mảnh ----------
+  skinInfo(): SkinInfo[] {
+    return SKINS.map((s) => ({
+      id: s.id, name: s.name, desc: s.desc, source: s.source,
+      owned: this.ownedSkins.includes(s.id),
+      equipped: this.equippedSkin === s.id,
+      gemCost: SKIN_COST[s.id] ?? 0,
+    }));
+  }
+  /** Ghép một bộ trang phục điểm danh. Ngọc không mua được — chỉ Mảnh Trang Phục. */
+  forgeSkin(id: string): boolean {
+    const def = SKINS.find((s) => s.id === id);
+    if (!def || def.source !== 'login') return false;
+    if (this.ownedSkins.includes(id)) return false;
+    if (this.clothShards < SKIN_SHARD_COST) {
+      this.toast(`Cần ${SKIN_SHARD_COST} Mảnh Trang Phục — còn thiếu ${SKIN_SHARD_COST - this.clothShards}`, '#ff9a3c');
+      sfx.warn();
+      return false;
+    }
+    this.clothShards -= SKIN_SHARD_COST;
+    this.ownedSkins.push(id);
+    this.equippedSkin = id;
+    this.recomputeParty();
+    this.showBanner('GHÉP THÀNH CÔNG', def.name, def.look.aura, 2.8);
+    this.toast(`Đã ghép trọn bộ ${def.name}!`, def.look.aura);
+    const kael = this.heroes.find((h) => h.isKael);
+    this.burst(kael?.x ?? LANE_ANCHOR[0], (kael?.y ?? LANE_Y[0]) - 70, 46, def.look.aura, 'ember');
+    this.flash = 0.6; this.flashColor = def.look.aura;
+    sfx.levelup();
+    this.checkAchievements();
+    this.save();
+    this.pushMeta();
+    return true;
+  }
+
+  // ---------- thành tựu ----------
+  /** Nguồn sự thật duy nhất cho giá trị của từng chỉ số thành tựu. */
+  private achStats(): Record<AchStatId, number> {
+    let companionLevels = 0;
+    for (const v of Object.values(this.ownedCompanions)) companionLevels += v;
+    let itemsOwned = 0;
+    for (const v of Object.values(this.ownedItems)) itemsOwned += v;
+    let runeLevels = 0;
+    for (const r of RUNES) runeLevels += this.runeLevel(r.id);
+    return {
+      kills: this.ctr.kills,
+      bossKills: this.ctr.bossKills,
+      bestFloor: this.bestFloor + 1,
+      kaelLevel: this.kaelLevel,
+      goldEarned: this.ctr.goldEarned,
+      gemsEarned: this.ctr.gemsEarned,
+      pulls: this.ctr.pulls,
+      forges: this.ctr.forges,
+      companionsOwned: Object.keys(this.ownedCompanions).length,
+      companionLevels,
+      maxCombo: this.ctr.maxCombo,
+      playTime: this.playTime,
+      runeLevels,
+      seals: this.seals,
+      skinsOwned: this.ownedSkins.length,
+      checkinTotal: this.dailyTotalDays,
+      checkinStreak: this.dailyBestStreak,
+      itemsOwned,
+      wavesCleared: this.ctr.wavesCleared,
+      crits: this.ctr.crits,
+      ults: this.ctr.ults,
+      weaponsOwned: this.weaponDex.size,
+      clothEarned: this.ctr.clothEarned,
+      prestiges: this.ctr.prestiges,
+      downs: this.ctr.downs,
+      upgrades: this.ctr.upgrades,
+    };
+  }
+
+  /**
+   * Quét toàn bộ 500 mốc và ghi nhận mốc mới mở. Rẻ hơn nhiều so với việc
+   * rải kiểm tra vào từng điểm cộng chỉ số, và không thể bỏ sót mốc nào.
+   * Người chơi vẫn phải tự bấm nhận — phần thưởng chỉ được cộng ở `claimAch`.
+   */
+  private checkAchievements(): void {
+    const st = this.achStats();
+    let fresh = 0;
+    let last = '';
+    for (const a of ACHIEVEMENTS) {
+      if (this.achUnlocked.has(a.id)) continue;
+      if (st[a.stat] >= a.need) {
+        this.achUnlocked.add(a.id);
+        fresh += 1;
+        last = a.name;
+      }
+    }
+    if (fresh === 1) this.toast(`⚑ Thành tựu: ${last} — vào bảng nhận Ngọc`, '#7dff5a');
+    else if (fresh > 1) this.toast(`⚑ Mở ${fresh} thành tựu mới — vào bảng nhận Ngọc`, '#7dff5a');
+  }
+
+  achInfo(): AchInfo {
+    let claimable = 0;
+    let pendingGems = 0;
+    for (const a of ACHIEVEMENTS) {
+      if (this.achUnlocked.has(a.id) && !this.achClaimed.has(a.id)) {
+        claimable += 1;
+        pendingGems += a.gems;
+      }
+    }
+    return {
+      unlocked: this.achUnlocked.size,
+      claimed: this.achClaimed.size,
+      total: ACH_TOTAL,
+      claimable,
+      pendingGems,
+      stats: this.achStats(),
+      claimedIds: [...this.achClaimed],
+    };
+  }
+
+  claimAch(id: string): boolean {
+    // Quét lại trước khi trao: bảng chỉ làm mới mỗi 2 giây, người chơi hoàn
+    // toàn có thể bấm đúng vào khoảnh khắc mốc vừa đạt mà engine chưa ghi nhận.
+    this.checkAchievements();
+    const a = ACHIEVEMENTS.find((x) => x.id === id);
+    if (!a || !this.achUnlocked.has(id) || this.achClaimed.has(id)) return false;
+    this.achClaimed.add(id);
+    this.addGems(a.gems);
+    this.toast(`${a.name} — +${fmt(a.gems)} Ngọc`, a.color);
+    sfx.pickup();
+    this.save();
+    this.pushMeta();
+    return true;
+  }
+
+  claimAllAch(): number {
+    this.checkAchievements();
+    let gems = 0;
+    let n = 0;
+    for (const a of ACHIEVEMENTS) {
+      if (!this.achUnlocked.has(a.id) || this.achClaimed.has(a.id)) continue;
+      this.achClaimed.add(a.id);
+      gems += a.gems;
+      n += 1;
+    }
+    if (n === 0) {
+      this.toast('Chưa có thành tựu nào chờ nhận', '#ff9a3c');
+      sfx.warn();
+      return 0;
+    }
+    this.addGems(gems);
+    this.showBanner('THÀNH TỰU', `Nhận ${n} mốc · +${fmt(gems)} Ngọc`, '#7dff5a', 2.6);
+    sfx.levelup();
+    this.save();
+    this.pushMeta();
+    return n;
+  }
+
+  // ---------- cổng thu nhập ----------
+  // Mọi đường cộng Vàng/Ngọc đều đi qua đây để bộ đếm thành tựu không bao giờ
+  // lệch với số dư thật.
+  private addGold(n: number): void {
+    if (n <= 0) return;
+    this.gold += n;
+    this.ctr.goldEarned += n;
+  }
+  private addGems(n: number): void {
+    if (n <= 0) return;
+    this.gems += n;
+    this.ctr.gemsEarned += n;
+  }
 
   // ---------- luồng trò chơi ----------
   startGame(): void {
@@ -1021,6 +1434,13 @@ export class GameIdle {
     this.ownedWeapons = {}; this.weaponRefine = {}; this.equippedWeapon = null; this.deployedIds = null;
     this.runes = {}; this.evoSeen = 0; this.titleSeen = 0;
     this.combo = 0; this.rage = 0; this.farmMode = false;
+    this.clothShards = 0;
+    this.dailyCycle = cycleKeyOf(); this.dailyClaimed = 0; this.dailyLastDay = '';
+    this.dailyStreak = 0; this.dailyBestStreak = 0; this.dailyTotalDays = 0;
+    for (const k of Object.keys(this.ctr) as Array<keyof typeof this.ctr>) this.ctr[k] = 0;
+    this.weaponDex = new Set();
+    this.achUnlocked = new Set();
+    this.achClaimed = new Set();
     this.recomputeParty();
     this.state = 'playing';
     this.startFloor(0, true);
@@ -1192,6 +1612,7 @@ export class GameIdle {
     this.burst(e.x, e.y - 56 * e.scale, crit ? 12 : 5, crit ? '#ffd23c' : '#ff6a52', 'spark');
     if (crit) {
       sfx.crit();
+      this.ctr.crits += 1;
       this.hitstop = Math.max(this.hitstop, 0.045);
       this.shake = Math.max(this.shake, 4);
     } else sfx.hit();
@@ -1216,14 +1637,17 @@ export class GameIdle {
     e.dead = true;
     e.act = 'dead'; e.actT = 0; e.actDur = 0.55;
     this.kills += 1;
+    this.ctr.kills += 1;
+    if (e.boss) this.ctr.bossKills += 1;
 
     // chuỗi liên trảm
     this.combo += 1;
     this.comboT = BAL.COMBO_WINDOW;
+    this.ctr.maxCombo = Math.max(this.ctr.maxCombo, this.combo);
     this.addRage(3.5);
 
     const gold = Math.round(this.goldPerKill() * (e.boss ? 12 : 1));
-    this.gold += gold;
+    this.addGold(gold);
     this.burst(e.x, e.y - 56 * e.scale, e.boss ? 46 : 14, '#ffd23c', 'spark');
     this.burst(e.x, e.y - 56 * e.scale, e.boss ? 28 : 9, '#ff6a4a', 'ember');
     this.pickups.push({ x: e.x, y: e.y - 70 * e.scale, vy: -rand(150, 240), vx: rand(-50, 50), kind: 'gold', life: 3.2, spin: rand(0, 6) });
@@ -1233,7 +1657,7 @@ export class GameIdle {
       + (killer && has(killer, 'holysplash') ? 0.08 : 0);
     if (Math.random() < gemChance) {
       const amt = Math.max(1, Math.round((2 + this.gw() * 0.4) * this.sealMul()));
-      this.gems += amt;
+      this.addGems(amt);
       this.pickups.push({ x: e.x + 18, y: e.y - 92 * e.scale, vy: -rand(170, 250), vx: rand(-60, 20), kind: 'gem', life: 3.2, spin: rand(0, 6) });
       this.pushText(`+${fmt(amt)} Ngọc`, e.x + 20, e.y - 140, '#ff4fd8', 14, false);
     }
@@ -1243,7 +1667,7 @@ export class GameIdle {
 
     if (e.boss) {
       const bonusGem = Math.round((10 + this.floor * 2) * this.sealMul());
-      this.gems += bonusGem;
+      this.addGems(bonusGem);
       this.pushText(`BOSS +${fmt(bonusGem)} Ngọc`, e.x, e.y - 180, '#ff4fd8', 21, true);
       this.toast(`Boss ${this.bossDef().name} đã gục ngã!`, '#ff3b52');
       sfx.bossdie();
@@ -1338,13 +1762,17 @@ export class GameIdle {
     this.bossActive = false;
     const cleared = this.floor;
     this.bestFloor = Math.max(this.bestFloor, cleared + 1);
+    // Đợt cuối của tầng cũng là một đợt đã dọn — nhánh boss không đi qua nhịp
+    // đếm đợt thông thường nên phải cộng ở đây.
+    this.ctr.wavesCleared += 1;
+    this.checkAchievements();
 
     // mốc 10 tầng
     const milestone = Math.floor((cleared + 1) / 10);
     if ((cleared + 1) % 10 === 0 && !this.clearedMilestones.includes(milestone)) {
       this.clearedMilestones.push(milestone);
       const reward = Math.round(400 * milestone * this.sealMul());
-      this.gems += reward;
+      this.addGems(reward);
       this.toast(`⚑ MỐC TẦNG ${cleared + 1} — thưởng ${fmt(reward)} Ngọc!`, '#ff4fd8');
     }
 
@@ -1388,6 +1816,7 @@ export class GameIdle {
     const alive = this.enemies.filter((e) => !e.dead);
     if (alive.length === 0) { this.rage = BAL.RAGE_MAX; return; }
     this.rage = 0;
+    this.ctr.ults += 1;
     this.ultT = 1.1;
     this.slowmo = 0.5;
     this.flash = 0.7; this.flashColor = '#ff3b52';
@@ -1412,6 +1841,7 @@ export class GameIdle {
   private heroDown(h: HeroUnit): void {
     if (h.dead) return;
     h.dead = true;
+    this.ctr.downs += 1;
     h.hp = 0;
     h.act = 'dead'; h.actT = 0; h.actDur = 0.6;
     h.respawnT = h.isKael ? 5 : 6;
@@ -1512,14 +1942,16 @@ export class GameIdle {
       return { kind: 'companion', id: c.id, name: c.name, rarity, isNew: false, dupeText: `Đã sở hữu → +2 cấp (Lv ${owned + 2})` };
     }
     if (poolR < 0.78) {
-      const skinPool = SKINS.filter((s) => s.id !== 'default' && !this.ownedSkins.includes(s.id));
+      // Chỉ skin nguồn `gacha` mới nằm trong bể. Sáu bộ điểm danh phải giữ
+      // nguyên giá trị của việc quay lại mỗi ngày, nên tuyệt đối không rơi ra ở đây.
+      const skinPool = GACHA_SKINS.filter((s) => s.id !== 'default' && !this.ownedSkins.includes(s.id));
       if (skinPool.length > 0) {
         const s: SkinDef = pick(skinPool);
         this.ownedSkins.push(s.id);
         return { kind: 'skin', id: s.id, name: s.name, rarity, isNew: true, dupeText: 'Skin mới cho Kael!' };
       }
       const refund = rarity === 'mythic' ? 700 : rarity === 'legendary' ? 400 : rarity === 'epic' ? 250 : 120;
-      this.gems += refund;
+      this.addGems(refund);
       return { kind: 'skin', id: 'refund', name: 'Hoàn Ngọc', rarity, isNew: false, dupeText: `Đã đủ skin → +${refund} ngọc` };
     }
     const item = pick(ITEMS);
@@ -1544,6 +1976,7 @@ export class GameIdle {
       return null;
     }
     this.gems -= cost;
+    this.ctr.pulls += times;
     const results: GachaResult[] = [];
     for (let i = 0; i < times; i++) results.push(this.rollOne());
     // Bảo hiểm: mỗi nhóm 10 lượt chắc chắn có ≥1 Cực Hiếm trở lên.
@@ -1561,6 +1994,7 @@ export class GameIdle {
     }
     this.recomputeParty();
     sfx.levelup();
+    this.checkAchievements();
     this.save();
     this.pushMeta();
     return results;
@@ -1575,6 +2009,13 @@ export class GameIdle {
     this.pushMeta();
   }
   buySkin(id: string): boolean {
+    const def = SKINS.find((s) => s.id === id);
+    // Trang phục điểm danh không có giá Ngọc: mua được bằng Ngọc thì Mảnh
+    // Trang Phục lập tức mất hết ý nghĩa.
+    if (!def || def.source !== 'gacha') {
+      if (def) this.toast(`${def.name} chỉ ghép được từ Mảnh Trang Phục`, '#8cdcff');
+      return false;
+    }
     const cost = SKIN_COST[id] ?? 500;
     if (this.ownedSkins.includes(id)) return false;
     if (this.gems < cost) { this.toast('Không đủ Ngọc!', '#ff5a6a'); sfx.warn(); return false; }
@@ -1583,6 +2024,7 @@ export class GameIdle {
     this.equippedSkin = id;
     this.recomputeParty();
     sfx.levelup();
+    this.checkAchievements();
     this.save();
     this.pushMeta();
     return true;
@@ -1642,6 +2084,7 @@ export class GameIdle {
       return false;
     }
     this.seals += gain;
+    this.ctr.prestiges += 1;
     this.floor = 0;
     this.wave = 0;
     this.combo = 0; this.rage = 0;
@@ -1653,6 +2096,7 @@ export class GameIdle {
     this.showBanner('THĂNG HOA', `+${gain} Huyết Ấn · Toàn bộ sức mạnh ×${this.sealMul().toFixed(2)}`, '#ff4fd8', 3);
     this.toast(`Thăng Hoa! +${gain} Huyết Ấn (tổng ${this.seals})`, '#ff4fd8');
     sfx.levelup();
+    this.checkAchievements();
     this.save();
     this.pushMeta();
     return true;
@@ -1690,6 +2134,15 @@ export class GameIdle {
         weaponRefine: this.weaponRefine,
         deployedIds: this.deployedIds, farmMode: this.farmMode, speedIdx: this.speedIdx,
         clearedMilestones: this.clearedMilestones, victorySeen: this.victorySeen,
+        clothShards: this.clothShards,
+        daily: {
+          cycle: this.dailyCycle, claimed: this.dailyClaimed, lastDay: this.dailyLastDay,
+          streak: this.dailyStreak, best: this.dailyBestStreak, total: this.dailyTotalDays,
+        },
+        ctr: this.ctr,
+        weaponDex: [...this.weaponDex],
+        achUnlocked: [...this.achUnlocked],
+        achClaimed: [...this.achClaimed],
         savedAt: Date.now(),
       }));
     } catch { /* localStorage có thể bị chặn — bỏ qua */ }
@@ -1724,6 +2177,52 @@ export class GameIdle {
     this.speedIdx = Math.round(num('speedIdx', 0, SPEEDS.length - 1, 0));
     this.farmMode = d.farmMode === true;
     this.victorySeen = d.victorySeen === true;
+
+    // Bộ đếm thành tựu phải nạp TRƯỚC mọi đường cộng Ngọc/Vàng phía dưới
+    // (hoàn Ngọc vũ khí cũ, thưởng ngoại tuyến) — nếu không, phần cộng đó sẽ
+    // ghi vào bộ đếm rỗng rồi bị bản lưu ghi đè, và số liệu lệch vĩnh viễn.
+    this.clothShards = Math.max(0, Math.round(num('clothShards', 0, 1e9, 0)));
+    if (d.ctr && typeof d.ctr === 'object') {
+      const src = d.ctr as Record<string, unknown>;
+      for (const k of Object.keys(this.ctr) as Array<keyof typeof this.ctr>) {
+        const v = src[k];
+        if (typeof v === 'number' && Number.isFinite(v) && v > 0) this.ctr[k] = v;
+      }
+    }
+    if (d.daily && typeof d.daily === 'object') {
+      const s = d.daily as Record<string, unknown>;
+      if (typeof s.cycle === 'string') this.dailyCycle = s.cycle;
+      if (typeof s.lastDay === 'string') this.dailyLastDay = s.lastDay;
+      const n = (k: string, max: number): number => {
+        const v = s[k];
+        return typeof v === 'number' && Number.isFinite(v) ? clamp(Math.round(v), 0, max) : 0;
+      };
+      this.dailyClaimed = n('claimed', DAILY_CYCLE_DAYS);
+      this.dailyStreak = n('streak', 1e6);
+      this.dailyBestStreak = Math.max(n('best', 1e6), this.dailyStreak);
+      this.dailyTotalDays = n('total', 1e6);
+    }
+    this.syncDaily();
+    if (Array.isArray(d.weaponDex)) {
+      const valid = new Set(WEAPONS.map((w) => w.id));
+      this.weaponDex = new Set(
+        (d.weaponDex as unknown[]).filter((x): x is string => typeof x === 'string' && valid.has(x)),
+      );
+    }
+    if (Array.isArray(d.achUnlocked)) {
+      const valid = new Set(ACHIEVEMENTS.map((a) => a.id));
+      this.achUnlocked = new Set(
+        (d.achUnlocked as unknown[]).filter((x): x is string => typeof x === 'string' && valid.has(x)),
+      );
+    }
+    if (Array.isArray(d.achClaimed)) {
+      // Đã nhận thì đương nhiên đã mở — giao nhau để một bản lưu hỏng không
+      // tạo ra mốc "đã nhận nhưng chưa mở" rồi bị trao thưởng lần nữa.
+      this.achClaimed = new Set(
+        (d.achClaimed as unknown[])
+          .filter((x): x is string => typeof x === 'string' && this.achUnlocked.has(x)),
+      );
+    }
 
     if (d.ownedCompanions && typeof d.ownedCompanions === 'object') {
       const src = d.ownedCompanions as Record<string, unknown>;
@@ -1782,9 +2281,12 @@ export class GameIdle {
       }
       if (dropped > 0) {
         const refund = dropped * WGACHA_COST;
-        this.gems += refund;
+        this.addGems(refund);
         this.toast(`Kho vũ khí cũ đã đổi thành ${fmt(refund)} Ngọc`, '#ffb43c');
       }
+      // Bản lưu cũ chưa có sổ vũ khí: coi mọi món đang giữ là đã từng cầm,
+      // để mốc "Binh Khí Phổ" không bắt đầu lại từ con số không.
+      for (const k of Object.keys(this.ownedWeapons)) this.weaponDex.add(k);
     }
     if (d.weaponRefine && typeof d.weaponRefine === 'object') {
       const valid = new Set(WEAPONS.map((w) => w.id));
@@ -1823,11 +2325,12 @@ export class GameIdle {
         const gold = Math.round(this.goldPerKill() * 1.4 * BAL.OFFLINE_RATE * sec);
         const gems = Math.round(BAL.GEM_CHANCE * this.partyGemAura * 1.4 * BAL.OFFLINE_RATE * sec
           * (2 + this.gw() * 0.4) * this.sealMul() * 0.5);
-        this.gold += gold;
-        this.gems += gems;
+        this.addGold(gold);
+        this.addGems(gems);
         this.onEvent({ type: 'offline', report: { seconds: sec, gold, gems } });
       }
     }
+    this.checkAchievements();
     return true;
   }
 
@@ -1905,6 +2408,10 @@ export class GameIdle {
       banner: this.banner ? { ...this.banner } : null,
       toasts: this.toasts.map((t) => ({ ...t })),
       hud: { ...this.hudCache },
+      daily: this.dailyInfo(),
+      ach: this.achInfo(),
+      skins: this.skinInfo(),
+      clothShards: this.clothShards,
     };
   }
 
@@ -2063,9 +2570,19 @@ export class GameIdle {
           return;
         }
         this.wave = Math.min(WAVES_PER_FLOOR - 1, this.wave + 1);
+        this.ctr.wavesCleared += 1;
         this.gainXp(this.xpUnit() * 3);
         this.startWave();
       }
+    }
+
+    // Các mốc theo thời gian và theo số đếm dồn được quét định kỳ chứ không
+    // rải kiểm tra vào từng điểm cộng: 500 phép so sánh mỗi 2 giây là không
+    // đáng kể, còn bỏ sót một điểm cộng thì mốc treo vĩnh viễn.
+    this.achCheckT += dt;
+    if (this.achCheckT >= 2) {
+      this.achCheckT = 0;
+      this.checkAchievements();
     }
 
     this.refreshHud();

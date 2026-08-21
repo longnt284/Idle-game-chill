@@ -306,8 +306,10 @@ export const COMPANIONS: CompanionDef[] = [
  * - `shop` — CHỈ mua ở Cửa Hàng bằng Vàng **và** Ngọc cùng lúc. Cũng không
  *   quay ra được: đây là đích đến dài hạn của việc cày, nên nếu gacha trả ra
  *   thì giá tiền của nó thành vô nghĩa.
+ * - `trial` — CHỈ đổi bằng Huy Hiệu Tháp Thử Thách. Vàng và Ngọc không mua
+ *   được: đây là thứ chứng minh đã qua tháp, mua được thì hết ý nghĩa.
  */
-export type SkinSource = 'gacha' | 'login' | 'shop';
+export type SkinSource = 'gacha' | 'login' | 'shop' | 'trial';
 export interface SkinDef {
   id: string; name: string; desc: string; source: SkinSource; look: ChibiLook;
 }
@@ -386,6 +388,14 @@ export const SKINS: SkinDef[] = [
       hairStyle: 'wild', weapon: 'scythe', accessory: 'halo', cape: '#4a0e5e', aura: '#d24bff', skinFx: 4,
     },
   },
+  // ---- chỉ đổi bằng Huy Hiệu Tháp Thử Thách ----
+  {
+    id: 'trialmaster', name: 'Vô Danh Tháp Chủ', desc: 'Không ai biết tên kẻ đứng trên đỉnh tháp. Không ai còn sống để hỏi.', source: 'trial',
+    look: {
+      hair: '#ffffff', outfit: '#141420', outfit2: '#08080e', skin: '#f2ecff', eyes: '#ffffff',
+      hairStyle: 'long', weapon: 'twinblade', accessory: 'crown', cape: '#2a2a3e', aura: '#eaf6ff', skinFx: 5,
+    },
+  },
 ];
 export const SKIN_COST: Record<string, number> = { crimson: 500, gold: 800, shadow: 800, void: 2500 };
 /** Skin quay/mua được — bể gacha và tủ đồ bán Ngọc đều phải lọc qua đây. */
@@ -394,6 +404,8 @@ export const GACHA_SKINS: SkinDef[] = SKINS.filter((s) => s.source === 'gacha');
 export const LOGIN_SKINS: SkinDef[] = SKINS.filter((s) => s.source === 'login');
 /** Skin chỉ mua ở Cửa Hàng bằng Vàng + Ngọc. */
 export const SHOP_SKINS: SkinDef[] = SKINS.filter((s) => s.source === 'shop');
+/** Skin chỉ đổi bằng Huy Hiệu Tháp Thử Thách. */
+export const TRIAL_SKINS: SkinDef[] = SKINS.filter((s) => s.source === 'trial');
 /** Số Mảnh Trang Phục cần để ghép trọn một bộ. */
 export const SKIN_SHARD_COST = 10;
 
@@ -438,6 +450,8 @@ export const WEAPON_SKINS_DEF: WeaponSkinDef[] = [
   { id: 'ws_frost', name: 'Băng Thiên Chi Nhận', edge: '#5ac8ff', core: '#e8faff', element: 'frost', fx: 2 },
   { id: 'ws_storm', name: 'Lôi Ngục Chi Nhận', edge: '#b9a8ff', core: '#fbf4ff', element: 'storm', fx: 3 },
   { id: 'ws_chaos', name: 'Hỗn Mang Chi Nhận', edge: '#ff4fd8', core: '#fff0fb', element: 'chaos', fx: 4 },
+  // Chỉ đổi bằng Huy Hiệu — không bán ở Cửa Hàng.
+  { id: 'ws_trial', name: 'Vô Danh Chi Nhận', edge: '#dfeaff', core: '#ffffff', element: 'chaos', fx: 5 },
 ];
 export const weaponSkinById = (id: string | null | undefined): WeaponSkinDef | undefined =>
   (id ? WEAPON_SKINS_DEF.find((w) => w.id === id) : undefined);

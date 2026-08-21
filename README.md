@@ -22,6 +22,10 @@ npm run typecheck
 | `src/game/color.ts` | Phép biến đổi màu có ghi nhớ (renderer gọi hàng trăm lần mỗi khung hình). |
 | `src/game/daily.ts` | Lịch điểm danh 30 ô và cách quy đổi từng loại phần thưởng. |
 | `src/game/quests.ts` | Nhiệm vụ ngày/tuần và đường mùa giải Huyết Lệnh. Nhiệm vụ **không có bộ đếm riêng**: mỗi ô ghi mốc bộ đếm lúc sinh ra, tiến độ là hiệu số. |
+| `src/game/synergy.ts` | Liên Kết đội hình — buff theo môn phái và vai trò, chỉ đếm 12 người đứng trên sân. |
+| `src/game/relics.ts` | Cây Di Tích: lớp meta thứ hai nằm trên Thăng Hoa, tiêu Mảnh Linh Hồn. |
+| `src/game/trials.ts` | Tháp Thử Thách: 12 tầng boss-rush kèm luật riêng, và bảng đổi Huy Hiệu. |
+| `src/game/expedition.ts` | Phái Đoàn: cử đồng hành dự bị đi 4/8/24 giờ đổi lấy tài nguyên. |
 | `src/game/achievements.ts` | 500 mốc thành tựu, sinh từ 26 chỉ số × bảng ngưỡng. |
 | `src/game/types.ts` | Kiểu dùng chung giữa engine và renderer. |
 | `src/game/audio.ts` | Âm thanh tổng hợp bằng Web Audio, nền đổi cao độ theo vùng. |
@@ -37,6 +41,10 @@ npm run typecheck
 | **Độ khó** | `DUNGEON_MODES` trong `data.ts` | Hard/Evil mở sau khi dọn trọn 100 tầng, **chỉ có hiệu lực trong Vực Vô Tận**. Quái ×2 / ×2.5, thưởng ×0.9 / ×0.8, Ấn Điểm ×1.8 / ×2.6. |
 | **Cửa Hàng** | `SHOP_ITEMS` trong `data.ts` | Bốn trang phục Kael và bốn skin vũ khí, trả bằng **cả Vàng lẫn Ngọc** trong một giao dịch. Trường `fx` (1–4) là bậc hiệu ứng mà renderer chồng thêm. Hai món đắt nhất khoá sau mốc dọn một tầng ở Evil. |
 | **Huyết Lệnh** | `quests.ts` | 4 ô nhiệm vụ ngày + 3 ô tuần nuôi đường mùa giải 40 bậc, reset cùng chu kỳ tháng với lịch điểm danh. |
+| **Liên Kết** | `SYNERGIES` trong `synergy.ts` | Buff khi xếp nhiều đồng hành cùng môn phái/vai trò. Chỉ đếm **12 người trên sân**, không đếm đội tiếp viện — đếm cả 50 thì mọi liên kết bật sẵn và cơ chế thành buff miễn phí. |
+| **Cây Di Tích** | `RELICS` trong `relics.ts` | 12 nút có nhánh phụ thuộc, tiêu Mảnh Linh Hồn nhận khi Thăng Hoa. Mọi hiệu ứng là **cộng thêm vào công thức có sẵn**; nút nào cần sửa `BAL` là nút đó đã sai chỗ. Đây cũng là nơi nới trần ngoại tuyến 8 → 24 giờ. |
+| **Tháp Thử Thách** | `TRIALS` trong `trials.ts` | 12 tầng boss-rush có đồng hồ và **không hồi sinh** — nơi duy nhất trong game có thể thua. Mỗi tầng bật một luật vô hiệu hoá một cách chơi quen thuộc. Trả Huy Hiệu, và Huy Hiệu không đổi qua lại với Vàng/Ngọc. |
+| **Phái Đoàn** | `EXPEDITION_ROUTES` trong `expedition.ts` | Cử đồng hành đi 4/8/24 giờ. Người đi bị **rút khỏi đội hình** cho tới khi về — không có cái giá đó thì đây chỉ là nút bấm cho tài nguyên miễn phí. |
 | **Danh hiệu** | `TITLES` trong `data.ts` | Mười bậc, mỗi 100 cấp một bậc; đổi khung hồ sơ và danh xưng, không đụng chỉ số. |
 | **Thăng Hoa** | `BAL.SEAL_*` | Đổi độ sâu lấy hệ số nhân vĩnh viễn. |
 | **Điểm Danh** | `DAILY_CALENDAR` trong `daily.ts` | Lịch 30 ô, reset đầu mỗi tháng dương lịch. Ô mở theo **thứ tự lần điểm danh** trong tháng, không theo ngày trong tháng, nên bỏ lỡ một ngày chỉ làm chậm lịch chứ không đốt mất phần thưởng. |
@@ -55,6 +63,15 @@ Bốn bất biến của các hệ thống trên, phá là hỏng thiết kế:
    chốt lại thì mọi ô nhiệm vụ xong ngay khi vào game.
 4. Ba bậc vũ khí chót không nằm trong `WEAPON_ROLL_TABLE`. Cho chúng rơi
    thẳng từ lò rèn là xoá sổ ý nghĩa của hệ ghép mảnh.
+5. Thưởng ngoại tuyến chỉ được **tính** trong `load()`, phần **cộng** nằm ở
+   `claimOffline()`. Hàm đó tự chốt `pendingOffline = null` ngay đầu: bảng
+   tổng kết có ba đường đóng và cả ba đều gọi vào nó.
+6. Lượt Tháp đang chạy KHÔNG được lưu. Nó phụ thuộc vào trạng thái sân (máu
+   từng đơn vị, quái đang đứng đâu) mà bản lưu không giữ; lưu mỗi đồng hồ
+   đếm ngược sẽ cho một lượt tháp không thể thắng.
+7. `Mảnh Linh Hồn` tỉ lệ với **số Huyết Ấn vừa nhận**, không phải số lần
+   Thăng Hoa. Trả theo số lần thì cách chơi tối ưu là Thăng Hoa liên tục ở
+   tầng 25 và toàn bộ động lực đi sâu biến mất.
 
 Sát thương chủ yếu đến từ Kael: đồng hành chỉ còn `BAL.COMPANION_POWER` (25%)
 sức mạnh gốc, bù lại chỉ số nền của Kael cao hơn nhiều và còn được nhân thêm
@@ -74,6 +91,15 @@ lệ, và hệ số Huyết Ấn từ Thăng Hoa). Đổi bất kỳ hằng số
 phải kiểm tra lại quan hệ trên, nếu không sẽ sinh ra tường chắn hoặc lạm phát.
 
 ## Hiệu năng
+
+Chuyến Phái Đoàn tự bốc **đội dự bị mạnh nhất** (những người ngoài 12 chỗ
+trên sân) chứ không bốc người yếu nhất: bốc yếu nhất là cách hiển nhiên hơn
+nhưng lần nào cũng cho ra chuyến tệ nhất, và một mặc định mà lần nào người
+chơi cũng phải sửa là một mặc định sai.
+
+Buff tốc đánh của chuỗi Liên Trảm nhân thẳng vào thời gian hồi đòn
+(`comboHaste`), không gọi `recomputeParty()`: chuỗi đổi mỗi lần hạ quái, dựng
+lại toàn đội mỗi lần thì vừa tốn vừa làm mất máu và vị trí đang có.
 
 Lưu ảnh khi ra đòn (`drawAfterimage`) chỉ vẽ bộ xương bằng nét dày trong
 suốt chứ không dựng lại toàn thân — rẻ hơn nhiều lần, và vì lấy mẫu cùng

@@ -359,6 +359,7 @@ const WSKIN_PALETTE: Record<string, { edge: string; core: string; element: strin
   ws_frost: { edge: '#5ac8ff', core: '#e8faff', element: 'frost' },
   ws_storm: { edge: '#b9a8ff', core: '#fbf4ff', element: 'storm' },
   ws_chaos: { edge: '#ff4fd8', core: '#fff0fb', element: 'chaos' },
+  ws_trial: { edge: '#dfeaff', core: '#ffffff', element: 'chaos' },
 };
 
 /**
@@ -600,7 +601,7 @@ export function drawHero(ctx: CanvasRenderingContext2D, look: ChibiLook, a: Anim
   const s = a.scale;
   const grounded = a.action !== 'dead';
   /** Bậc hiệu ứng trang phục Cửa Hàng — 0 nghĩa là không vẽ lớp nào thêm. */
-  const sfx = clamp(look.skinFx ?? 0, 0, 4);
+  const sfx = clamp(look.skinFx ?? 0, 0, 5);
 
   ctx.save();
   // ---- bóng tiếp đất: co lại khi nhân vật nhấc lên ----
@@ -737,7 +738,7 @@ function drawGroundSigil(
   ctx: CanvasRenderingContext2D, look: ChibiLook, a: AnimState, fx: number, fade: number,
 ): void {
   const s = a.scale;
-  const rings = Math.min(3, fx);
+  const rings = Math.min(4, fx);
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
   ctx.translate(0, 1 * s);
@@ -818,7 +819,7 @@ function drawAfterimage(
   ctx: CanvasRenderingContext2D, look: ChibiLook, a: AnimState, fx: number,
 ): void {
   const s = a.scale;
-  const n = fx >= 4 ? 3 : 2;
+  const n = fx >= 5 ? 4 : fx >= 4 ? 3 : 2;
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
   ctx.scale(s * a.facing, s);

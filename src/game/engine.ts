@@ -19,7 +19,7 @@ import {
 } from './data';
 import type {
   BossDef, CompanionDef, DungeonMode, ItemDef, Pos, Rarity, RuneId, ShopEntry, SkillId,
-  SkinDef, WeaponDef, WeaponTierId,
+  SkinDef, SkinSource, WeaponDef, WeaponTierId,
 } from './data';
 import {
   DAILY_CALENDAR, DAILY_CYCLE_DAYS, REWARD_META, cycleKeyOf, dayKeyOf, daysLeftInCycle, prevDayKey,
@@ -31,6 +31,16 @@ import {
   weeklyQuestsOf,
 } from './quests';
 import type { QuestDef, QuestStat } from './quests';
+import { RELICS, relicById, relicCostAt, soulShardsFor } from './relics';
+import type { RelicId } from './relics';
+import { SYNERGIES, emptySynergy, resolveSynergies } from './synergy';
+import type { ActiveSynergy, SynergyEffect } from './synergy';
+import { BADGE_OFFERS, TRIALS, TRIAL_RULES, badgeOfferById, trialById, trialUnlockFloor } from './trials';
+import type { TrialDef, TrialRule } from './trials';
+import {
+  EXPEDITION_BASE_SLOTS, EXPEDITION_REWARDS, EXPEDITION_ROUTES, expeditionQuality, routeById,
+} from './expedition';
+import type { ExpeditionRoute } from './expedition';
 import { ACHIEVEMENTS, ACH_TOTAL } from './achievements';
 import type { AchStatId } from './achievements';
 
@@ -38,6 +48,10 @@ import type { AchStatId } from './achievements';
 export * from './data';
 export * from './daily';
 export * from './quests';
+export * from './relics';
+export * from './synergy';
+export * from './trials';
+export * from './expedition';
 export * from './achievements';
 export type { ChibiLook, AnimState } from './types';
 import type { WeaponKind } from './types';
@@ -149,7 +163,13 @@ interface SpawnReq { kind: string; delay: number; lane: number }
 export interface EndStats { kills: number; gold: number; playTime: number }
 export interface CompanionSlot { id: string; name: string; rarity: Rarity; level: number; power: number; pos: Pos; hpPct: number }
 export interface OwnedItem { id: string; name: string; count: number }
-export interface OfflineReport { seconds: number; gold: number; gems: number }
+export interface OfflineReport {
+  seconds: number; gold: number; gems: number;
+  /** Số quái mà đoàn quân hạ được trong lúc vắng mặt. */
+  kills: number;
+  /** Trần ngoại tuyến đang áp dụng (giờ) — đổi theo Di Tích nên phải báo kèm. */
+  capH: number;
+}
 export interface BannerState { main: string; sub: string; color: string; t: number; life: number; key: number }
 
 export interface HudState {
@@ -208,11 +228,129 @@ export interface DailyInfo {
   shardCost: number;
 }
 export interface SkinInfo {
-  id: string; name: string; desc: string; source: 'gacha' | 'login' | 'shop';
+  id: string; name: string; desc: string; source: SkinSource;
   owned: boolean; equipped: boolean;
   /** Giá Ngọc — chỉ có nghĩa với skin nguồn `gacha`. */
   gemCost: number;
 }
+/** Một lượt Tháp Thử Thách đang chạy. */
+export interface TrialRun {
+  id: number;
+  /** Đợt boss hiện tại, 1-based. */
+  wave: number;
+  waves: number;
+  /** Thời gian còn lại (giây). */
+  left: number;
+  rules: TrialRule[];
+  /** Tầng của mạch chính để quay về khi kết thúc. */
+  returnFloor: number;
+}
+
+/** Một ô Phái Đoàn. */
+export interface ExpeditionSlot {
+  routeId: string;
+  /** Mã đồng hành đang đi — họ bị rút khỏi đội hình cho tới khi về. */
+  members: string[];
+  /** Mốc thời gian kết thúc (ms). */
+  endAt: number;
+  /** Hệ số phần thưởng chốt lúc cử đi, để đội hình đổi sau không ăn gian được. */
+  quality: number;
+}
+
+export interface RelicRow {
+  id: RelicId;
+  name: string;
+  desc: string;
+  color: string;
+  col: number;
+  row: number;
+  level: number;
+  max: number;
+  cost: number;
+  maxed: boolean;
+  /** Đã mở khoá (nút cha đủ điều kiện) chưa. */
+  unlocked: boolean;
+  needName: string | null;
+  effect: string;
+  nextEffect: string | null;
+  affordable: boolean;
+}
+export interface RelicInfo {
+  shards: number;
+  spent: number;
+  rows: RelicRow[];
+}
+
+export interface TrialRow {
+  id: number;
+  name: string;
+  waves: number;
+  time: number;
+  badges: number;
+  rules: Array<{ name: string; desc: string; color: string }>;
+  unlocked: boolean;
+  unlockFloor: number;
+  cleared: boolean;
+  /** Lực chiến quái ở đợt đầu — để người chơi tự lượng sức. */
+  foeHp: number;
+}
+export interface BadgeRow {
+  id: string;
+  name: string;
+  desc: string;
+  badges: number;
+  color: string;
+  owned: boolean;
+  affordable: boolean;
+  repeatable: boolean;
+}
+export interface TrialInfo {
+  badges: number;
+  best: number;
+  running: TrialRun | null;
+  rows: TrialRow[];
+  offers: BadgeRow[];
+}
+
+export interface ExpeditionRow {
+  index: number;
+  /** null khi ô đang trống. */
+  routeId: string | null;
+  routeName: string;
+  color: string;
+  members: Array<{ id: string; name: string; rarity: Rarity }>;
+  /** Giây còn lại; 0 nghĩa là đã về. */
+  left: number;
+  total: number;
+  ready: boolean;
+  quality: number;
+  rewardText: string;
+}
+export interface ExpeditionInfo {
+  slots: number;
+  rows: ExpeditionRow[];
+  /** Số đồng hành rảnh (đã sở hữu, chưa đi đâu). */
+  idle: number;
+  routes: Array<{
+    id: string; name: string; desc: string; hours: number; slots: number; color: string;
+    /** Có đủ người rảnh để cử đi không. */
+    ready: boolean;
+    rewardText: string;
+  }>;
+  ready: number;
+}
+
+export interface SynergyInfo {
+  active: ActiveSynergy[];
+  atkPct: number;
+  hpPct: number;
+  goldPct: number;
+  gemPct: number;
+  crit: number;
+  aspd: number;
+  lifesteal: number;
+}
+
 export interface ShopRow extends ShopEntry {
   owned: boolean;
   equipped: boolean;
@@ -304,6 +442,16 @@ export interface MetaInfo {
   quests: QuestInfo;
   ownedShop: string[];
   equippedWeaponSkin: string | null;
+  /** Mảnh Linh Hồn chưa tiêu — hiện trên thanh tài nguyên khi > 0. */
+  soulShards: number;
+  badges: number;
+  synergy: SynergyInfo;
+  /** Lượt Tháp đang chạy, null khi đang ở mạch tầng thường. */
+  trial: TrialRun | null;
+  trialName: string;
+  /** Số ô Phái Đoàn đã xong và đang chờ nhận. */
+  expeditionReady: number;
+  relicReady: boolean;
 }
 export type EngineEvent =
   | { type: 'story'; chapter: number }
@@ -416,6 +564,30 @@ export class GameIdle {
   private dungeonMode: DungeonMode = 'normal';
   /** Đã từng dọn ít nhất một tầng ở chế độ Evil — điều kiện mở hai món đắt nhất. */
   private evilCleared = false;
+
+  // ---- thưởng ngoại tuyến đang chờ nhận ----
+  private pendingOffline: OfflineReport | null = null;
+
+  // ---- Cây Di Tích ----
+  /** Mảnh Linh Hồn chưa tiêu. */
+  private soulShards = 0;
+  private relicLv: Partial<Record<RelicId, number>> = {};
+
+  // ---- Tháp Thử Thách ----
+  /** Huy Hiệu — tiền tệ riêng của Tháp, không đổi qua lại với Vàng/Ngọc. */
+  private badges = 0;
+  /** Tầng tháp cao nhất đã vượt. */
+  private trialBest = 0;
+  private trialOwned = new Set<string>();
+  /** Trạng thái lượt tháp đang chạy; null khi đang ở mạch tầng thường. */
+  private trial: TrialRun | null = null;
+
+  // ---- Phái Đoàn ----
+  private expeditions: ExpeditionSlot[] = [];
+
+  // ---- liên kết đội hình ----
+  private synergy = emptySynergy();
+  private synergyActive: ActiveSynergy[] = [];
 
   // ---- nhiệm vụ & Huyết Lệnh ----
   private questDayKey = '';
@@ -584,7 +756,12 @@ export class GameIdle {
   /** Chỉ số đợt toàn cục, bắt đầu từ 1. */
   private gw(): number { return this.floor * WAVES_PER_FLOOR + this.wave + 1; }
   private zoneIdx(): number { return Math.floor(this.floor / 10) % 10; }
-  private bossDef(): BossDef { return BOSSES[bossIndexForFloor(this.floor)]; }
+  private bossDef(): BossDef {
+    // Trong Tháp, boss xoay theo tầng tháp và số đợt chứ không theo tầng đang
+    // đứng — nếu không thì cả tám đợt của một thử thách đều cùng một con.
+    if (this.trial) return BOSSES[(this.trial.id * 5 + this.trial.wave * 3) % BOSSES.length];
+    return BOSSES[bossIndexForFloor(this.floor)];
+  }
   /** Vực Vô Tận (sau tầng 100) tăng độ khó theo cấp số nhân riêng. */
   private endlessMul(): number {
     if (this.floor < TOTAL_FLOORS) return 1;
@@ -606,14 +783,38 @@ export class GameIdle {
     return dungeonModeDef(this.dungeonMode).rewardMul;
   }
   private foeHpBase(): number {
+    // Tháp có bảng chỉ số riêng: nó phải là một phép thử có mốc cố định, nên
+    // không được ăn theo tầng người chơi đang đứng hay độ khó đang chọn.
+    const t = this.trial ? trialById(this.trial.id) : undefined;
+    if (t) return BAL.FOE_HP0 * Math.pow(BAL.FOE_HP_RATE, this.trialFoeGw(t) - 1) * t.power;
     return BAL.FOE_HP0 * Math.pow(BAL.FOE_HP_RATE, this.gw() - 1) * this.endlessMul() * this.modeFoeMul();
   }
   private foeAtkBase(): number {
+    const t = this.trial ? trialById(this.trial.id) : undefined;
+    if (t) return BAL.FOE_ATK0 * Math.pow(BAL.FOE_ATK_RATE, this.trialFoeGw(t) - 1) * Math.pow(t.power, 0.75);
     return BAL.FOE_ATK0 * Math.pow(BAL.FOE_ATK_RATE, this.gw() - 1)
       * Math.pow(this.endlessMul(), 0.75) * this.modeFoeMul();
   }
   /** Hệ số nhân vĩnh viễn từ Thăng Hoa. */
   private sealMul(): number { return 1 + this.seals * BAL.SEAL_BONUS; }
+
+  // ---------- tra cứu nhanh cho Di Tích / Tháp / Phái Đoàn ----------
+  relicLevel(id: RelicId): number { return this.relicLv[id] ?? 0; }
+  /** `1 + cấp × per` — dạng dùng chung cho mọi Di Tích cộng theo tỉ lệ. */
+  private relicMul(id: RelicId, per: number): number {
+    return 1 + this.relicLevel(id) * per;
+  }
+  /** Trần thưởng ngoại tuyến, mở rộng bằng Di Tích `restT`. */
+  offlineCapH(): number { return BAL.OFFLINE_CAP_H + this.relicLevel('restT') * 2; }
+  private trialHasRule(r: TrialRule): boolean {
+    return this.trial !== null && this.trial.rules.includes(r);
+  }
+  /** Mã những đồng hành đang đi Phái Đoàn — họ không ra sân được. */
+  private awayCompanionIds(): Set<string> {
+    const s = new Set<string>();
+    for (const e of this.expeditions) for (const m of e.members) s.add(m);
+    return s;
+  }
   private goldPerKill(): number {
     const combo = 1 + Math.min(this.combo, BAL.COMBO_MAX) * 0.02;
     return BAL.GOLD0 * Math.pow(BAL.GOLD_RATE, this.gw() - 1)
@@ -726,14 +927,27 @@ export class GameIdle {
   }
   private kaelHpValue(bonus = this.itemBonus()): number {
     return BAL.KAEL_HP0 * Math.pow(BAL.LEVEL_HP, this.kaelLevel - 1)
-      * (1 + this.runeBonus('hp')) * (1 + bonus.hp) * Math.sqrt(this.sealMul());
+      * (1 + this.runeBonus('hp')) * (1 + bonus.hp) * Math.sqrt(this.sealMul())
+      * this.hpTeamMul();
   }
   private kaelAspd(bonus = this.itemBonus()): number {
     return Math.min(2.6, (1.12 + this.kaelLevel * 0.003)
-      * (1 + bonus.aspd + this.runeBonus('aspd')) * this.weaponAspdMul());
+      * (1 + bonus.aspd + this.runeBonus('aspd') + this.synergy.aspd) * this.weaponAspdMul());
   }
   private kaelCrit(bonus = this.itemBonus()): number {
-    return clamp(0.08 + bonus.crit + this.runeBonus('crit') + this.weaponCritAdd(), 0, 0.85);
+    return clamp(
+      0.08 + bonus.crit + this.runeBonus('crit') + this.weaponCritAdd() + this.synergy.crit,
+      0, 0.85,
+    );
+  }
+  /**
+   * Hệ số máu chung cho cả đội: Liên Kết, Di Tích, và luật Thân Thuỷ Tinh
+   * của Tháp. Gom một chỗ để Kael và đồng hành không bao giờ lệch nhau.
+   */
+  private hpTeamMul(): number {
+    return this.synergy.hpMul
+      * this.relicMul('vigor', 0.08)
+      * (this.trialHasRule('glass') ? 0.5 : 1);
   }
 
   private recomputeParty(): void {
@@ -747,7 +961,21 @@ export class GameIdle {
       const set = new Set(this.deployedIds);
       cands = cands.filter((c) => set.has(c.id));
     }
+    // Đồng hành đang đi Phái Đoàn không có mặt ở nhà — đó là cái giá của
+    // chuyến đi, và cũng là lý do người chơi phải cân nhắc cử ai.
+    const away = this.awayCompanionIds();
+    if (away.size > 0) cands = cands.filter((c) => !away.has(c.id));
     cands = cands.sort((a, b) => this.compPower(b) - this.compPower(a)).slice(0, MAX_PARTY);
+
+    // Luật Cô Quân của Tháp: chỉ 3 đồng hành được ra sân.
+    const fieldCap = this.trialHasRule('fewParty') ? 3 : MAX_FIELD;
+
+    // Liên kết chỉ tính trên những người THẬT SỰ đứng trên sân. Tính cả đội
+    // tiếp viện 50 người thì mọi liên kết bật sẵn và cơ chế này vô nghĩa.
+    const fielded = cands.slice(0, fieldCap);
+    const syn = resolveSynergies(fielded);
+    this.synergy = syn.effect;
+    this.synergyActive = syn.active;
 
     // Hào quang toàn đội: buff công, vàng, ngọc (có trần để không tăng vô hạn).
     let atkAura = 1, goldAura = 1, gemAura = 1;
@@ -756,9 +984,12 @@ export class GameIdle {
       if (c.skill.id === 'greed') goldAura *= 1.2;
       if (c.skill.id === 'prospect') gemAura *= 1.25;
     }
-    this.partyAtkAura = Math.min(atkAura, 2.5);
-    this.partyGoldAura = Math.min(goldAura, 3);
-    this.partyGemAura = Math.min(gemAura, 3);
+    // Liên kết và Di Tích nhân vào SAU khi hào quang đã bị chặn trần: trần
+    // 2.5× là để giới hạn việc chồng đồng hành cùng kỹ năng, không phải để
+    // chặn hai hệ thống khác.
+    this.partyAtkAura = Math.min(atkAura, 2.5) * this.synergy.atkMul * this.relicMul('might', 0.08);
+    this.partyGoldAura = Math.min(goldAura, 3) * this.synergy.goldMul * this.relicMul('greed', 0.07);
+    this.partyGemAura = Math.min(gemAura, 3) * this.synergy.gemMul * this.relicMul('prospect', 0.07);
 
     const laneCount = [0, 0, 0];
     const newHeroes: HeroUnit[] = [];
@@ -777,7 +1008,7 @@ export class GameIdle {
     this.legionCount = 0;
     cands.forEach((c, i) => {
       const st = this.rawCompanionStats(c, bonus);
-      if (i < MAX_FIELD) {
+      if (i < fieldCap) {
         newHeroes.push(this.makeHero({
           uid: c.id, isKael: false, defId: c.id, level: st.level,
           atk: st.atk, maxHp: st.hp, aspd: st.aspd, crit: st.crit,
@@ -849,9 +1080,14 @@ export class GameIdle {
       level,
       atk: c.atkBase * g * rarAtk * this.weaponMulParty()
         * (1 + bonus.atk) * this.partyAtkAura * this.sealMul() * BAL.COMPANION_POWER,
-      hp: c.hpBase * gh * rarHp * (1 + bonus.hp) * Math.sqrt(this.sealMul()) * BAL.COMPANION_POWER,
-      aspd: c.atkSpd * (1 + bonus.aspd) * (c.skill.id === 'flurry' ? 1.2 : 1),
-      crit: clamp(c.crit + bonus.crit + (c.skill.id === 'crit' ? 0.18 : c.skill.id === 'flurry' ? 0.25 : 0), 0, 0.85),
+      hp: c.hpBase * gh * rarHp * (1 + bonus.hp) * Math.sqrt(this.sealMul()) * BAL.COMPANION_POWER
+        * this.hpTeamMul(),
+      aspd: c.atkSpd * (1 + bonus.aspd + this.synergy.aspd) * (c.skill.id === 'flurry' ? 1.2 : 1),
+      crit: clamp(
+        c.crit + bonus.crit + this.synergy.crit
+        + (c.skill.id === 'crit' ? 0.18 : c.skill.id === 'flurry' ? 0.25 : 0),
+        0, 0.85,
+      ),
     };
   }
 
@@ -1167,6 +1403,12 @@ export class GameIdle {
       const res = this.addWeapon(def.id);
       if (res.merged && (!bestMerge || res.merged.tierIdx > bestMerge.tierIdx)) bestMerge = res.merged;
       out.push({ def, ...res });
+      // Di Tích `salvage`: cơ hội nhả thêm một mảnh cùng bậc trong cùng lượt.
+      if (Math.random() < this.relicLevel('salvage') * 0.08) {
+        const extra = this.addWeapon(def.id);
+        if (extra.merged && (!bestMerge || extra.merged.tierIdx > bestMerge.tierIdx)) bestMerge = extra.merged;
+        out.push({ def, ...extra });
+      }
     }
     this.recomputeParty();
     sfx.pickup();
@@ -1468,8 +1710,27 @@ export class GameIdle {
         last = a.name;
       }
     }
+    if (fresh === 0) return;
+    // Di Tích `autoclaim`: trao thưởng luôn thay vì bắt mở bảng. Không gọi
+    // `claimAch()` ở đây — hàm đó tự quét lại thành tựu, và quét lại từ bên
+    // trong vòng quét là đường thẳng tới đệ quy vô hạn.
+    if (this.relicLevel('autoclaim') > 0) {
+      let gems = 0;
+      let n = 0;
+      for (const a of ACHIEVEMENTS) {
+        if (!this.achUnlocked.has(a.id) || this.achClaimed.has(a.id)) continue;
+        this.achClaimed.add(a.id);
+        gems += a.gems;
+        n += 1;
+      }
+      if (n > 0) {
+        this.addGems(gems);
+        this.toast(`⚑ Tự nhận ${n} thành tựu — +${fmt(gems)} Ngọc`, '#7dff5a');
+      }
+      return;
+    }
     if (fresh === 1) this.toast(`⚑ Thành tựu: ${last} — vào bảng nhận Ngọc`, '#7dff5a');
-    else if (fresh > 1) this.toast(`⚑ Mở ${fresh} thành tựu mới — vào bảng nhận Ngọc`, '#7dff5a');
+    else this.toast(`⚑ Mở ${fresh} thành tựu mới — vào bảng nhận Ngọc`, '#7dff5a');
   }
 
   achInfo(): AchInfo {
@@ -1598,6 +1859,11 @@ export class GameIdle {
     this.questClaimedDaily = []; this.questClaimedWeekly = [];
     this.questBaseDaily = {}; this.questBaseWeekly = {};
     this.edictCycle = cycleKeyOf(); this.edictPoints = 0; this.edictLevel = 0; this.edictClaimed = [];
+    this.soulShards = 0; this.relicLv = {};
+    this.badges = 0; this.trialBest = 0; this.trialOwned = new Set(); this.trial = null;
+    this.expeditions = [];
+    this.pendingOffline = null;
+    this.synergy = emptySynergy(); this.synergyActive = [];
     for (const k of Object.keys(this.ctr) as Array<keyof typeof this.ctr>) this.ctr[k] = 0;
     this.syncQuests();
     this.weaponDex = new Set();
@@ -1633,6 +1899,7 @@ export class GameIdle {
   }
 
   private startWave(): void {
+    if (this.trial) { this.startTrialWave(); return; }
     const isLast = this.wave === WAVES_PER_FLOOR - 1;
     const isBoss = isLast && hasBossOnFloor(this.floor);
     if (isBoss) {
@@ -1666,7 +1933,8 @@ export class GameIdle {
     const boss = kind === 'boss';
     const k = boss ? this.bossDef().kind : kind;
     const hp = this.foeHpBase() * (FOE_HP_MUL[k] ?? 1) * (boss ? 2.4 : 1);
-    const ln = boss ? 0 : lane;
+    // Luật Bầy Đàn dựng ba boss cùng lúc — dồn hết vào làn 0 thì chúng chồng lên nhau.
+    const ln = boss && !this.trial ? 0 : lane;
     this.enemies.push({
       uid: this.uid++, kind: k, boss,
       hp, maxHp: hp,
@@ -1738,8 +2006,11 @@ export class GameIdle {
     if (has(h, 'heal') || has(h, 'strongheal') || has(h, 'holysplash')) {
       this.healLowest(dmg * (has(h, 'strongheal') ? 0.9 : 0.4));
     }
-    if (has(h, 'lifesteal') && !h.dead) {
-      const amt = Math.min(h.maxHp - h.hp, dmg * 0.3);
+    // Hút máu gồm cả phần do Liên Kết Huyết Nguyệt cộng vào, nên một đội
+    // không có ai mang kỹ năng `lifesteal` vẫn hút được nếu đủ liên kết.
+    const steal = (has(h, 'lifesteal') ? 0.3 : 0) + this.synergy.lifesteal;
+    if (steal > 0 && !h.dead && !this.trialHasRule('noHeal')) {
+      const amt = Math.min(h.maxHp - h.hp, dmg * steal);
       if (amt > 0) {
         h.hp += amt;
         this.burst(h.x, h.y - 60, 3, '#ff5a7a', 'spark');
@@ -1783,6 +2054,7 @@ export class GameIdle {
   }
 
   private healLowest(amount: number): void {
+    if (this.trialHasRule('noHeal')) return;
     const hurt = this.heroes
       .filter((a) => !a.dead && a.hp < a.maxHp)
       .sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0];
@@ -1806,6 +2078,7 @@ export class GameIdle {
     this.combo += 1;
     this.comboT = BAL.COMBO_WINDOW;
     this.ctr.maxCombo = Math.max(this.ctr.maxCombo, this.combo);
+    this.comboMilestone();
     this.addRage(3.5);
 
     const gold = Math.round(this.goldPerKill() * (e.boss ? 12 : 1));
@@ -1837,6 +2110,10 @@ export class GameIdle {
       this.flash = 0.9; this.flashColor = '#ff3b52';
       this.slowmo = 0.55;
       this.gainXp(this.xpUnit() * 14);
+      // Trong Tháp, boss chỉ là một đợt: không cộng cấp toàn đội và không dọn
+      // tầng. Tiến độ tháp do nhịp đợt ở `updateWorld` quyết định, vì luật
+      // Bầy Đàn có tới ba boss trong một đợt.
+      if (this.trial) return;
       // Thưởng tiến trình: toàn bộ đồng hành sở hữu +1 cấp.
       for (const id of Object.keys(this.ownedCompanions)) {
         this.ownedCompanions[id] = (this.ownedCompanions[id] ?? 1) + 1;
@@ -1974,10 +2251,54 @@ export class GameIdle {
     this.startFloor(cleared + 1, false);
   }
 
+  // ---------- mốc Liên Trảm ----------
+  /**
+   * Mốc 10 / 20 / 30 / 50 chuỗi.
+   * Ba thứ cùng lúc: rung màn hình, vòng sáng quanh Kael, và một buff tốc
+   * đánh tạm thời. Buff cố ý là **tạm thời và tự rơi cùng chuỗi** — cộng
+   * vĩnh viễn thì nó thành một dòng chỉ số nữa, còn thế này thì người chơi
+   * nhìn thấy nhịp đánh nhanh lên rồi chậm lại, và đó mới là phần đã tay.
+   */
+  private comboMilestone(): void {
+    const c = this.combo;
+    if (c !== 10 && c !== 20 && c !== 30 && c !== 50) return;
+    const color = c >= 50 ? '#ff4fd8' : c >= 30 ? '#ff3b52' : c >= 20 ? '#ff9a3c' : '#ffd23c';
+    const kael = this.heroes.find((h) => h.isKael);
+    const x = kael?.x ?? LANE_ANCHOR[0];
+    const y = kael?.y ?? LANE_Y[0];
+    this.ring(x, y - 44, 70 + c, color);
+    this.burst(x, y - 60, 12 + Math.round(c * 0.4), color, 'spark');
+    this.pushText(`${c} LIÊN TRẢM!`, x, y - 150, color, 22, true);
+    this.shake = Math.max(this.shake, 6 + c * 0.14);
+    this.flash = Math.max(this.flash, 0.2 + c * 0.004);
+    this.flashColor = color;
+    this.hitstop = Math.max(this.hitstop, 0.04);
+    sfx.levelup();
+    if (c === 50) this.showBanner('LIÊN TRẢM ×50', 'Tốc đánh toàn đội +30%', color, 2.2);
+  }
+
+  /**
+   * Buff tốc đánh tạm thời do chuỗi Liên Trảm.
+   * Nhân thẳng vào thời gian hồi đòn thay vì gọi `recomputeParty()` — chuỗi
+   * thay đổi mỗi lần hạ quái, dựng lại toàn đội mỗi lần thì vừa tốn vừa làm
+   * mất trạng thái máu và vị trí đang có.
+   */
+  private comboHaste(): number {
+    if (this.combo >= 50) return 1.3;
+    if (this.combo >= 30) return 1.22;
+    if (this.combo >= 20) return 1.16;
+    if (this.combo >= 10) return 1.1;
+    return 1;
+  }
+
   // ---------- nộ khí & tuyệt kỹ ----------
   private addRage(x: number): void {
-    if (this.ultT > 0) return;
-    this.rage = Math.min(BAL.RAGE_MAX, this.rage + x * (1 + this.runeBonus('rage')));
+    // Luật Tĩnh Tâm của Tháp: không tích Nộ, nên không có tuyệt kỹ.
+    if (this.ultT > 0 || this.trialHasRule('noRage')) return;
+    this.rage = Math.min(
+      BAL.RAGE_MAX,
+      this.rage + x * (1 + this.runeBonus('rage')) * this.relicMul('wrath', 0.1),
+    );
     if (this.rage >= BAL.RAGE_MAX) this.unleashUltimate();
   }
   private unleashUltimate(): void {
@@ -2012,7 +2333,8 @@ export class GameIdle {
     this.ctr.downs += 1;
     h.hp = 0;
     h.act = 'dead'; h.actT = 0; h.actDur = 0.6;
-    h.respawnT = h.isKael ? 5 : 6;
+    h.respawnT = (h.isKael ? 5 : 6)
+      * this.synergy.respawnMul * Math.pow(0.88, this.relicLevel('revive'));
     this.burst(h.x, h.y - 60, 16, '#ff5a4a', 'spark');
     this.burst(h.x, h.y - 60, 9, '#8a8a98', 'smoke');
     sfx.hurt();
@@ -2323,6 +2645,7 @@ export class GameIdle {
   sealsPending(): number { return Math.max(0, this.sealsFor(this.bestFloor) - this.seals); }
   canPrestige(): boolean { return this.sealsPending() > 0; }
   prestige(): boolean {
+    if (this.trial) { this.toast('Đang ở trong Tháp — kết thúc trước đã', '#ff9a3c'); sfx.warn(); return false; }
     const gain = this.sealsPending();
     if (gain <= 0) {
       this.toast(`Cần xuống sâu hơn tầng ${BAL.SEAL_MIN_FLOOR} để Thăng Hoa`, '#ff9a3c');
@@ -2331,16 +2654,23 @@ export class GameIdle {
     }
     this.seals += gain;
     this.ctr.prestiges += 1;
-    this.floor = 0;
+    // Mảnh Linh Hồn tỉ lệ với Huyết Ấn vừa nhận, nên đi sâu vẫn là con đường
+    // duy nhất để nuôi Cây Di Tích.
+    const shards = soulShardsFor(gain);
+    this.soulShards += shards;
+    // Di Tích `headstart`: bỏ qua mấy tầng đầu, khỏi phải cày lại từ Cổng Xương.
+    const start = Math.min(this.bestFloor, this.relicLevel('headstart') * 3);
+    this.floor = start;
     this.wave = 0;
     this.combo = 0; this.rage = 0;
-    this.gold = Math.max(this.gold, 2000 * this.sealMul());
+    this.gold = Math.max(this.gold, 2000 * this.sealMul() * this.relicMul('seed', 0.6));
     this.farmMode = false;
     this.recomputeParty();
     this.state = 'playing';
-    this.startFloor(0, true);
-    this.showBanner('THĂNG HOA', `+${gain} Huyết Ấn · Toàn bộ sức mạnh ×${this.sealMul().toFixed(2)}`, '#ff4fd8', 3);
+    this.startFloor(start, true);
+    this.showBanner('THĂNG HOA', `+${gain} Huyết Ấn · +${shards} Mảnh Linh Hồn · sức mạnh ×${this.sealMul().toFixed(2)}`, '#ff4fd8', 3);
     this.toast(`Thăng Hoa! +${gain} Huyết Ấn (tổng ${this.seals})`, '#ff4fd8');
+    this.toast(`+${shards} Mảnh Linh Hồn — mở Cây Di Tích`, '#a78bfa');
     sfx.levelup();
     this.checkAchievements();
     this.save();
@@ -2367,6 +2697,7 @@ export class GameIdle {
    * đợt và vẫn đánh đám quái yếu của độ khó cũ.
    */
   setDungeonMode(m: DungeonMode): boolean {
+    if (this.trial) { this.toast('Đang ở trong Tháp — kết thúc trước đã', '#ff9a3c'); sfx.warn(); return false; }
     if (m !== 'normal' && !this.modesUnlocked()) {
       this.toast(`Phải dọn trọn ${TOTAL_FLOORS} tầng trước đã`, '#ff9a3c');
       sfx.warn();
@@ -2382,6 +2713,433 @@ export class GameIdle {
     this.save();
     this.pushMeta();
     return true;
+  }
+
+  // ---------- Cây Di Tích ----------
+  relicInfo(): RelicInfo {
+    let spent = 0;
+    const rows: RelicRow[] = RELICS.map((r) => {
+      const lv = this.relicLevel(r.id);
+      for (let i = 0; i < lv; i++) spent += relicCostAt(r, i);
+      const cost = relicCostAt(r, lv);
+      const parent = r.need ? relicById(r.need) : undefined;
+      const unlocked = !r.need || this.relicLevel(r.need) > 0;
+      return {
+        id: r.id, name: r.name, desc: r.desc, color: r.color, col: r.col, row: r.row,
+        level: lv, max: r.max, cost,
+        maxed: lv >= r.max,
+        unlocked,
+        needName: unlocked ? null : parent?.name ?? null,
+        effect: lv > 0 ? r.per(lv) : '—',
+        nextEffect: lv < r.max ? r.per(lv + 1) : null,
+        affordable: unlocked && lv < r.max && this.soulShards >= cost,
+      };
+    });
+    return { shards: this.soulShards, spent, rows };
+  }
+
+  upgradeRelic(id: RelicId): boolean {
+    const def = relicById(id);
+    if (!def) return false;
+    if (def.need && this.relicLevel(def.need) === 0) {
+      this.toast(`Cần mở ${relicById(def.need)?.name} trước`, '#ff9a3c');
+      sfx.warn();
+      return false;
+    }
+    const lv = this.relicLevel(id);
+    if (lv >= def.max) { this.toast('Di Tích này đã kịch cấp', '#ff9a3c'); sfx.warn(); return false; }
+    const cost = relicCostAt(def, lv);
+    if (this.soulShards < cost) {
+      this.toast(`Thiếu ${cost - this.soulShards} Mảnh Linh Hồn`, '#ff5a6a');
+      sfx.warn();
+      return false;
+    }
+    this.soulShards -= cost;
+    this.relicLv[id] = lv + 1;
+    this.ctr.upgrades += 1;
+    this.recomputeParty();
+    this.toast(`${def.name} → cấp ${lv + 1} · ${def.per(lv + 1)}`, def.color);
+    sfx.levelup();
+    this.checkAchievements();
+    this.save();
+    this.pushMeta();
+    return true;
+  }
+
+  // ---------- Tháp Thử Thách ----------
+  /** Chỉ số quái trong Tháp bám vào `refFloor` của tầng tháp, không phải tầng đang chơi. */
+  private trialFoeGw(t: TrialDef): number {
+    return t.refFloor * WAVES_PER_FLOOR + WAVES_PER_FLOOR;
+  }
+
+  trialInfo(): TrialInfo {
+    const rows: TrialRow[] = TRIALS.map((t) => {
+      const gwT = this.trialFoeGw(t);
+      return {
+        id: t.id, name: t.name, waves: t.waves, time: t.time, badges: t.badges,
+        rules: t.rules.map((r) => ({
+          name: TRIAL_RULES[r].name, desc: TRIAL_RULES[r].desc, color: TRIAL_RULES[r].color,
+        })),
+        unlocked: this.bestFloor >= trialUnlockFloor(t),
+        unlockFloor: trialUnlockFloor(t) + 1,
+        cleared: this.trialBest >= t.id,
+        foeHp: BAL.FOE_HP0 * Math.pow(BAL.FOE_HP_RATE, gwT - 1) * t.power * 2.4,
+      };
+    });
+    const offers: BadgeRow[] = BADGE_OFFERS.map((o) => ({
+      id: o.id, name: o.name, desc: o.desc, badges: o.badges, color: o.color,
+      owned: o.kind !== 'res' && this.trialOwned.has(o.ref),
+      affordable: this.badges >= o.badges,
+      repeatable: o.kind === 'res',
+    }));
+    return {
+      badges: this.badges,
+      best: this.trialBest,
+      running: this.trial ? { ...this.trial } : null,
+      rows,
+      offers,
+    };
+  }
+
+  /**
+   * Vào một tầng Tháp. Ghi lại tầng đang đứng để trả về nguyên vẹn lúc kết
+   * thúc — Tháp là một nhánh rẽ, không phải một trạng thái mới của mạch chính.
+   */
+  startTrial(id: number): boolean {
+    const t = trialById(id);
+    if (!t) return false;
+    if (this.trial) { this.toast('Đang ở trong Tháp rồi', '#ff9a3c'); sfx.warn(); return false; }
+    if (this.state !== 'playing') return false;
+    if (this.bestFloor < trialUnlockFloor(t)) {
+      this.toast(`Cần chạm tới tầng ${trialUnlockFloor(t) + 1} trước`, '#ff9a3c');
+      sfx.warn();
+      return false;
+    }
+    this.trial = {
+      id: t.id, wave: 1, waves: t.waves, left: t.time,
+      rules: [...t.rules], returnFloor: this.floor,
+    };
+    this.enemies = []; this.projs = []; this.spawnQueue = []; this.pickups = [];
+    this.combo = 0; this.comboT = 0; this.rage = 0;
+    // Dựng lại đội hình: luật Cô Quân và Thân Thuỷ Tinh đổi cả sĩ số lẫn máu.
+    this.recomputeParty();
+    for (const h of this.heroes) { h.hp = h.maxHp; h.dead = false; h.respawnT = 0; h.x = h.homeX; }
+    this.showBanner(`THÁP · ${t.name}`, t.rules.map((r) => TRIAL_RULES[r].name).join(' · '), '#b14bff', 3);
+    this.toast(`Thử thách ${t.id}: ${t.name} — ${t.waves} đợt trong ${t.time}s`, '#b14bff');
+    sfx.roar();
+    this.startTrialWave();
+    this.pushMeta();
+    return true;
+  }
+
+  private startTrialWave(): void {
+    const t = this.trial;
+    if (!t) return;
+    this.bossActive = true;
+    this.spawnQueue = [{ kind: 'boss', delay: 0.7, lane: 0 }];
+    if (t.rules.includes('horde')) {
+      this.spawnQueue.push({ kind: 'boss', delay: 1.3, lane: 1 });
+      this.spawnQueue.push({ kind: 'boss', delay: 1.9, lane: 2 });
+    }
+    this.waveDelay = 1.2;
+    this.showBanner(`ĐỢT ${t.wave}/${t.waves}`, this.bossDef().name, '#ff3b52', 1.8);
+    sfx.roar();
+  }
+
+  private trialWaveCleared(): void {
+    const t = this.trial;
+    if (!t) return;
+    if (t.wave >= t.waves) { this.trialWin(); return; }
+    t.wave += 1;
+    this.startTrialWave();
+  }
+
+  private trialWin(): void {
+    const t = this.trial;
+    if (!t) return;
+    const def = trialById(t.id);
+    const first = this.trialBest < t.id;
+    // Lần đầu trả trọn Huy Hiệu; lần sau còn 30% để cày lại vẫn có nghĩa mà
+    // không biến Tháp thành cỗ máy in tiền.
+    const gain = Math.max(1, Math.round((def?.badges ?? 1) * (first ? 1 : 0.3)));
+    this.badges += gain;
+    if (first) this.trialBest = t.id;
+    this.addEdict(EDICT_PER_BOSS * t.waves);
+    this.showBanner(
+      'VƯỢT THÁP',
+      `${def?.name ?? ''} · +${gain} Huy Hiệu${first ? ' (lần đầu)' : ''}`,
+      '#b14bff', 3.4,
+    );
+    this.toast(`Vượt thử thách ${t.id} — +${gain} Huy Hiệu`, '#b14bff');
+    this.ascendFx('#b14bff', 6 + t.waves);
+    this.endTrial();
+  }
+
+  private trialFail(reason: string): void {
+    const t = this.trial;
+    if (!t) return;
+    this.showBanner('THẤT BẠI', reason, '#ff3b52', 3);
+    this.toast(`Thử thách ${t.id} thất bại — ${reason}`, '#ff3b52');
+    sfx.bossdie();
+    this.shake = Math.max(this.shake, 14);
+    this.flash = 0.7; this.flashColor = '#ff3b52';
+    this.endTrial();
+  }
+
+  /** Rời Tháp và trả mạch chính về đúng chỗ đã rời đi. */
+  private endTrial(): void {
+    const back = this.trial?.returnFloor ?? this.floor;
+    this.trial = null;
+    this.bossActive = false;
+    this.enemies = []; this.projs = []; this.spawnQueue = [];
+    this.recomputeParty();
+    this.startFloor(back, true);
+    this.checkAchievements();
+    this.save();
+    this.pushMeta();
+  }
+
+  /** Bỏ cuộc giữa chừng — mất lượt nhưng không mất gì khác. */
+  abandonTrial(): void {
+    if (!this.trial) return;
+    this.trialFail('Đã rút lui khỏi Tháp');
+  }
+
+  /** Đổi Huy Hiệu lấy phần thưởng. */
+  redeemBadges(id: string): boolean {
+    const o = badgeOfferById(id);
+    if (!o) return false;
+    if (o.kind !== 'res' && this.trialOwned.has(o.ref)) return false;
+    if (this.badges < o.badges) {
+      this.toast(`Thiếu ${o.badges - this.badges} Huy Hiệu`, '#ff5a6a');
+      sfx.warn();
+      return false;
+    }
+    this.badges -= o.badges;
+    if (o.kind === 'skin') {
+      this.trialOwned.add(o.ref);
+      if (!this.ownedSkins.includes(o.ref)) this.ownedSkins.push(o.ref);
+      this.equipSkin(o.ref);
+    } else if (o.kind === 'wskin') {
+      this.trialOwned.add(o.ref);
+      this.equippedWeaponSkin = o.ref;
+      this.recomputeParty();
+      this.ascendFx(o.color, 10);
+    } else {
+      const n = o.amount ?? 1;
+      if (o.ref === 'gem') this.addGems(n);
+      else if (o.ref === 'cloth') { this.clothShards += n; this.ctr.clothEarned += n; }
+      else if (o.ref === 'soul') this.soulShards += n;
+      else if (o.ref === 'wshard') {
+        for (let i = 0; i < n; i++) this.addWeapon(pick(WEAPONS.filter((w) => w.tier === 'divine')).id);
+        this.recomputeParty();
+      }
+    }
+    this.toast(`Đã đổi ${o.name}`, o.color);
+    sfx.levelup();
+    this.checkAchievements();
+    this.save();
+    this.pushMeta();
+    return true;
+  }
+
+  // ---------- Phái Đoàn ----------
+  expeditionSlots(): number { return EXPEDITION_BASE_SLOTS + this.relicLevel('caravan'); }
+
+  /** Lực chiến trung bình của một đồng hành đã sở hữu — mốc để chấm chất lượng chuyến đi. */
+  private avgCompanionPower(): number {
+    const ids = Object.keys(this.ownedCompanions).filter((k) => (this.ownedCompanions[k] ?? 0) > 0);
+    if (ids.length === 0) return 0;
+    let sum = 0;
+    for (const id of ids) sum += this.compPower(COMPANIONS.find((c) => c.id === id) ?? COMPANIONS[0]);
+    return sum / ids.length;
+  }
+
+  private expeditionRewardText(route: ExpeditionRoute, quality: number): string {
+    const specs = EXPEDITION_REWARDS[route.id] ?? [];
+    return specs.map((sp) => {
+      const n = Math.max(1, Math.round(sp.amount * quality));
+      switch (sp.kind) {
+        case 'gem': return `${fmt(this.scaleGems(n))} Ngọc`;
+        case 'gold': return `${n} phút Vàng`;
+        case 'wshard': return `${n} Mảnh Vũ Khí`;
+        case 'cloth': return `${n} Mảnh Trang Phục`;
+        default: return `+${n} cấp cho nhóm đi`;
+      }
+    }).join(' · ');
+  }
+  /** Ngọc của Phái Đoàn co giãn theo độ sâu, giống mọi nguồn Ngọc khác. */
+  private scaleGems(base: number): number {
+    return Math.max(base, Math.round(base * (1 + this.gw() * 0.012) * this.sealMul()));
+  }
+
+  expeditionInfo(): ExpeditionInfo {
+    const slots = this.expeditionSlots();
+    const now = Date.now();
+    const avg = this.avgCompanionPower();
+    const rows: ExpeditionRow[] = [];
+    for (let i = 0; i < slots; i++) {
+      const e = this.expeditions[i];
+      if (!e) {
+        rows.push({
+          index: i, routeId: null, routeName: 'Ô trống', color: '#3a3350',
+          members: [], left: 0, total: 0, ready: false, quality: 0, rewardText: '',
+        });
+        continue;
+      }
+      const r = routeById(e.routeId);
+      const total = (r?.hours ?? 1) * 3600;
+      const left = Math.max(0, (e.endAt - now) / 1000);
+      rows.push({
+        index: i,
+        routeId: e.routeId,
+        routeName: r?.name ?? e.routeId,
+        color: r?.color ?? '#8cdcff',
+        members: e.members.map((m) => {
+          const c = COMPANIONS.find((x) => x.id === m);
+          return { id: m, name: c?.name ?? m, rarity: c?.rarity ?? 'common' };
+        }),
+        left, total, ready: left <= 0, quality: e.quality,
+        rewardText: r ? this.expeditionRewardText(r, e.quality) : '',
+      });
+    }
+    const idleIds = this.idleCompanionIds();
+    return {
+      slots,
+      rows,
+      idle: idleIds.length,
+      routes: EXPEDITION_ROUTES.map((r) => ({
+        id: r.id, name: r.name, desc: r.desc, hours: r.hours, slots: r.slots, color: r.color,
+        ready: idleIds.length >= r.slots,
+        rewardText: this.expeditionRewardText(r, expeditionQuality(
+          this.groupPowerOf(this.pickForRoute(r, idleIds)), avg, r,
+        )),
+      })),
+      ready: rows.filter((x) => x.routeId !== null && x.ready).length,
+    };
+  }
+
+  /**
+   * Đồng hành rảnh, xếp theo đúng thứ tự mà chuyến đi nên bốc.
+   *
+   * Đầu danh sách là **đội dự bị**: những người mạnh nhất trong số KHÔNG có
+   * chân trên sân. Cử họ đi thì đội hình chiến đấu không suy chuyển một chút
+   * nào, mà nhóm đi vẫn đủ mạnh để chuyến có chất lượng cao — đây đúng là
+   * "những đồng hành không dùng đến".
+   *
+   * Xếp người yếu nhất lên đầu (cách làm hiển nhiên hơn) thì mặc định luôn
+   * cho ra chuyến tệ nhất, và người chơi phải tự sửa mỗi lần — một mặc định
+   * mà lần nào cũng phải sửa là một mặc định sai.
+   */
+  private idleCompanionIds(): string[] {
+    const away = this.awayCompanionIds();
+    let cands = COMPANIONS.filter((c) => (this.ownedCompanions[c.id] ?? 0) > 0);
+    if (this.deployedIds !== null) {
+      const set = new Set(this.deployedIds);
+      cands = cands.filter((c) => set.has(c.id));
+    }
+    cands = cands
+      .filter((c) => !away.has(c.id))
+      .sort((a, b) => this.compPower(b) - this.compPower(a));
+    // Ngoài 12 chỗ trên sân là đội dự bị — bốc từ đây trước.
+    const bench = cands.slice(MAX_FIELD);
+    // Hết dự bị mới đụng tới đội chính, và khi đó lấy người yếu nhất.
+    const field = cands.slice(0, MAX_FIELD).reverse();
+    return [...bench, ...field].map((c) => c.id);
+  }
+  private pickForRoute(r: ExpeditionRoute, idle: string[]): string[] {
+    return idle.slice(0, r.slots);
+  }
+  private groupPowerOf(ids: string[]): number {
+    let p = 0;
+    for (const id of ids) {
+      const c = COMPANIONS.find((x) => x.id === id);
+      if (c) p += this.compPower(c);
+    }
+    return p;
+  }
+
+  sendExpedition(routeId: string): boolean {
+    const r = routeById(routeId);
+    if (!r) return false;
+    if (this.expeditions.length >= this.expeditionSlots()) {
+      this.toast('Hết ô Phái Đoàn — nâng Di Tích Thương Đoàn để mở thêm', '#ff9a3c');
+      sfx.warn();
+      return false;
+    }
+    const idle = this.idleCompanionIds();
+    if (idle.length < r.slots) {
+      this.toast(`Cần ${r.slots} đồng hành đang rảnh`, '#ff5a6a');
+      sfx.warn();
+      return false;
+    }
+    const members = this.pickForRoute(r, idle);
+    const quality = expeditionQuality(this.groupPowerOf(members), this.avgCompanionPower(), r);
+    this.expeditions.push({
+      routeId, members, endAt: Date.now() + r.hours * 3600_000, quality,
+    });
+    // Người vừa đi bị rút khỏi sân ngay lập tức — đó là cái giá của chuyến đi.
+    this.recomputeParty();
+    this.toast(`${r.name} khởi hành — ${r.hours} giờ`, r.color);
+    sfx.click();
+    this.save();
+    this.pushMeta();
+    return true;
+  }
+
+  claimExpedition(index: number): boolean {
+    const e = this.expeditions[index];
+    if (!e) return false;
+    if (Date.now() < e.endAt) return false;
+    const r = routeById(e.routeId);
+    this.expeditions.splice(index, 1);
+    if (r) {
+      for (const sp of EXPEDITION_REWARDS[r.id] ?? []) {
+        const n = Math.max(1, Math.round(sp.amount * e.quality));
+        if (sp.kind === 'gem') this.addGems(this.scaleGems(n));
+        else if (sp.kind === 'gold') this.addGold(this.dailyGoldValue(n));
+        else if (sp.kind === 'cloth') { this.clothShards += n; this.ctr.clothEarned += n; }
+        else if (sp.kind === 'wshard') {
+          const tier: WeaponTierId = r.hours >= 24 ? 'legendary' : r.hours >= 8 ? 'epic' : 'rare';
+          for (let i = 0; i < n; i++) this.addWeapon(pick(WEAPONS.filter((w) => w.tier === tier)).id);
+        } else {
+          // Kinh nghiệm rót thẳng vào chính nhóm vừa đi về.
+          for (const m of e.members) {
+            this.ownedCompanions[m] = (this.ownedCompanions[m] ?? 1) + n;
+          }
+        }
+      }
+      this.toast(`${r.name} đã về — ${this.expeditionRewardText(r, e.quality)}`, r.color);
+    }
+    this.recomputeParty();
+    sfx.pickup();
+    this.checkAchievements();
+    this.save();
+    this.pushMeta();
+    return true;
+  }
+
+  claimAllExpeditions(): number {
+    let n = 0;
+    for (let i = this.expeditions.length - 1; i >= 0; i--) {
+      if (this.claimExpedition(i)) n += 1;
+    }
+    return n;
+  }
+
+  // ---------- liên kết ----------
+  synergyInfo(): SynergyInfo {
+    const s = this.synergy;
+    return {
+      active: this.synergyActive.map((a) => ({ ...a })),
+      atkPct: Math.round((s.atkMul - 1) * 100),
+      hpPct: Math.round((s.hpMul - 1) * 100),
+      goldPct: Math.round((s.goldMul - 1) * 100),
+      gemPct: Math.round((s.gemMul - 1) * 100),
+      crit: Math.round(s.crit * 100),
+      aspd: Math.round(s.aspd * 100),
+      lifesteal: Math.round(s.lifesteal * 100),
+    };
   }
 
   // ---------- nhiệm vụ & Huyết Lệnh ----------
@@ -2623,6 +3381,15 @@ export class GameIdle {
           cycle: this.edictCycle, points: this.edictPoints,
           level: this.edictLevel, claimed: this.edictClaimed,
         },
+        soulShards: this.soulShards,
+        relics: this.relicLv,
+        badges: this.badges,
+        trialBest: this.trialBest,
+        trialOwned: [...this.trialOwned],
+        // Lượt Tháp đang chạy KHÔNG được lưu: nó phụ thuộc vào trạng thái sân
+        // (máu từng đơn vị, quái đang đứng đâu) mà bản lưu không giữ. Lưu mỗi
+        // đồng hồ đếm ngược sẽ cho một lượt tháp không thể thắng.
+        expeditions: this.expeditions,
         ctr: this.ctr,
         weaponDex: [...this.weaponDex],
         achUnlocked: [...this.achUnlocked],
@@ -2755,6 +3522,53 @@ export class GameIdle {
     }
     this.syncQuests();
 
+    // ---- Cây Di Tích ----
+    this.soulShards = Math.max(0, Math.round(num('soulShards', 0, 1e9, 0)));
+    if (d.relics && typeof d.relics === 'object') {
+      this.relicLv = {};
+      for (const [k, v] of Object.entries(d.relics as Record<string, unknown>)) {
+        const def = relicById(k as RelicId);
+        if (def && typeof v === 'number' && v > 0) {
+          this.relicLv[def.id] = clamp(Math.round(v), 0, def.max);
+        }
+      }
+    }
+
+    // ---- Tháp Thử Thách ----
+    this.badges = Math.max(0, Math.round(num('badges', 0, 1e9, 0)));
+    this.trialBest = clamp(Math.round(num('trialBest', 0, TRIALS.length, 0)), 0, TRIALS.length);
+    if (Array.isArray(d.trialOwned)) {
+      const valid = new Set(BADGE_OFFERS.map((o) => o.ref));
+      this.trialOwned = new Set(
+        (d.trialOwned as unknown[]).filter((x): x is string => typeof x === 'string' && valid.has(x)),
+      );
+      // Trang phục đổi bằng Huy Hiệu phải có mặt trong tủ đồ sau khi tải lại.
+      for (const ref of this.trialOwned) {
+        if (SKINS.some((s) => s.id === ref) && !this.ownedSkins.includes(ref)) this.ownedSkins.push(ref);
+      }
+    }
+    if (typeof d.equippedWeaponSkin === 'string' && this.trialOwned.has(d.equippedWeaponSkin)) {
+      this.equippedWeaponSkin = d.equippedWeaponSkin;
+    }
+
+    // ---- Phái Đoàn ----
+    if (Array.isArray(d.expeditions)) {
+      const validC = new Set(COMPANIONS.map((c) => c.id));
+      this.expeditions = (d.expeditions as unknown[])
+        .filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === 'object')
+        .map((x) => ({
+          routeId: typeof x.routeId === 'string' ? x.routeId : '',
+          members: Array.isArray(x.members)
+            ? (x.members as unknown[]).filter((m): m is string => typeof m === 'string' && validC.has(m))
+            : [],
+          endAt: typeof x.endAt === 'number' && Number.isFinite(x.endAt) ? x.endAt : 0,
+          quality: typeof x.quality === 'number' && Number.isFinite(x.quality)
+            ? clamp(x.quality, 0.4, 1.35) : 1,
+        }))
+        .filter((e) => routeById(e.routeId) !== undefined && e.members.length > 0)
+        .slice(0, EXPEDITION_BASE_SLOTS + 3);
+    }
+
     if (Array.isArray(d.weaponDex)) {
       const valid = new Set(WEAPONS.map((w) => w.id));
       this.weaponDex = new Set(
@@ -2868,22 +3682,62 @@ export class GameIdle {
     }
 
     // ---- thưởng ngoại tuyến ----
+    // Chỉ TÍNH ở đây, không cộng. Phần cộng nằm ở `claimOffline()` để người
+    // chơi thấy con số trước rồi mới bấm nhận — cộng thầm rồi báo sau thì
+    // bảng tổng kết chỉ còn là một thông báo, không phải một phần thưởng.
     const savedAt = typeof d.savedAt === 'number' ? d.savedAt : 0;
     if (savedAt > 0) {
-      const sec = clamp((Date.now() - savedAt) / 1000, 0, BAL.OFFLINE_CAP_H * 3600);
+      const sec = clamp((Date.now() - savedAt) / 1000, 0, this.offlineCapH() * 3600);
       if (sec > 120) {
         // Ước lượng bằng nhịp farm chủ động (~1.4 quái/giây) nhân hệ số ngoại tuyến.
         this.recomputeParty();
+        const kills = Math.round(1.4 * BAL.OFFLINE_RATE * sec);
         const gold = Math.round(this.goldPerKill() * 1.4 * BAL.OFFLINE_RATE * sec);
         const gems = Math.round(BAL.GEM_CHANCE * this.partyGemAura * 1.4 * BAL.OFFLINE_RATE * sec
           * (2 + this.gw() * 0.4) * this.sealMul() * this.modeRewardMul() * 0.5);
-        this.addGold(gold);
-        this.addGems(gems);
-        this.onEvent({ type: 'offline', report: { seconds: sec, gold, gems } });
+        this.pendingOffline = { seconds: sec, gold, gems, kills, capH: this.offlineCapH() };
+        this.onEvent({ type: 'offline', report: this.pendingOffline });
       }
     }
     this.checkAchievements();
     return true;
+  }
+
+  /**
+   * Trao thưởng ngoại tuyến đang chờ.
+   * Gọi bao nhiêu lần cũng chỉ trao một lần — bảng có ba đường đóng (nút nhận,
+   * dấu X, bấm ra ngoài) và cả ba đều gọi vào đây, nên nếu không tự chốt thì
+   * người chơi nhận được ba lần thưởng.
+   */
+  claimOffline(): OfflineReport | null {
+    const r = this.pendingOffline;
+    if (!r) return null;
+    this.pendingOffline = null;
+    this.addGold(r.gold);
+    this.addGems(r.gems);
+    this.kills += r.kills;
+    this.ctr.kills += r.kills;
+    const kael = this.heroes.find((h) => h.isKael);
+    const x = kael?.x ?? LANE_ANCHOR[0];
+    const y = kael?.y ?? LANE_Y[0];
+    this.burst(x, y - 60, 40, '#ffd23c', 'ember');
+    this.burst(x, y - 60, 24, '#ff4fd8', 'spark');
+    this.ring(x, y - 40, 96, '#ffd23c');
+    for (let i = 0; i < 10; i++) {
+      this.pickups.push({
+        x: x + rand(-70, 70), y: y - 110 - rand(0, 40),
+        vy: -rand(120, 220), vx: rand(-60, 60),
+        kind: i % 3 === 0 ? 'gem' : 'gold', life: 2.6, spin: rand(0, 6),
+      });
+    }
+    this.flash = 0.55; this.flashColor = '#ffd23c';
+    this.shake = Math.max(this.shake, 8);
+    sfx.levelup();
+    sfx.pickup();
+    this.checkAchievements();
+    this.save();
+    this.pushMeta();
+    return r;
   }
 
   // ---------- meta ----------
@@ -2970,6 +3824,19 @@ export class GameIdle {
       quests: this.questInfo(),
       ownedShop: [...this.ownedShop],
       equippedWeaponSkin: this.equippedWeaponSkin,
+      soulShards: this.soulShards,
+      badges: this.badges,
+      synergy: this.synergyInfo(),
+      trial: this.trial ? { ...this.trial } : null,
+      trialName: this.trial ? trialById(this.trial.id)?.name ?? '' : '',
+      expeditionReady: this.expeditions.filter((e) => Date.now() >= e.endAt).length,
+      // Chấm đỏ trên nút Thăng Hoa khi có Mảnh Linh Hồn tiêu được ngay.
+      relicReady: RELICS.some((r) => {
+        const lv = this.relicLevel(r.id);
+        if (lv >= r.max) return false;
+        if (r.need && this.relicLevel(r.need) === 0) return false;
+        return this.soulShards >= relicCostAt(r, lv);
+      }),
     };
   }
 
@@ -3119,10 +3986,28 @@ export class GameIdle {
     // dọn xác đã kết thúc hoạt ảnh chết
     this.enemies = this.enemies.filter((e) => !(e.dead && e.actT >= e.actDur));
 
+    // ---- Tháp Thử Thách: đồng hồ và điều kiện thua ----
+    if (this.trial) {
+      // Đếm bằng thời gian TRẬN chứ không phải thời gian thực: nếu không thì
+      // chỉnh tốc độ ×6 sẽ biến mọi thử thách thành trò đùa.
+      this.trial.left -= dt;
+      if (this.trial.left <= 0) { this.trialFail('Hết giờ'); return; }
+      if (this.heroes.length > 0 && this.heroes.every((h) => h.dead)) {
+        this.trialFail('Cả đội đã gục ngã');
+        return;
+      }
+      // Đợt coi như xong khi mọi boss của đợt đã đổ, kể cả luật Bầy Đàn.
+      if (this.bossActive && this.spawnQueue.length === 0 && this.enemies.every((e) => e.dead)) {
+        this.bossActive = false;
+        this.waveDelay = 1.1;
+      }
+    }
+
     // ---- nhịp đợt ----
     if (this.spawnQueue.length === 0 && this.enemies.every((e) => e.dead) && !this.bossActive) {
       this.waveDelay -= dt;
       if (this.waveDelay <= 0) {
+        if (this.trial) { this.trialWaveCleared(); return; }
         if (this.wave === WAVES_PER_FLOOR - 1 && !hasBossOnFloor(this.floor)) {
           this.floorCleared();
           return;
@@ -3170,6 +4055,11 @@ export class GameIdle {
         if (e.actT >= e.actDur && e.act !== 'dead') { e.act = 'idle'; e.vx = 0; }
       }
       if (e.dead) { e.vx = 0; continue; }
+      // Luật Tái Sinh của Tháp: quái hồi 5% máu tối đa mỗi giây. Đây là bộ
+      // lọc sát thương — đội nào không đủ DPS thì không bao giờ hạ nổi.
+      if (this.trialHasRule('regen') && e.hp < e.maxHp) {
+        e.hp = Math.min(e.maxHp, e.hp + e.maxHp * 0.05 * dt);
+      }
       if (e.hurtT > 0) e.hurtT -= dt;
       if (e.knock > 0) {
         e.x += e.knock * dt * 6;
@@ -3199,7 +4089,7 @@ export class GameIdle {
       if (!inRange) continue;
       e.atkCd -= dt;
       if (e.atkCd <= 0 && e.act === 'idle') {
-        e.atkCd = e.boss ? 1.8 : 1.6;
+        e.atkCd = (e.boss ? 1.8 : 1.6) / (this.trialHasRule('swift') ? 1.5 : 1);
         e.act = 'attack'; e.actT = 0; e.actDur = e.boss ? 0.85 : 0.68; e.hitFired = false;
       }
       if (e.boss) {
@@ -3226,7 +4116,8 @@ export class GameIdle {
     // Ưu tiên tiền phong — vai trò chắn đòn mới có ý nghĩa.
     const front = targets.filter((h) => h.pos === 'front');
     const tgt = front.length > 0 && Math.random() < 0.72 ? pick(front) : pick(targets);
-    this.hitHero(tgt, e.atk * rand(0.9, 1.1) * (e.boss ? 1.15 : 1), e, '#ff5a6a');
+    const frenzy = this.trialHasRule('frenzy') ? 2 : 1;
+    this.hitHero(tgt, e.atk * rand(0.9, 1.1) * (e.boss ? 1.15 : 1) * frenzy, e, '#ff5a6a');
   }
 
   private updateHeroes(dt: number): void {
@@ -3251,6 +4142,9 @@ export class GameIdle {
 
       if (h.dead) {
         h.vx = 0;
+        // Trong Tháp Thử Thách không ai đứng dậy — đó là toàn bộ sức căng của
+        // chế độ này, bỏ đi thì tháp chỉ còn là một tầng thường dài hơn.
+        if (this.trial) return;
         h.respawnT -= dt;
         if (h.respawnT <= 0) {
           h.dead = false;
@@ -3267,8 +4161,10 @@ export class GameIdle {
 
       if (h.hurtT > 0) h.hurtT -= dt;
       if (h.frozenT > 0) { h.frozenT -= dt; h.vx = 0; return; }
-      // hồi máu tự nhiên
-      h.hp = Math.min(h.maxHp, h.hp + h.maxHp * 0.012 * dt);
+      // hồi máu tự nhiên — luật Tuyệt Dược của Tháp chặn mọi nguồn hồi
+      if (!this.trialHasRule('noHeal')) {
+        h.hp = Math.min(h.maxHp, h.hp + h.maxHp * 0.012 * dt);
+      }
 
       if (h.act === 'attack' || h.act === 'cast' || h.act === 'hurt' || h.act === 'spawn') {
         h.vx = 0;
@@ -3284,7 +4180,7 @@ export class GameIdle {
       if (h.ranged) {
         this.moveHeroTo(h, h.homeX, dt, 120);
         if (h.atkCd <= 0 && nearest.x < VIEW_W + 40) {
-          h.atkCd = 1 / h.aspd;
+          h.atkCd = 1 / (h.aspd * this.comboHaste());
           h.act = 'cast'; h.actT = 0;
           h.actDur = clamp(0.72 / Math.max(0.5, h.aspd), 0.3, 1.0);
           h.hitFired = false;
@@ -3306,7 +4202,7 @@ export class GameIdle {
       const speed = closing ? 300 : 160;
       this.moveHeroTo(h, goal, dt, speed);
       if (closing && h.atkCd <= 0 && Math.abs(h.x - strikeX) < 14) {
-        h.atkCd = 1 / h.aspd;
+        h.atkCd = 1 / (h.aspd * this.comboHaste());
         h.act = 'attack'; h.actT = 0;
         h.actDur = clamp(0.6 / Math.max(0.5, h.aspd), 0.26, 0.85);
         h.hitFired = false;

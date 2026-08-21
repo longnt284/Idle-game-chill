@@ -3,20 +3,22 @@ import type { CSSProperties, ReactNode } from 'react';
 import type {
   AchStatId, ChibiLook, CompanionStats, DungeonMode, GachaResult, MetaInfo, OfflineReport, Pos,
   Rarity, RuneId, ShopRow, QuestRow, WeaponDef,
+  RelicRow, TrialRow, BadgeRow, ExpeditionRow, ActiveSynergy,
 } from '../game/engine';
 import {
   ACHIEVEMENTS, ACH_GROUPS, ACH_RANKS, ACH_TOTAL, rankOfTier,
   BAL, COMPANIONS, GACHA_COST, GACHA_X10_COST, GACHA_X100_COST, GACHA_X500_COST, ITEMS,
-  MAX_ITEM_SLOTS, MAX_PARTY, RARITY, RUNES, SKINS, TOTAL_FLOORS, WAVES_PER_FLOOR,
+  MAX_FIELD, MAX_ITEM_SLOTS, MAX_PARTY, RARITY, RUNES, SKINS, TOTAL_FLOORS, WAVES_PER_FLOOR,
   WEAPONS, WEAPON_MERGE, WEAPON_TYPES, WGACHA_COST, WGACHA_X10_COST, WGACHA_X100_COST, EVO_EVERY,
   WTIER, WTIER_ORDER, WEAPON_SKINS_DEF, DUNGEON_MODES, dungeonModeDef,
+  RELICS, SYNERGIES, TRIALS, TRIAL_RULES, EXPEDITION_ROUTES, trialById, trialUnlockFloor,
   fmt, hasBossOnFloor, renderPortrait, weaponTypeDef, zoneOf,
 } from '../game/engine';
 import type { GameIdle } from '../game/engine';
 
 export type PanelId =
   | 'none' | 'summon' | 'party' | 'equip' | 'skin' | 'weapon' | 'pause' | 'prestige' | 'kael'
-  | 'daily' | 'achievement' | 'shop' | 'quest';
+  | 'daily' | 'achievement' | 'shop' | 'quest' | 'trial' | 'expedition';
 
 // ============ nguyên thủy dùng chung ============
 
@@ -50,6 +52,10 @@ const ICONS = {
   cart: 'M7 18a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm10 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM6.2 6h15L19 14H8L6.2 6zM2 2h3l.9 4H4.3L2 2z',
   scroll: 'M6 2h12a2 2 0 0 1 2 2v3h-3v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm1 5h8v2H7V7zm0 4h8v2H7v-2zm0 4h5v2H7v-2z',
   skull: 'M12 2a8 8 0 0 0-8 8v4l2 2v3a1 1 0 0 0 1 1h2v-3h2v3h2v-3h2v3h2a1 1 0 0 0 1-1v-3l2-2v-4a8 8 0 0 0-8-8zM9 11a2 2 0 1 1 0-4 2 2 0 0 1 0 4zm6 0a2 2 0 1 1 0-4 2 2 0 0 1 0 4z',
+  tower: 'M6 2h12v4l-2 2v3h2v11h-5v-5h-2v5H6V11h2V8L6 6V2zm4 2v1.2l1.2 1.2h1.6L14 5.2V4h-4z',
+  compass: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm3.6 6.4-2.2 5.2-5.2 2.2 2.2-5.2 5.2-2.2zM12 11a1 1 0 1 0 0 2 1 1 0 0 0 0-2z',
+  soul: 'M12 2c3 3.4 6 6.2 6 10a6 6 0 0 1-12 0c0-3.8 3-6.6 6-10zm0 6a4 4 0 0 0-4 4h2a2 2 0 0 1 2-2V8z',
+  link: 'M10.6 13.4a4 4 0 0 1 0-5.7l2.8-2.8a4 4 0 1 1 5.7 5.7l-1.4 1.4-1.4-1.4 1.4-1.4a2 2 0 1 0-2.8-2.9l-2.9 2.9a2 2 0 0 0 0 2.8l-1.4 1.4zM13.4 10.6a4 4 0 0 1 0 5.7l-2.8 2.8a4 4 0 1 1-5.7-5.7l1.4-1.4 1.4 1.4-1.4 1.4a2 2 0 1 0 2.8 2.9l2.9-2.9a2 2 0 0 0 0-2.8l1.4-1.4z',
 };
 
 /** Chân dung nhân vật vẽ trên canvas. Chỉ chạy vòng lặp khi thật sự cần động. */
@@ -202,6 +208,7 @@ export function HudOverlay({ meta, engine }: { meta: MetaInfo; engine: GameIdle 
       <PartyStrip party={meta.party} legion={meta.legionCount} />
       <ResourceRail meta={meta} />
       {meta.hud.inBoss && meta.hud.bossMaxHp > 0 && <BossBar meta={meta} />}
+      <TrialHud meta={meta} engine={engine} />
       <ComboBadge meta={meta} />
       <KaelCard meta={meta} />
       <BannerLayer banner={meta.banner} />
@@ -215,8 +222,19 @@ function FloorCard({ meta }: { meta: MetaInfo }): React.JSX.Element {
   const h = meta.hud;
   const zone = zoneOf(h.floor);
   const bossFloor = hasBossOnFloor(h.floor);
+  // Trong Tháp, thẻ này nói về tầng sẽ QUAY VỀ chứ không phải trận đang đánh.
+  // Để nguyên độ tương phản thì người chơi đọc nhầm số đợt của tháp.
+  const inTrial = meta.trial !== null;
   return (
-    <div className="absolute top-3 left-3 hk-glass hk-cut-md px-3 py-2 w-[262px]">
+    <div
+      className="absolute top-3 left-3 hk-glass hk-cut-md px-3 py-2 w-[262px]"
+      style={inTrial ? { opacity: 0.5 } : undefined}
+    >
+      {inTrial && (
+        <div className="font-ui text-[8px] tracking-widest text-[#b14bff] mb-1">
+          ĐANG Ở THÁP — SẼ QUAY VỀ ĐÂY
+        </div>
+      )}
       <div className="flex items-baseline gap-1.5 whitespace-nowrap">
         <span className="font-display text-[19px] leading-none" style={{ color: h.inBoss ? '#ff3b52' : '#ece4d2' }}>
           {h.floor >= TOTAL_FLOORS ? `VỰC ${h.floor - TOTAL_FLOORS + 1}` : `TẦNG ${h.floor + 1}`}
@@ -287,6 +305,14 @@ function ResourceRail({ meta }: { meta: MetaInfo }): React.JSX.Element {
     { v: fmt(h.gems), label: 'NGỌC', color: '#ff4fd8', icon: ICONS.gem },
     { v: fmt(h.power), label: 'LỰC CHIẾN', color: '#ff8a5a', icon: ICONS.bolt },
   ];
+  // Hai loại tiền endgame chỉ chiếm chỗ khi người chơi thật sự có chúng —
+  // thanh tài nguyên phải đọc được trong một cái liếc, không phải một bảng kê.
+  if (meta.soulShards > 0) {
+    rows.push({ v: fmt(meta.soulShards), label: 'LINH HỒN', color: '#a78bfa', icon: ICONS.soul });
+  }
+  if (meta.badges > 0) {
+    rows.push({ v: fmt(meta.badges), label: 'HUY HIỆU', color: '#b14bff', icon: ICONS.tower });
+  }
   return (
     <div className="absolute top-3 right-3 flex flex-col gap-1.5 items-end">
       {rows.map((r) => (
@@ -337,19 +363,97 @@ function ComboBadge({ meta }: { meta: MetaInfo }): React.JSX.Element | null {
   if (combo < 3) return null;
   const tier = combo >= 40 ? '#ff4fd8' : combo >= 20 ? '#ff3b52' : combo >= 10 ? '#ff9a3c' : '#ffd23c';
   const bonus = Math.min(combo, BAL.COMBO_MAX) * 2;
+  // Cùng bảng ngưỡng với `comboHaste()` trong engine — người chơi thấy đúng
+  // con số đang chạy, không phải một ước lượng của giao diện.
+  const haste = combo >= 50 ? 30 : combo >= 30 ? 22 : combo >= 20 ? 16 : combo >= 10 ? 10 : 0;
+  // Số càng to khi chuỗi càng dài: mắt đọc được độ dài chuỗi trước khi đọc số.
+  const size = Math.min(48, 32 + combo * 0.32);
   return (
     <div className="absolute left-3 top-[168px] w-[210px]" key={combo}>
       <div className="anim-combo origin-left" style={{ transform: 'rotate(-4deg)' }}>
         <div className="flex items-baseline gap-1.5 whitespace-nowrap">
-          <span className="font-display leading-none" style={{ fontSize: 32, color: tier, textShadow: `0 0 18px ${tier}, 0 3px 0 #1a0a12` }}>
+          <span
+            className="font-display leading-none"
+            style={{
+              fontSize: size, color: tier,
+              textShadow: `0 0 ${18 + combo * 0.4}px ${tier}, 0 3px 0 #1a0a12`,
+            }}
+          >
             {combo}
           </span>
           <span className="font-display leading-none" style={{ fontSize: 14, color: tier, textShadow: '0 2px 6px #000' }}>
             LIÊN TRẢM
           </span>
         </div>
-        <div className="font-ui text-[9px] font-bold mt-0.5" style={{ color: tier }}>+{bonus}% VÀNG</div>
+        <div className="font-ui text-[9px] font-bold mt-0.5 flex items-center gap-1.5" style={{ color: tier }}>
+          <span>+{bonus}% VÀNG</span>
+          {haste > 0 && (
+            <span
+              className="anim-badge px-1 rounded-sm leading-[1.5]"
+              style={{ background: tier, color: '#170a10' }}
+              title="Chuỗi Liên Trảm đang tăng tốc đánh cho toàn đội"
+            >
+              +{haste}% TỐC ĐÁNH
+            </span>
+          )}
+        </div>
         <Meter pct={comboPct} color={tier} h={3} className="mt-1 w-[92px]" />
+      </div>
+    </div>
+  );
+}
+
+/** Bảng đồng hồ Tháp — chỉ hiện khi đang trong một lượt thử thách. */
+function TrialHud({ meta, engine }: { meta: MetaInfo; engine: GameIdle }): React.JSX.Element | null {
+  const t = meta.trial;
+  if (!t) return null;
+  const def = trialById(t.id);
+  const urgent = t.left <= 15;
+  return (
+    <div
+      className="absolute left-1/2 top-3 -translate-x-1/2 hk-glass hk-cut-md px-4 py-2 pointer-events-auto text-center"
+      style={{ borderColor: urgent ? '#ff3b52' : '#b14bff88', minWidth: 260 }}
+    >
+      <div className="font-display text-[14px] leading-none" style={{ color: '#b14bff' }}>
+        THÁP · {meta.trialName}
+      </div>
+      <div className="flex items-baseline justify-center gap-3 mt-1">
+        <span className="num text-[13px] text-[var(--color-bone)]">ĐỢT {t.wave}/{t.waves}</span>
+        <span
+          className="num text-[22px] leading-none"
+          style={{ color: urgent ? '#ff3b52' : '#ffd23c' }}
+        >
+          {Math.max(0, Math.ceil(t.left))}s
+        </span>
+      </div>
+      <Meter
+        pct={def ? Math.max(0, t.left) / def.time : 0}
+        color={urgent ? '#ff3b52' : '#ffd23c'}
+        h={3}
+        className="mt-1.5"
+      />
+      <div className="flex items-center justify-center gap-1 mt-1.5 flex-wrap">
+        {t.rules.map((r) => (
+          <span
+            key={r}
+            className="hk-tag"
+            style={{
+              color: TRIAL_RULES[r].color,
+              border: `1px solid ${TRIAL_RULES[r].color}55`,
+              background: `${TRIAL_RULES[r].color}14`,
+            }}
+            title={TRIAL_RULES[r].desc}
+          >
+            {TRIAL_RULES[r].name}
+          </span>
+        ))}
+        <button
+          className="hk-tag cursor-pointer"
+          style={{ color: '#ff5a6a', border: '1px solid #ff5a6a55', background: '#ff5a6a14' }}
+          onClick={() => engine.abandonTrial()}
+        >
+          RÚT LUI
+        </button>
       </div>
     </div>
   );
@@ -588,6 +692,23 @@ function DockBar({ meta, engine }: { meta: MetaInfo; engine: GameIdle }): React.
         </button>
         <button
           className="hk-dock"
+          style={{
+            borderColor: meta.expeditionReady > 0 ? '#3fb9ff' : '#3a3350',
+            color: meta.expeditionReady > 0 ? '#bfe6ff' : '#ece4d2',
+            padding: '5px 10px', fontSize: 11,
+            boxShadow: meta.expeditionReady > 0 ? '0 0 16px rgba(63,185,255,0.3)' : undefined,
+          }}
+          onClick={() => dispatchOpen('expedition')}
+          title={meta.expeditionReady > 0
+            ? `${meta.expeditionReady} Phái Đoàn đã về`
+            : 'Cử đồng hành đang rảnh đi làm nhiệm vụ dài'}
+        >
+          <Svg d={ICONS.compass} s={12} c={meta.expeditionReady > 0 ? '#3fb9ff' : '#8fa3b8'} />
+          PHÁI ĐOÀN
+          <DockBadge n={meta.expeditionReady} color="#3fb9ff" />
+        </button>
+        <button
+          className="hk-dock"
           data-on={meta.farmMode}
           style={{
             borderColor: meta.farmMode ? '#8cdcff' : '#3a3350',
@@ -646,17 +767,33 @@ function DockBar({ meta, engine }: { meta: MetaInfo; engine: GameIdle }): React.
         </button>
         <button
           className="hk-dock"
-          style={{ borderColor: canPrestige ? '#a78bfa' : '#3a3350', color: canPrestige ? '#c9b6ff' : '#6f6780' }}
-          onClick={() => dispatchOpen('prestige')}
-          title={canPrestige ? `Sẵn sàng nhận ${meta.sealsPending} Huyết Ấn` : `Cần xuống sâu hơn tầng ${BAL.SEAL_MIN_FLOOR}`}
+          style={{ borderColor: '#b14bff88', color: '#dcc0ff' }}
+          onClick={() => dispatchOpen('trial')}
+          title={`Tháp Thử Thách — ${fmt(meta.badges)} Huy Hiệu trong túi`}
         >
-          <Svg d={ICONS.seal} s={14} c={canPrestige ? '#a78bfa' : '#6f6780'} />
+          <Svg d={ICONS.tower} s={14} c="#b14bff" /> THÁP
+        </button>
+        <button
+          className="hk-dock"
+          style={{
+            borderColor: canPrestige || meta.relicReady ? '#a78bfa' : '#3a3350',
+            color: canPrestige || meta.relicReady ? '#c9b6ff' : '#6f6780',
+          }}
+          onClick={() => dispatchOpen('prestige')}
+          title={canPrestige
+            ? `Sẵn sàng nhận ${meta.sealsPending} Huyết Ấn`
+            : meta.relicReady ? 'Có Mảnh Linh Hồn tiêu được trong Cây Di Tích'
+              : `Cần xuống sâu hơn tầng ${BAL.SEAL_MIN_FLOOR}`}
+        >
+          <Svg d={ICONS.seal} s={14} c={canPrestige || meta.relicReady ? '#a78bfa' : '#6f6780'} />
           THĂNG HOA
           {canPrestige && (
             <span className="num text-[10px] px-1 rounded-sm" style={{ background: '#a78bfa', color: '#140c22' }}>
               +{meta.sealsPending}
             </span>
           )}
+          {/* Chấm riêng cho Cây Di Tích: có Mảnh Linh Hồn tiêu được ngay. */}
+          {meta.relicReady && !canPrestige && <DockBadge n={1} color="#a78bfa" />}
         </button>
       </div>
     </div>
@@ -1065,6 +1202,8 @@ export function PartyModal({ meta, engine, onClose }: { meta: MetaInfo; engine: 
         </div>
       }
     >
+      <SynergyPanel meta={meta} />
+
       {/* Kael — luôn ở đầu vì đây là nơi tiêu vàng đáng giá nhất */}
       <div
         className="rounded-md p-2.5 mb-3 flex gap-3 items-center"
@@ -2056,56 +2195,202 @@ function ProfileTab({ meta }: { meta: MetaInfo }): React.JSX.Element {
 
 // ============ THĂNG HOA ============
 
+type PrestigeTab = 'seal' | 'relic';
+
 export function PrestigeModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }): React.JSX.Element {
+  // Mở thẳng vào Cây Di Tích khi có Mảnh Linh Hồn tiêu được: đó là việc cần
+  // làm ngay, còn Thăng Hoa thì lúc nào bấm cũng được.
+  const [tab, setTab] = useState<PrestigeTab>(meta.relicReady && !meta.canPrestige ? 'relic' : 'seal');
   const next = meta.sealMul + meta.sealsPending * BAL.SEAL_BONUS;
   return (
-    <Modal title="THĂNG HOA" subtitle="Khắc Huyết Ấn lên linh hồn — mạnh hơn vĩnh viễn, rồi đi lại từ tầng 1" accent="#a78bfa" onClose={onClose}>
-      <div className="flex items-center justify-center gap-6 py-2 mb-3">
-        <div className="text-center">
-          <div className="font-ui text-[9px] text-[var(--color-bone-faint)] tracking-widest">HIỆN TẠI</div>
-          <div className="font-display text-[30px] leading-none text-[var(--color-bone)]">×{meta.sealMul.toFixed(2)}</div>
-          <div className="num text-[10px] text-[var(--color-bone-dim)] mt-1">{meta.seals} Huyết Ấn</div>
-        </div>
-        <Svg d={ICONS.chevron} s={22} c="#a78bfa" />
-        <div className="text-center">
-          <div className="font-ui text-[9px] text-[#a78bfa] tracking-widest">SAU KHI THĂNG HOA</div>
-          <div className="font-display text-[30px] leading-none text-[#a78bfa]" style={{ textShadow: '0 0 20px #a78bfa66' }}>
-            ×{next.toFixed(2)}
+    <Modal
+      title="THĂNG HOA"
+      subtitle="Khắc Huyết Ấn lên linh hồn — mạnh hơn vĩnh viễn, rồi đi lại từ đầu"
+      accent="#a78bfa"
+      onClose={onClose}
+      wide={tab === 'relic'}
+    >
+      <div className="flex gap-1.5 mb-3">
+        {([['seal', 'HUYẾT ẤN'], ['relic', 'CÂY DI TÍCH']] as const).map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className="hk-btn flex-1 justify-center"
+            style={{
+              color: tab === id ? '#a78bfa' : 'var(--color-bone-dim)',
+              borderColor: tab === id ? '#a78bfa88' : '#241f33',
+              background: tab === id ? 'rgba(167,139,250,0.1)' : undefined,
+            }}
+          >
+            {label}
+            {id === 'relic' && meta.relicReady && <DockBadge n={1} color="#a78bfa" />}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'seal' ? (
+        <>
+          <div className="flex items-center justify-center gap-6 py-2 mb-3">
+            <div className="text-center">
+              <div className="font-ui text-[9px] text-[var(--color-bone-faint)] tracking-widest">HIỆN TẠI</div>
+              <div className="font-display text-[30px] leading-none text-[var(--color-bone)]">×{meta.sealMul.toFixed(2)}</div>
+              <div className="num text-[10px] text-[var(--color-bone-dim)] mt-1">{meta.seals} Huyết Ấn</div>
+            </div>
+            <Svg d={ICONS.chevron} s={22} c="#a78bfa" />
+            <div className="text-center">
+              <div className="font-ui text-[9px] text-[#a78bfa] tracking-widest">SAU KHI THĂNG HOA</div>
+              <div className="font-display text-[30px] leading-none text-[#a78bfa]" style={{ textShadow: '0 0 20px #a78bfa66' }}>
+                ×{next.toFixed(2)}
+              </div>
+              <div className="num text-[10px] text-[#c9b6ff] mt-1">+{meta.sealsPending} Huyết Ấn</div>
+            </div>
           </div>
-          <div className="num text-[10px] text-[#c9b6ff] mt-1">+{meta.sealsPending} Huyết Ấn</div>
-        </div>
-      </div>
 
-      <div className="rounded-md p-3 mb-3 font-body text-[11px] leading-relaxed text-[var(--color-bone-dim)]" style={{ background: 'rgba(167,139,250,.08)', border: '1px solid #a78bfa44' }}>
-        <p className="mb-2">
-          <b className="text-[#a78bfa]">Giữ nguyên:</b> toàn bộ đồng hành và cấp của họ, vũ khí, vật phẩm, skin, Ngọc, và số Vàng đang có.
-        </p>
-        <p className="mb-2">
-          <b className="text-[#a78bfa]">Đặt lại:</b> quay về tầng 1 để đi lại hành trình — nhưng lần này mọi sát thương, máu và vàng đều nhân với hệ số Huyết Ấn.
-        </p>
-        <p>
-          Số Huyết Ấn nhận được tính theo <b>tầng sâu nhất từng tới</b> (hiện tại: tầng {meta.bestFloor + 1}).
-          Càng xuống sâu trước khi Thăng Hoa, phần thưởng càng lớn — nhưng bạn có thể Thăng Hoa bất cứ lúc nào từ tầng {BAL.SEAL_MIN_FLOOR}.
-        </p>
-      </div>
+          <div className="rounded-md p-3 mb-3 font-body text-[11px] leading-relaxed text-[var(--color-bone-dim)]" style={{ background: 'rgba(167,139,250,.08)', border: '1px solid #a78bfa44' }}>
+            <p className="mb-2">
+              <b className="text-[#a78bfa]">Giữ nguyên:</b> toàn bộ đồng hành và cấp của họ, vũ khí, vật phẩm, skin, Ngọc, và số Vàng đang có.
+            </p>
+            <p className="mb-2">
+              <b className="text-[#a78bfa]">Đặt lại:</b> quay về tầng đầu để đi lại hành trình — nhưng lần này mọi sát thương, máu và vàng đều nhân với hệ số Huyết Ấn.
+            </p>
+            <p className="mb-2">
+              <b className="text-[#a78bfa]">Nhận thêm:</b> Mảnh Linh Hồn để mở Cây Di Tích. Số mảnh tỉ lệ với
+              Huyết Ấn vừa nhận, nên Thăng Hoa sớm ở tầng thấp không phải là đường tắt.
+            </p>
+            <p>
+              Số Huyết Ấn nhận được tính theo <b>tầng sâu nhất từng tới</b> (hiện tại: tầng {meta.bestFloor + 1}).
+              {engine.relicLevel('headstart') > 0 && (
+                <> Di Tích <b className="text-[#b14bff]">Ký Ức Vực Sâu</b> cho anh bắt đầu lại thẳng ở tầng {1 + engine.relicLevel('headstart') * 3}.</>
+              )}
+            </p>
+          </div>
 
-      <button
-        className="btn-blade primary w-full"
-        disabled={!meta.canPrestige}
-        onClick={() => { if (engine.prestige()) onClose(); }}
-      >
-        <Svg d={ICONS.seal} s={16} c="#a78bfa" />
-        {meta.canPrestige ? `THĂNG HOA — NHẬN ${meta.sealsPending} HUYẾT ẤN` : `CẦN XUỐNG SÂU HƠN TẦNG ${BAL.SEAL_MIN_FLOOR}`}
-      </button>
+          <button
+            className="btn-blade primary w-full"
+            disabled={!meta.canPrestige}
+            onClick={() => { if (engine.prestige()) onClose(); }}
+          >
+            <Svg d={ICONS.seal} s={16} c="#a78bfa" />
+            {meta.canPrestige ? `THĂNG HOA — NHẬN ${meta.sealsPending} HUYẾT ẤN` : `CẦN XUỐNG SÂU HƠN TẦNG ${BAL.SEAL_MIN_FLOOR}`}
+          </button>
+        </>
+      ) : (
+        <RelicTree meta={meta} engine={engine} />
+      )}
     </Modal>
   );
 }
 
-// ============ NGOẠI TUYẾN ============
+/**
+ * Cây Di Tích vẽ theo lưới 3 cột × 5 hàng lấy thẳng từ `RELICS[].col/row`.
+ * Toạ độ nằm trong dữ liệu chứ không nằm trong giao diện, nên thêm một nút
+ * mới là sửa đúng một chỗ.
+ */
+function RelicTree({ meta, engine }: { meta: MetaInfo; engine: GameIdle }): React.JSX.Element {
+  const info = engine.relicInfo();
+  const rowsMax = Math.max(...RELICS.map((r) => r.row)) + 1;
+  const byPos = new Map(info.rows.map((r) => [`${r.col}:${r.row}`, r]));
+  return (
+    <>
+      <div
+        className="rounded-md px-3 py-2 mb-3 flex items-center gap-3"
+        style={{ background: 'linear-gradient(120deg, rgba(167,139,250,0.14), #0d0a14 72%)', border: '1.5px solid #a78bfa66' }}
+      >
+        <Svg d={ICONS.soul} s={22} c="#a78bfa" />
+        <div className="flex-1 min-w-0">
+          <div className="font-display text-[15px] leading-none text-[#a78bfa]">MẢNH LINH HỒN</div>
+          <div className="font-body text-[10px] text-[var(--color-bone-dim)] mt-1 leading-snug">
+            Nhận khi Thăng Hoa, tỉ lệ với số Huyết Ấn. Di Tích là <b className="text-[var(--color-bone)]">vĩnh viễn</b> —
+            Thăng Hoa không xoá.
+          </div>
+        </div>
+        <div className="num text-[26px] leading-none text-[#a78bfa] shrink-0">{fmt(info.shards)}</div>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        {Array.from({ length: rowsMax }).map((_, row) => (
+          <div key={row} className="grid grid-cols-3 gap-1.5">
+            {[0, 1, 2].map((col) => {
+              const r = byPos.get(`${col}:${row}`);
+              if (!r) return <div key={col} />;
+              const canBuy = r.affordable && !r.maxed;
+              return (
+                <button
+                  key={col}
+                  onClick={() => engine.upgradeRelic(r.id)}
+                  disabled={!canBuy}
+                  title={r.unlocked
+                    ? `${r.desc}${r.nextEffect ? ` → ${r.nextEffect}` : ''}`
+                    : `Cần mở ${r.needName} trước`}
+                  className="rounded-md px-2 py-1.5 text-left transition-transform hover:-translate-y-0.5 disabled:hover:translate-y-0"
+                  style={{
+                    background: r.level > 0 ? `linear-gradient(140deg, ${r.color}22, #0d0a14 78%)` : 'rgba(18,15,26,0.55)',
+                    border: `1px solid ${r.level > 0 ? r.color : r.unlocked ? `${r.color}44` : '#241f33'}`,
+                    boxShadow: canBuy ? `0 0 12px ${r.color}55` : 'none',
+                    opacity: r.unlocked ? 1 : 0.45,
+                    cursor: canBuy ? 'pointer' : 'default',
+                  }}
+                >
+                  <div className="flex items-baseline gap-1">
+                    <span className="font-display text-[11.5px] leading-tight truncate" style={{ color: r.level > 0 ? r.color : 'var(--color-bone-dim)' }}>
+                      {r.name}
+                    </span>
+                    <span className="num text-[9px] ml-auto shrink-0" style={{ color: r.maxed ? '#7dff5a' : 'var(--color-bone-faint)' }}>
+                      {r.level}/{r.max}
+                    </span>
+                  </div>
+                  <div className="font-ui text-[8.5px] text-[var(--color-bone-faint)] leading-tight mt-0.5 truncate">
+                    {r.level > 0 ? r.effect : r.unlocked ? r.desc : `Khoá — cần ${r.needName}`}
+                  </div>
+                  <div className="flex items-center gap-1 mt-1">
+                    <Meter pct={r.level / r.max} color={r.color} h={3} className="flex-1" />
+                    {!r.maxed && r.unlocked && (
+                      <span
+                        className="num text-[9px] shrink-0 inline-flex items-center gap-0.5"
+                        style={{ color: r.affordable ? r.color : '#6f6780' }}
+                      >
+                        <Svg d={ICONS.soul} s={9} c={r.affordable ? r.color : '#6f6780'} />{r.cost}
+                      </span>
+                    )}
+                    {r.maxed && <span className="font-ui text-[8px] text-[#7dff5a] shrink-0">TỐI ĐA</span>}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+      <p className="font-ui text-[9px] text-[var(--color-bone-faint)] mt-2.5 text-center leading-relaxed">
+        Một nút chỉ mở khi nút nối vào nó đã có ít nhất một cấp · Tổng chi phí cả cây luôn lớn hơn số mảnh
+        kiếm được, nên phải chọn nhánh chứ không mở hết
+      </p>
+    </>
+  );
+}
+
+/** Số đếm chạy từ 0 lên giá trị thật — mắt bám theo con số đang tăng. */
+function CountUp({ to, ms = 900 }: { to: number; ms?: number }): React.JSX.Element {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (to <= 0) { setN(0); return; }
+    let raf = 0;
+    const t0 = performance.now();
+    const tick = (): void => {
+      const k = Math.min(1, (performance.now() - t0) / ms);
+      // easeOutCubic: nhảy nhanh lúc đầu rồi hãm lại đúng con số cuối
+      setN(Math.round(to * (1 - Math.pow(1 - k, 3))));
+      if (k < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [to, ms]);
+  return <>{fmt(n)}</>;
+}
 
 export function OfflineModal({ report, onClose }: { report: OfflineReport; onClose: () => void }): React.JSX.Element {
   const h = Math.floor(report.seconds / 3600);
   const m = Math.floor((report.seconds % 3600) / 60);
+  const capped = report.seconds >= report.capH * 3600 - 60;
   return (
     <Modal title="ĐOÀN QUÂN VẪN HÀNH QUÂN" subtitle="Chiến lợi phẩm thu được khi bạn rời đi" accent="#ffd23c" onClose={onClose}>
       <div className="text-center py-2">
@@ -2113,20 +2398,35 @@ export function OfflineModal({ report, onClose }: { report: OfflineReport; onClo
         <div className="font-display text-[34px] leading-none text-[#ffd23c] mt-1">
           {h > 0 ? `${h} giờ ` : ''}{m} phút
         </div>
-        <div className="grid grid-cols-2 gap-3 mt-4">
-          <div className="hk-cut-sm p-3" style={{ background: 'rgba(255,210,60,.1)', border: '1px solid #ffd23c55' }}>
+        <p className="font-body text-[11px] text-[var(--color-bone-dim)] mt-2 leading-snug">
+          Trong lúc anh vắng mặt, đoàn quân đã hạ <b className="text-[#ff5a4a]">{fmt(report.kills)}</b> con quái
+          và mang về được:
+        </p>
+        <div className="grid grid-cols-3 gap-2.5 mt-3">
+          <div className="hk-cut-sm p-3 anim-fade-up" style={{ background: 'rgba(255,90,74,.1)', border: '1px solid #ff5a4a55' }}>
+            <Svg d={ICONS.sword} s={18} c="#ff5a4a" />
+            <div className="font-display text-[22px] leading-none text-[#ff5a4a] mt-1"><CountUp to={report.kills} /></div>
+            <div className="font-ui text-[9px] text-[var(--color-bone-faint)] tracking-widest mt-0.5">QUÁI</div>
+          </div>
+          <div className="hk-cut-sm p-3 anim-fade-up" style={{ background: 'rgba(255,210,60,.1)', border: '1px solid #ffd23c55' }}>
             <Svg d={ICONS.coin} s={18} c="#ffd23c" />
-            <div className="font-display text-[22px] leading-none text-[#ffd23c] mt-1">+{fmt(report.gold)}</div>
+            <div className="font-display text-[22px] leading-none text-[#ffd23c] mt-1">+<CountUp to={report.gold} /></div>
             <div className="font-ui text-[9px] text-[var(--color-bone-faint)] tracking-widest mt-0.5">VÀNG</div>
           </div>
-          <div className="hk-cut-sm p-3" style={{ background: 'rgba(255,79,216,.1)', border: '1px solid #ff4fd855' }}>
+          <div className="hk-cut-sm p-3 anim-fade-up" style={{ background: 'rgba(255,79,216,.1)', border: '1px solid #ff4fd855' }}>
             <Svg d={ICONS.gem} s={18} c="#ff4fd8" />
-            <div className="font-display text-[22px] leading-none text-[#ff4fd8] mt-1">+{fmt(report.gems)}</div>
+            <div className="font-display text-[22px] leading-none text-[#ff4fd8] mt-1">+<CountUp to={report.gems} /></div>
             <div className="font-ui text-[9px] text-[var(--color-bone-faint)] tracking-widest mt-0.5">NGỌC</div>
           </div>
         </div>
-        <p className="font-body text-[10px] text-[var(--color-bone-faint)] mt-3">
-          Tính theo {Math.round(BAL.OFFLINE_RATE * 100)}% nhịp farm chủ động, tối đa {BAL.OFFLINE_CAP_H} giờ.
+        <p className="font-body text-[10px] text-[var(--color-bone-faint)] mt-3 leading-snug">
+          Tính theo {Math.round(BAL.OFFLINE_RATE * 100)}% nhịp farm chủ động, tối đa {report.capH} giờ.
+          {capped && (
+            <>
+              {' '}<b className="text-[#ff9a3c]">Đã chạm trần</b> — nâng Di Tích
+              {' '}<b className="text-[var(--color-bone-dim)]">Đồng Hồ Cát Vĩnh Cửu</b> để kéo lên tối đa 24 giờ.
+            </>
+          )}
         </p>
         <button className="btn-blade primary w-full mt-4" onClick={onClose}>NHẬN THƯỞNG</button>
       </div>
@@ -2733,5 +3033,385 @@ export function QuestModal({ meta, engine, onClose }: { meta: MetaInfo; engine: 
         Chọn độ khó Hard/Evil ở Vực Vô Tận để nhân Ấn Điểm lên {DUNGEON_MODES[1].edictMul}–{DUNGEON_MODES[2].edictMul} lần
       </p>
     </Modal>
+  );
+}
+
+// ============ THÁP THỬ THÁCH ============
+
+function TrialCard({ row, engine, onClose }: { row: TrialRow; engine: GameIdle; onClose: () => void }): React.JSX.Element {
+  const c = row.cleared ? '#7dff5a' : row.unlocked ? '#b14bff' : '#4c4459';
+  return (
+    <div
+      className="rounded-md p-2.5 flex flex-col"
+      style={{
+        background: row.unlocked ? `linear-gradient(140deg, ${c}18, #0d0a14 78%)` : 'rgba(18,15,26,0.55)',
+        border: `1.5px solid ${row.cleared ? `${c}88` : row.unlocked ? `${c}55` : '#241f33'}`,
+        opacity: row.unlocked ? 1 : 0.55,
+      }}
+    >
+      <div className="flex items-baseline gap-1.5">
+        <span className="num text-[11px] shrink-0" style={{ color: c }}>#{row.id}</span>
+        <span className="font-display text-[13px] leading-none truncate" style={{ color: row.unlocked ? 'var(--color-bone)' : '#6f6780' }}>
+          {row.name}
+        </span>
+        {row.cleared && <Svg d={ICONS.check} s={12} c="#7dff5a" />}
+      </div>
+      <div className="flex flex-wrap gap-1 mt-1.5">
+        {row.rules.map((r) => (
+          <span
+            key={r.name}
+            className="hk-tag"
+            style={{ color: r.color, border: `1px solid ${r.color}55`, background: `${r.color}14` }}
+            title={r.desc}
+          >
+            {r.name}
+          </span>
+        ))}
+      </div>
+      <div className="font-ui text-[9px] text-[var(--color-bone-dim)] mt-1.5">
+        {row.waves} đợt boss · {row.time}s · máu boss ~<b className="text-[var(--color-bone)]">{fmt(row.foeHp)}</b>
+      </div>
+      <div className="mt-1.5">
+        {row.unlocked ? (
+          <button
+            onClick={() => { if (engine.startTrial(row.id)) onClose(); }}
+            className="hk-btn w-full justify-center"
+            style={{ color: c, borderColor: `${c}88` }}
+          >
+            <Svg d={ICONS.tower} s={10} c={c} />
+            {row.cleared ? `ĐÁNH LẠI · +${Math.max(1, Math.round(row.badges * 0.3))}` : `VÀO THÁP · +${row.badges}`}
+          </button>
+        ) : (
+          <div className="font-ui text-[9px] text-[var(--color-bone-faint)] text-center py-1">
+            Mở ở tầng {row.unlockFloor}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BadgeShelf({ offers, badges, engine }: { offers: BadgeRow[]; badges: number; engine: GameIdle }): React.JSX.Element {
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      {offers.map((o) => {
+        const done = o.owned;
+        return (
+          <div
+            key={o.id}
+            className="rounded-md p-2 flex flex-col"
+            style={{
+              background: done ? 'rgba(18,15,26,0.45)' : `linear-gradient(140deg, ${o.color}18, #0d0a14 78%)`,
+              border: `1px solid ${done ? '#241f33' : `${o.color}55`}`,
+              opacity: done ? 0.6 : 1,
+            }}
+          >
+            <div className="font-display text-[11.5px] leading-tight" style={{ color: o.color }}>{o.name}</div>
+            <div className="font-body text-[9px] text-[var(--color-bone-dim)] mt-1 leading-snug flex-1 min-h-[28px]">{o.desc}</div>
+            <button
+              onClick={() => engine.redeemBadges(o.id)}
+              disabled={done || !o.affordable}
+              className="hk-btn w-full justify-center mt-1.5"
+              style={{ color: done ? '#6f6780' : o.color, borderColor: done ? '#241f33' : `${o.color}88` }}
+            >
+              {done ? 'ĐÃ CÓ' : (
+                <>
+                  <Svg d={ICONS.tower} s={10} c={badges >= o.badges ? o.color : '#ff5a6a'} />
+                  {o.badges}
+                </>
+              )}
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export function TrialModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }): React.JSX.Element {
+  const [tab, setTab] = useState<'floors' | 'shelf'>('floors');
+  const info = engine.trialInfo();
+  return (
+    <Modal
+      title="THÁP THỬ THÁCH"
+      subtitle="Boss liên tiếp, có đồng hồ, KHÔNG hồi sinh — nơi duy nhất trong game anh có thể thua"
+      accent="#b14bff"
+      onClose={onClose}
+      wide
+      footer={
+        <div className="flex items-center justify-between gap-3">
+          <div className="num text-[13px] text-[#b14bff] flex items-center gap-1.5">
+            <Svg d={ICONS.tower} s={13} c="#b14bff" /> {fmt(info.badges)}
+            <span className="font-ui text-[9px] tracking-widest text-[var(--color-bone-faint)]">HUY HIỆU</span>
+          </div>
+          <div className="font-ui text-[10px] text-[var(--color-bone-dim)]">
+            Đã vượt <b className="text-[#7dff5a]">{info.best}</b>/{TRIALS.length} tầng tháp
+          </div>
+          <div className="font-ui text-[9px] text-[var(--color-bone-faint)]">
+            Huy Hiệu không mua được bằng Vàng hay Ngọc
+          </div>
+        </div>
+      }
+    >
+      {info.running && (
+        <div
+          className="rounded-md px-3 py-2 mb-3 flex items-center gap-3"
+          style={{ background: 'rgba(255,59,82,0.14)', border: '1.5px solid #ff3b5288' }}
+        >
+          <Svg d={ICONS.tower} s={20} c="#ff3b52" />
+          <div className="flex-1 font-ui text-[11px] text-[var(--color-bone)]">
+            Đang trong thử thách #{info.running.id} — đợt {info.running.wave}/{info.running.waves}
+          </div>
+          <button onClick={() => engine.abandonTrial()} className="hk-btn" style={{ color: '#ff5a6a', borderColor: '#ff5a6a88' }}>
+            RÚT LUI
+          </button>
+        </div>
+      )}
+
+      <div className="flex gap-1.5 mb-3">
+        {([['floors', 'MƯỜI HAI TẦNG THÁP'], ['shelf', 'ĐỔI HUY HIỆU']] as const).map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className="hk-btn flex-1 justify-center"
+            style={{
+              color: tab === id ? '#b14bff' : 'var(--color-bone-dim)',
+              borderColor: tab === id ? '#b14bff88' : '#241f33',
+              background: tab === id ? 'rgba(177,75,255,0.1)' : undefined,
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'floors' ? (
+        <div className="grid grid-cols-3 gap-2">
+          {info.rows.map((r) => <TrialCard key={r.id} row={r} engine={engine} onClose={onClose} />)}
+        </div>
+      ) : (
+        <BadgeShelf offers={info.offers} badges={info.badges} engine={engine} />
+      )}
+      <p className="font-ui text-[9px] text-[var(--color-bone-faint)] mt-3 text-center leading-relaxed">
+        Trong Tháp không ai đứng dậy sau khi gục · Vượt lần đầu trả trọn Huy Hiệu, đánh lại còn 30% ·
+        Thắng hay thua đều trả anh về đúng tầng đang đứng, không mất gì
+      </p>
+    </Modal>
+  );
+}
+
+// ============ PHÁI ĐOÀN ============
+
+function hms(sec: number): string {
+  const s = Math.max(0, Math.ceil(sec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}g ${String(m).padStart(2, '0')}p`;
+  if (m > 0) return `${m}p ${String(s % 60).padStart(2, '0')}s`;
+  return `${s}s`;
+}
+
+function ExpeditionSlotRow({ row, engine }: { row: ExpeditionRow; engine: GameIdle }): React.JSX.Element {
+  if (row.routeId === null) {
+    return (
+      <div
+        className="rounded-md px-3 py-3 text-center font-ui text-[10px] text-[var(--color-bone-faint)]"
+        style={{ background: 'rgba(18,15,26,0.5)', border: '1px dashed #241f33' }}
+      >
+        Ô trống — chọn một tuyến bên dưới để cử người đi
+      </div>
+    );
+  }
+  const pct = row.total > 0 ? 1 - row.left / row.total : 1;
+  return (
+    <div
+      className="rounded-md px-3 py-2"
+      style={{
+        background: `linear-gradient(120deg, ${row.color}18, #0d0a14 74%)`,
+        border: `1.5px solid ${row.ready ? row.color : `${row.color}55`}`,
+        boxShadow: row.ready ? `0 0 14px ${row.color}44` : 'none',
+      }}
+    >
+      <div className="flex items-baseline gap-2">
+        <span className="font-display text-[13px] leading-none" style={{ color: row.color }}>{row.routeName}</span>
+        <span className="font-ui text-[9px] text-[var(--color-bone-faint)] truncate">
+          {row.members.map((m) => m.name).join(', ')}
+        </span>
+        <span className="num text-[11px] ml-auto shrink-0" style={{ color: row.ready ? '#7dff5a' : 'var(--color-bone-dim)' }}>
+          {row.ready ? 'ĐÃ VỀ' : hms(row.left)}
+        </span>
+      </div>
+      <div className="flex items-center gap-2 mt-1.5">
+        <Meter pct={pct} color={row.color} h={4} className="flex-1" />
+        <button
+          onClick={() => engine.claimExpedition(row.index)}
+          disabled={!row.ready}
+          className="hk-btn shrink-0"
+          style={{
+            color: row.ready ? '#0d0a14' : '#6f6780',
+            background: row.ready ? row.color : undefined,
+            borderColor: row.ready ? row.color : '#241f33',
+          }}
+        >
+          NHẬN
+        </button>
+      </div>
+      <div className="font-ui text-[9px] text-[var(--color-bone-dim)] mt-1">
+        {row.rewardText} <span className="text-[var(--color-bone-faint)]">· chất lượng ×{row.quality.toFixed(2)}</span>
+      </div>
+    </div>
+  );
+}
+
+export function ExpeditionModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }): React.JSX.Element {
+  const info = engine.expeditionInfo();
+  return (
+    <Modal
+      title="PHÁI ĐOÀN"
+      subtitle="Cử đồng hành đang rảnh đi làm nhiệm vụ dài — họ rời đội hình cho tới khi về"
+      accent="#3fb9ff"
+      onClose={onClose}
+      wide
+      footer={
+        <div className="flex items-center justify-between gap-3">
+          <div className="font-ui text-[10px] text-[var(--color-bone-dim)]">
+            <b className="text-[#3fb9ff]">{info.idle}</b> đồng hành đang rảnh ·
+            {' '}<b className="text-[var(--color-bone)]">{info.slots}</b> ô Phái Đoàn
+          </div>
+          <button
+            onClick={() => engine.claimAllExpeditions()}
+            disabled={info.ready === 0}
+            className="hk-btn lg solid justify-center"
+            style={{ background: info.ready > 0 ? '#3fb9ff' : '#3a3350', minWidth: 200 }}
+          >
+            <Svg d={ICONS.check} s={14} c="#08202e" /> NHẬN {info.ready} CHUYẾN
+          </button>
+        </div>
+      }
+    >
+      <div className="flex flex-col gap-1.5 mb-3">
+        {info.rows.map((r) => <ExpeditionSlotRow key={r.index} row={r} engine={engine} />)}
+      </div>
+
+      <div className="kicker text-[9px] text-[var(--color-bone-faint)] mb-1.5">TUYẾN ĐI</div>
+      <div className="grid grid-cols-3 gap-2">
+        {info.routes.map((r) => {
+          const full = info.rows.every((x) => x.routeId !== null);
+          const can = r.ready && !full;
+          return (
+            <div
+              key={r.id}
+              className="rounded-md p-2.5 flex flex-col"
+              style={{
+                background: `linear-gradient(140deg, ${r.color}16, #0d0a14 78%)`,
+                border: `1px solid ${can ? `${r.color}66` : '#241f33'}`,
+                opacity: can ? 1 : 0.6,
+              }}
+            >
+              <div className="flex items-baseline gap-1.5">
+                <span className="font-display text-[13px] leading-none" style={{ color: r.color }}>{r.name}</span>
+                <span className="num text-[10px] ml-auto text-[var(--color-bone-dim)]">{r.hours} giờ</span>
+              </div>
+              <div className="font-body text-[9px] text-[var(--color-bone-dim)] mt-1 leading-snug min-h-[30px]">{r.desc}</div>
+              <div className="font-ui text-[9px] mt-1" style={{ color: r.color }}>{r.rewardText}</div>
+              <button
+                onClick={() => engine.sendExpedition(r.id)}
+                disabled={!can}
+                className="hk-btn w-full justify-center mt-1.5"
+                style={{ color: can ? r.color : '#6f6780', borderColor: can ? `${r.color}88` : '#241f33' }}
+              >
+                <Svg d={ICONS.compass} s={10} c={can ? r.color : '#6f6780'} />
+                {full ? 'HẾT Ô' : r.ready ? `CỬ ${r.slots} NGƯỜI` : `CẦN ${r.slots} NGƯỜI RẢNH`}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <p className="font-ui text-[9px] text-[var(--color-bone-faint)] mt-3 text-center leading-relaxed">
+        Chuyến đi tự bốc <b className="text-[var(--color-bone-dim)]">đội dự bị mạnh nhất</b> — những người không có chân
+        trên sân — nên đội hình chiến đấu không suy chuyển · Nhóm càng mạnh thì chất lượng chuyến càng cao · Nâng Di Tích
+        {' '}<b className="text-[#3fb9ff]">Thương Đoàn Mở Rộng</b> để có thêm ô
+      </p>
+    </Modal>
+  );
+}
+
+// ============ LIÊN KẾT ĐỘI HÌNH ============
+
+/**
+ * Bảng Liên Kết đặt ngay trên đầu bảng Đội Hình, không phải trong một bảng
+ * riêng: nó là hệ quả trực tiếp của việc xếp ai ra sân, nên phải nhìn thấy
+ * đúng lúc đang xếp.
+ */
+function SynergyPanel({ meta }: { meta: MetaInfo }): React.JSX.Element {
+  const s = meta.synergy;
+  const stats: Array<[string, number, string, string]> = [
+    ['Công', s.atkPct, '%', '#ff5a4a'],
+    ['Máu', s.hpPct, '%', '#3fe0b0'],
+    ['Chí mạng', s.crit, '%', '#ffd23c'],
+    ['Tốc đánh', s.aspd, '%', '#8cdcff'],
+    ['Hút máu', s.lifesteal, '%', '#ff3b52'],
+    ['Vàng', s.goldPct, '%', '#ffd23c'],
+    ['Ngọc', s.gemPct, '%', '#ff4fd8'],
+  ].filter(([, v]) => (v as number) > 0) as Array<[string, number, string, string]>;
+
+  return (
+    <div
+      className="rounded-md px-3 py-2 mb-3"
+      style={{ background: 'linear-gradient(120deg, rgba(63,224,176,0.12), #0d0a14 74%)', border: '1.5px solid #3fe0b055' }}
+    >
+      <div className="flex items-center gap-2">
+        <Svg d={ICONS.link} s={16} c="#3fe0b0" />
+        <span className="font-display text-[13px] leading-none text-[#3fe0b0]">LIÊN KẾT ĐỘI HÌNH</span>
+        <span className="font-ui text-[9px] text-[var(--color-bone-faint)] ml-auto">
+          Chỉ tính {MAX_FIELD} người đứng trên sân
+        </span>
+      </div>
+
+      {s.active.length === 0 ? (
+        <div className="font-body text-[10px] text-[var(--color-bone-dim)] mt-1.5 leading-snug">
+          Chưa có liên kết nào. Xếp nhiều đồng hành cùng môn phái hoặc cùng vai trò ra sân để mở —
+          hai người cùng phái đã đủ bật bậc đầu tiên.
+        </div>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-1 mt-1.5">
+            {s.active.map((a: ActiveSynergy) => {
+              const on = a.tier >= 0;
+              return (
+                <span
+                  key={a.id}
+                  className="hk-tag"
+                  style={{
+                    color: on ? a.color : '#6f6780',
+                    border: `1px solid ${on ? a.color : '#241f33'}`,
+                    background: on ? `${a.color}18` : 'transparent',
+                  }}
+                  title={a.desc}
+                >
+                  {a.name} {a.count}
+                  {on ? ` · bậc ${a.tier + 1}` : ` → cần ${a.nextNeed}`}
+                </span>
+              );
+            })}
+          </div>
+          {stats.length > 0 && (
+            <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5">
+              {stats.map(([label, v, unit, color]) => (
+                <span key={label} className="font-ui text-[9.5px]" style={{ color }}>
+                  {label} <b className="num">+{v}{unit}</b>
+                </span>
+              ))}
+            </div>
+          )}
+          {/* Dòng mô tả của liên kết mạnh nhất — đủ để hiểu mình vừa mở được gì. */}
+          {s.active[0] && s.active[0].tier >= 0 && (
+            <div className="font-body text-[9.5px] text-[var(--color-bone-dim)] mt-1 leading-snug">
+              <b style={{ color: s.active[0].color }}>{s.active[0].name}:</b> {s.active[0].desc}
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }

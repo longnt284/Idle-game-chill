@@ -5,7 +5,7 @@ import { TitleScreen, StoryScreen, EndScreen } from './ui/screens';
 import {
   HudOverlay, SummonModal, PartyModal, EquipModal, SkinModal, WeaponModal,
   PauseModal, PrestigeModal, OfflineModal, KaelModal, DailyModal, AchievementModal,
-  ShopModal, QuestModal,
+  ShopModal, QuestModal, TrialModal, ExpeditionModal,
 } from './ui/panels';
 import type { PanelId } from './ui/panels';
 
@@ -158,6 +158,8 @@ export default function App(): React.JSX.Element {
           {inGame && eng && meta && panel === 'achievement' && <AchievementModal meta={meta} engine={eng} onClose={closePanel} />}
           {inGame && eng && meta && panel === 'shop' && <ShopModal meta={meta} engine={eng} onClose={closePanel} />}
           {inGame && eng && meta && panel === 'quest' && <QuestModal meta={meta} engine={eng} onClose={closePanel} />}
+          {inGame && eng && meta && panel === 'trial' && <TrialModal meta={meta} engine={eng} onClose={closePanel} />}
+          {inGame && eng && meta && panel === 'expedition' && <ExpeditionModal meta={meta} engine={eng} onClose={closePanel} />}
           {inGame && eng && meta && panel === 'pause' && (
             <PauseModal
               engine={eng}
@@ -166,7 +168,15 @@ export default function App(): React.JSX.Element {
             />
           )}
 
-          {offline && <OfflineModal report={offline} onClose={() => setOffline(null)} />}
+          {/* Thưởng ngoại tuyến chỉ được CỘNG khi bảng đóng lại — engine giữ
+              nó ở trạng thái chờ cho tới lúc đó, và `claimOffline()` tự chốt
+              nên ba đường đóng bảng không thể trao thưởng ba lần. */}
+          {offline && (
+            <OfflineModal
+              report={offline}
+              onClose={() => { engineRef.current?.claimOffline(); setOffline(null); }}
+            />
+          )}
 
           {screen === 'title' && <TitleScreen onStart={startGame} hasSave={hasSave} meta={meta} />}
           {screen === 'story' && <StoryScreen chapter={chapter} onDone={onStoryDone} />}

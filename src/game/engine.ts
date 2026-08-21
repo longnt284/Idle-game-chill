@@ -9,24 +9,35 @@ import {
   GACHA_X500_COST, GACHA_SKINS, ITEMS, MAX_FIELD, MAX_ITEM_SLOTS, MAX_PARTY, RARITY_ORDER,
   SKINS, SKIN_COST, SKIN_SHARD_COST,
   STORY_AFTER, TOTAL_FLOORS, WAVES_PER_FLOOR, WEAPONS, WGACHA_COST, WGACHA_X10_COST,
+  WGACHA_X100_COST,
   bossIndexForFloor, evoStageOf, floorNameOf, fmt, hasBossOnFloor, levelsAffordable,
   rarityIdx, upgradeCostAt, upgradeCostRange, runeCostAt,
   EVOLUTIONS, EVO_EVERY, MAX_EVO, RUNES, TITLES, titleTierOf,
   WEAPON_MERGE, WEAPON_REFINE_STEP, RARITY, nextWeaponOf, weaponById, weaponTypeDef,
+  WTIER, WTIER_ORDER, wtierIdx, MAX_WTIER, rollWeaponTier,
+  DUNGEON_MODES, dungeonModeDef, SHOP_ITEMS, shopEntryById, weaponSkinById,
 } from './data';
 import type {
-  BossDef, CompanionDef, ItemDef, Pos, Rarity, RuneId, SkillId, SkinDef, WeaponDef,
+  BossDef, CompanionDef, DungeonMode, ItemDef, Pos, Rarity, RuneId, ShopEntry, SkillId,
+  SkinDef, WeaponDef, WeaponTierId,
 } from './data';
 import {
   DAILY_CALENDAR, DAILY_CYCLE_DAYS, REWARD_META, cycleKeyOf, dayKeyOf, daysLeftInCycle, prevDayKey,
 } from './daily';
 import type { DailyDay, DailyReward } from './daily';
+import {
+  DAILY_QUEST_SLOTS, EDICT_MAX_LEVEL, EDICT_PER_BOSS, EDICT_PER_WAVE, WEEKLY_QUEST_SLOTS,
+  WEEKLY_SCALE, dailyQuestsOf, edictCostAt, edictRewardAt, questDefById, weekKeyOf,
+  weeklyQuestsOf,
+} from './quests';
+import type { QuestDef, QuestStat } from './quests';
 import { ACHIEVEMENTS, ACH_TOTAL } from './achievements';
 import type { AchStatId } from './achievements';
 
 // ---- tái xuất cho tầng UI ----
 export * from './data';
 export * from './daily';
+export * from './quests';
 export * from './achievements';
 export type { ChibiLook, AnimState } from './types';
 import type { WeaponKind } from './types';
@@ -197,11 +208,63 @@ export interface DailyInfo {
   shardCost: number;
 }
 export interface SkinInfo {
-  id: string; name: string; desc: string; source: 'gacha' | 'login';
+  id: string; name: string; desc: string; source: 'gacha' | 'login' | 'shop';
   owned: boolean; equipped: boolean;
   /** Giá Ngọc — chỉ có nghĩa với skin nguồn `gacha`. */
   gemCost: number;
 }
+export interface ShopRow extends ShopEntry {
+  owned: boolean;
+  equipped: boolean;
+  /** Bị khoá vì chưa chinh phục Tà Vực. */
+  locked: boolean;
+  affordable: boolean;
+}
+export interface ShopInfo {
+  gold: number; gems: number;
+  evilUnlocked: boolean;
+  equippedSkin: string;
+  equippedWeaponSkin: string | null;
+  items: ShopRow[];
+}
+
+export interface QuestRow {
+  id: string;
+  name: string;
+  text: string;
+  color: string;
+  progress: number;
+  target: number;
+  points: number;
+  done: boolean;
+  claimed: boolean;
+}
+export interface EdictTierRow {
+  level: number;
+  label: string;
+  color: string;
+  big: boolean;
+  reached: boolean;
+  claimed: boolean;
+}
+export interface QuestInfo {
+  daily: QuestRow[];
+  weekly: QuestRow[];
+  /** Số ô có thể nhận ngay — dùng cho chấm đỏ trên thanh công cụ. */
+  claimable: number;
+  points: number;
+  level: number;
+  maxLevel: number;
+  /** Điểm cần cho bậc kế tiếp; 0 khi đã kịch bậc. */
+  nextCost: number;
+  progress: number;
+  cycle: string;
+  daysLeft: number;
+  edictMul: number;
+  tiers: EdictTierRow[];
+  claimableTiers: number;
+}
+
 export interface AchInfo {
   unlocked: number;
   claimed: number;
@@ -233,6 +296,14 @@ export interface MetaInfo {
   ach: AchInfo;
   skins: SkinInfo[];
   clothShards: number;
+  /** Độ khó Vực Vô Tận đang chọn. */
+  mode: DungeonMode;
+  /** Đã dọn trọn 100 tầng chưa — điều kiện mở Hard/Evil. */
+  modesUnlocked: boolean;
+  evilCleared: boolean;
+  quests: QuestInfo;
+  ownedShop: string[];
+  equippedWeaponSkin: string | null;
 }
 export type EngineEvent =
   | { type: 'story'; chapter: number }
@@ -334,6 +405,31 @@ export class GameIdle {
   private weaponRefine: Record<string, number> = {};
   private equippedWeapon: string | null = null;
   private deployedIds: string[] | null = null;
+
+  // ---- cửa hàng ----
+  /** Mã những món đã mua ở Cửa Hàng — gồm cả trang phục Kael lẫn skin vũ khí. */
+  private ownedShop = new Set<string>();
+  /** Skin vũ khí đang khoác (`ws_*`), null = dùng chất liệu gốc theo bậc rèn. */
+  private equippedWeaponSkin: string | null = null;
+
+  // ---- độ khó Vực Vô Tận ----
+  private dungeonMode: DungeonMode = 'normal';
+  /** Đã từng dọn ít nhất một tầng ở chế độ Evil — điều kiện mở hai món đắt nhất. */
+  private evilCleared = false;
+
+  // ---- nhiệm vụ & Huyết Lệnh ----
+  private questDayKey = '';
+  private questWeekKey = '';
+  /** Giá trị bộ đếm tại lúc ô nhiệm vụ được sinh ra; tiến độ = hiện tại − mốc này. */
+  private questBaseDaily: Partial<Record<QuestStat, number>> = {};
+  private questBaseWeekly: Partial<Record<QuestStat, number>> = {};
+  private questClaimedDaily: string[] = [];
+  private questClaimedWeekly: string[] = [];
+  /** Ấn Điểm còn lại chưa tiêu vào Huyết Lệnh. */
+  private edictPoints = 0;
+  private edictLevel = 0;
+  private edictClaimed: number[] = [];
+  private edictCycle = cycleKeyOf();
 
   // ---- điểm danh & trang phục ----
   /** Mảnh Trang Phục — tiền tệ duy nhất đổi được sáu bộ skin điểm danh. */
@@ -494,18 +590,34 @@ export class GameIdle {
     if (this.floor < TOTAL_FLOORS) return 1;
     return Math.pow(BAL.ENDLESS_RATE, this.floor - TOTAL_FLOORS + 1);
   }
+  /**
+   * Hệ số độ khó Hard/Evil.
+   * Chỉ có hiệu lực **trong Vực Vô Tận**: đổi độ khó của 100 tầng cốt truyện
+   * sẽ phá vỡ đường cong cân bằng đã tính sẵn, còn ở Vực Vô Tận thì mọi thứ
+   * đằng nào cũng đã vượt xa bảng số gốc nên nhân thêm là an toàn.
+   */
+  private modeFoeMul(): number {
+    if (this.floor < TOTAL_FLOORS) return 1;
+    return dungeonModeDef(this.dungeonMode).foeMul;
+  }
+  /** Hệ số phần thưởng theo độ khó — Hard 0.9, Evil 0.8. */
+  private modeRewardMul(): number {
+    if (this.floor < TOTAL_FLOORS) return 1;
+    return dungeonModeDef(this.dungeonMode).rewardMul;
+  }
   private foeHpBase(): number {
-    return BAL.FOE_HP0 * Math.pow(BAL.FOE_HP_RATE, this.gw() - 1) * this.endlessMul();
+    return BAL.FOE_HP0 * Math.pow(BAL.FOE_HP_RATE, this.gw() - 1) * this.endlessMul() * this.modeFoeMul();
   }
   private foeAtkBase(): number {
-    return BAL.FOE_ATK0 * Math.pow(BAL.FOE_ATK_RATE, this.gw() - 1) * Math.pow(this.endlessMul(), 0.75);
+    return BAL.FOE_ATK0 * Math.pow(BAL.FOE_ATK_RATE, this.gw() - 1)
+      * Math.pow(this.endlessMul(), 0.75) * this.modeFoeMul();
   }
   /** Hệ số nhân vĩnh viễn từ Thăng Hoa. */
   private sealMul(): number { return 1 + this.seals * BAL.SEAL_BONUS; }
   private goldPerKill(): number {
     const combo = 1 + Math.min(this.combo, BAL.COMBO_MAX) * 0.02;
     return BAL.GOLD0 * Math.pow(BAL.GOLD_RATE, this.gw() - 1)
-      * this.partyGoldAura * this.sealMul() * combo;
+      * this.partyGoldAura * this.sealMul() * combo * this.modeRewardMul();
   }
   /** Tổng % cộng thêm từ vật phẩm đang trang bị (đã nhân số bản sao). */
   private itemBonus(): { atk: number; hp: number; crit: number; aspd: number } {
@@ -591,8 +703,16 @@ export class GameIdle {
   private kaelLook(): ChibiLook {
     const base = (SKINS.find((k) => k.id === this.equippedSkin) ?? SKINS[0]).look;
     const stage = this.evoStage();
-    // Vũ khí đang trang bị quyết định hình dáng và độ hào nhoáng trên tay.
-    const armed = { ...base, weapon: this.weaponAnim(), weaponTier: this.weaponTier() };
+    // Vũ khí đang trang bị quyết định hình dáng và độ hào nhoáng trên tay;
+    // skin vũ khí mua ở Cửa Hàng phủ thêm bảng màu và hạt nguyên tố lên đó.
+    const ws = weaponSkinById(this.equippedWeaponSkin);
+    const armed = {
+      ...base,
+      weapon: this.weaponAnim(),
+      weaponTier: this.weaponTier(),
+      weaponSkin: ws?.id,
+      weaponFx: ws?.fx ?? 0,
+    };
     if (stage === 0) return { ...armed, evoTier: 0 };
     const evo = EVOLUTIONS[stage];
     // Tiến Hoá phủ lên skin: đổi hào quang và phụ kiện, giữ nguyên phần còn
@@ -957,7 +1077,7 @@ export class GameIdle {
   }
   private weaponTier(): number {
     const def = this.equippedDef();
-    return def ? rarityIdx(def.tier) : 0;
+    return def ? wtierIdx(def.tier) : 0;
   }
 
   equippedWeaponDef(): {
@@ -1013,7 +1133,7 @@ export class GameIdle {
       this.ownedWeapons[next.id] = (this.ownedWeapons[next.id] ?? 0) + 1;
       this.weaponDex.add(next.id);
       merged = next;
-      this.toast(`${def.name} ×${WEAPON_MERGE} → ${next.name}!`, RARITY[next.tier].color);
+      this.toast(`${def.name} ×${WEAPON_MERGE} → ${next.name}!`, WTIER[next.tier].color);
       sfx.levelup();
       cur = next.id;
     }
@@ -1033,30 +1153,64 @@ export class GameIdle {
     return { isNew, merged };
   }
 
-  weaponGacha(times: 1 | 10 = 1): Array<{ def: WeaponDef; isNew: boolean; merged: WeaponDef | null }> | null {
-    const cost = times === 1 ? WGACHA_COST : WGACHA_X10_COST;
+  weaponGacha(times: 1 | 10 | 100 = 1): Array<{ def: WeaponDef; isNew: boolean; merged: WeaponDef | null }> | null {
+    const cost = times === 1 ? WGACHA_COST : times === 10 ? WGACHA_X10_COST : WGACHA_X100_COST;
     if (this.gems < cost) { this.toast('Không đủ Ngọc để rèn!', '#ff5a6a'); sfx.warn(); return null; }
     this.gems -= cost;
     this.ctr.forges += times;
     const out: Array<{ def: WeaponDef; isNew: boolean; merged: WeaponDef | null }> = [];
+    let bestMerge: WeaponDef | null = null;
     for (let i = 0; i < times; i++) {
-      const r = Math.random();
-      // Tỉ lệ ra thẳng bậc cao được giữ rất thấp: con đường chính lên bậc
-      // phải là gom mảnh trùng, nếu không hệ thống ghép sẽ vô nghĩa.
-      const tier: Rarity = r < 0.002 ? 'mythic'
-        : r < 0.03 ? 'legendary'
-          : r < 0.14 ? 'epic'
-            : r < 0.42 ? 'rare' : 'common';
-      const def = pick(WEAPONS.filter((w) => w.tier === tier));
+      // Bảng tỉ lệ nằm ở data.ts và ba bậc chót KHÔNG có mặt trong đó: con
+      // đường duy nhất lên tới chúng là gom mảnh trùng rồi ghép.
+      const def = pick(WEAPONS.filter((w) => w.tier === rollWeaponTier()));
       const res = this.addWeapon(def.id);
+      if (res.merged && (!bestMerge || res.merged.tierIdx > bestMerge.tierIdx)) bestMerge = res.merged;
       out.push({ def, ...res });
     }
     this.recomputeParty();
     sfx.pickup();
+    // Chỉ phát hoạt cảnh lột xác MỘT lần cho lượt rèn, và cho món cao nhất:
+    // rèn ×100 có thể ghép hàng chục lần, phát hết thì màn hình trắng xoá.
+    if (bestMerge) this.ascendFx(WTIER[bestMerge.tier].color, bestMerge.tierIdx);
     this.checkAchievements();
     this.save();
     this.pushMeta();
     return out;
+  }
+
+  /**
+   * Hoạt cảnh "lột xác": vòng xung, cột sáng, tro bay và khựng hình.
+   * Dùng chung cho lột xác vũ khí và cho việc khoác trang phục mới — hai
+   * khoảnh khắc mà người chơi vừa bỏ công/bỏ của ra, nên chúng phải *nhìn
+   * thấy được* chứ không chỉ là một dòng chữ trôi qua.
+   */
+  private ascendFx(color: string, power: number): void {
+    const kael = this.heroes.find((h) => h.isKael);
+    const x = kael?.x ?? LANE_ANCHOR[0];
+    const y = kael?.y ?? LANE_Y[0];
+    const k = 1 + Math.min(power, MAX_WTIER) / MAX_WTIER; // 1 → 2 theo bậc
+    this.burst(x, y - 60, Math.round(40 * k), color, 'ember');
+    this.burst(x, y - 60, Math.round(26 * k), '#ffffff', 'spark');
+    this.ring(x, y - 34, 70 * k, color);
+    this.ring(x, y - 34, 118 * k, '#ffffff');
+    // cột sáng dựng lên từ chân — hạt bay thẳng lên thay vì toả tròn
+    for (let i = 0; i < Math.round(14 * k); i++) {
+      if (this.parts.length > 460) break;
+      this.parts.push({
+        x: x + rand(-18, 18), y: y - rand(0, 20),
+        vx: rand(-14, 14), vy: -rand(160, 340), g: -40,
+        life: rand(0.5, 1.1), maxLife: 1.1,
+        size: rand(2, 5), color: i % 3 === 0 ? '#ffffff' : color,
+        shape: 'ember', rot: 0, vr: rand(-3, 3),
+      });
+    }
+    this.shake = Math.max(this.shake, 10 + power);
+    this.flash = Math.min(1, 0.45 + power * 0.05);
+    this.flashColor = color;
+    this.slowmo = Math.max(this.slowmo, 0.35);
+    this.hitstop = Math.max(this.hitstop, 0.06);
+    sfx.levelup();
   }
 
   getWeapons(): Array<{ def: WeaponDef; count: number; refine: number; pct: number; toMerge: number }> {
@@ -1105,7 +1259,7 @@ export class GameIdle {
     switch (r.kind) {
       case 'gem': return `${fmt(r.amount)} Ngọc`;
       case 'gold': return `${fmt(this.dailyGoldValue(r.amount))} Vàng`;
-      case 'wshard': return `${r.amount} Mảnh ${RARITY[r.tier ?? 'rare'].name}`;
+      case 'wshard': return `${r.amount} Mảnh ${WTIER[r.tier ?? 'rare'].name}`;
       case 'cloth': return `${r.amount} Mảnh Trang Phục`;
       case 'item': return `${r.amount} Vật Phẩm`;
     }
@@ -1197,7 +1351,7 @@ export class GameIdle {
         kind: r.kind,
         amount: r.kind === 'gold' ? this.dailyGoldValue(r.amount) : r.amount,
         label: this.rewardLabel(r),
-        color: r.kind === 'wshard' ? RARITY[r.tier ?? 'rare'].color : REWARD_META[r.kind].color,
+        color: r.kind === 'wshard' ? WTIER[r.tier ?? 'rare'].color : REWARD_META[r.kind].color,
       })),
       big: day.big === true,
       claimed: day.day <= claimedCount,
@@ -1396,6 +1550,7 @@ export class GameIdle {
     const hasSave = this.load();
     if (!hasSave) { this.gold = 800; this.gems = 1200; }
     else this.toast('Chào mừng trở lại, Đại Ca!', '#ffd23c');
+    this.syncQuests();
     this.recomputeParty();
     this.state = 'playing';
     if (hasSave) this.startFloor(this.floor, true);
@@ -1437,7 +1592,14 @@ export class GameIdle {
     this.clothShards = 0;
     this.dailyCycle = cycleKeyOf(); this.dailyClaimed = 0; this.dailyLastDay = '';
     this.dailyStreak = 0; this.dailyBestStreak = 0; this.dailyTotalDays = 0;
+    this.ownedShop = new Set(); this.equippedWeaponSkin = null;
+    this.dungeonMode = 'normal'; this.evilCleared = false;
+    this.questDayKey = ''; this.questWeekKey = '';
+    this.questClaimedDaily = []; this.questClaimedWeekly = [];
+    this.questBaseDaily = {}; this.questBaseWeekly = {};
+    this.edictCycle = cycleKeyOf(); this.edictPoints = 0; this.edictLevel = 0; this.edictClaimed = [];
     for (const k of Object.keys(this.ctr) as Array<keyof typeof this.ctr>) this.ctr[k] = 0;
+    this.syncQuests();
     this.weaponDex = new Set();
     this.achUnlocked = new Set();
     this.achClaimed = new Set();
@@ -1656,7 +1818,7 @@ export class GameIdle {
     const gemChance = BAL.GEM_CHANCE * this.partyGemAura * (e.boss ? 3 : 1)
       + (killer && has(killer, 'holysplash') ? 0.08 : 0);
     if (Math.random() < gemChance) {
-      const amt = Math.max(1, Math.round((2 + this.gw() * 0.4) * this.sealMul()));
+      const amt = Math.max(1, Math.round((2 + this.gw() * 0.4) * this.sealMul() * this.modeRewardMul()));
       this.addGems(amt);
       this.pickups.push({ x: e.x + 18, y: e.y - 92 * e.scale, vy: -rand(170, 250), vx: rand(-60, 20), kind: 'gem', life: 3.2, spin: rand(0, 6) });
       this.pushText(`+${fmt(amt)} Ngọc`, e.x + 20, e.y - 140, '#ff4fd8', 14, false);
@@ -1666,7 +1828,7 @@ export class GameIdle {
     sfx.pickup();
 
     if (e.boss) {
-      const bonusGem = Math.round((10 + this.floor * 2) * this.sealMul());
+      const bonusGem = Math.round((10 + this.floor * 2) * this.sealMul() * this.modeRewardMul());
       this.addGems(bonusGem);
       this.pushText(`BOSS +${fmt(bonusGem)} Ngọc`, e.x, e.y - 180, '#ff4fd8', 21, true);
       this.toast(`Boss ${this.bossDef().name} đã gục ngã!`, '#ff3b52');
@@ -1765,6 +1927,12 @@ export class GameIdle {
     // Đợt cuối của tầng cũng là một đợt đã dọn — nhánh boss không đi qua nhịp
     // đếm đợt thông thường nên phải cộng ở đây.
     this.ctr.wavesCleared += 1;
+    this.addEdict(EDICT_PER_WAVE + EDICT_PER_BOSS);
+    // Dọn được một tầng ở Tà Vực là mốc mở khoá hai món đắt nhất Cửa Hàng.
+    if (this.dungeonMode === 'evil' && cleared >= TOTAL_FLOORS && !this.evilCleared) {
+      this.evilCleared = true;
+      this.showBanner('TÀ VỰC KHUẤT PHỤC', 'Cửa Hàng mở khoá hai món đắt nhất', '#b14bff', 3.4);
+    }
     this.checkAchievements();
 
     // mốc 10 tầng
@@ -2002,9 +2170,87 @@ export class GameIdle {
 
   equipSkin(id: string): void {
     if (!this.ownedSkins.includes(id)) return;
+    const changed = this.equippedSkin !== id;
     this.equippedSkin = id;
     this.recomputeParty();
     sfx.click();
+    // Khoác bộ mới là một khoảnh khắc, không phải một thao tác cấu hình:
+    // bộ càng đắt (fx càng cao) thì hoạt cảnh càng mạnh.
+    if (changed) {
+      const def = SKINS.find((s) => s.id === id);
+      const fx = def?.look.skinFx ?? 0;
+      this.ascendFx(def?.look.aura ?? '#ff3b52', 2 + fx * 2);
+      this.showBanner('THAY TRANG PHỤC', def?.name ?? '', def?.look.aura ?? '#ff3b52', 2.2);
+    }
+    this.save();
+    this.pushMeta();
+  }
+
+  // ---------- cửa hàng ----------
+  /** Đã chinh phục Tà Vực chưa — hai món đắt nhất chỉ mở sau mốc này. */
+  private shopEvilUnlocked(): boolean { return this.evilCleared; }
+
+  shopInfo(): ShopInfo {
+    return {
+      gold: this.gold,
+      gems: this.gems,
+      evilUnlocked: this.shopEvilUnlocked(),
+      equippedSkin: this.equippedSkin,
+      equippedWeaponSkin: this.equippedWeaponSkin,
+      items: SHOP_ITEMS.map((e) => ({
+        ...e,
+        owned: this.ownedShop.has(e.id),
+        equipped: e.kind === 'hero' ? this.equippedSkin === e.id : this.equippedWeaponSkin === e.id,
+        locked: e.evilOnly === true && !this.shopEvilUnlocked(),
+        affordable: this.gold >= e.gold && this.gems >= e.gems,
+      })),
+    };
+  }
+
+  /**
+   * Mua một món ở Cửa Hàng. Trừ **cả Vàng lẫn Ngọc** trong cùng một giao dịch:
+   * thiếu một trong hai là hỏng cả, không có chuyện trả góp một nửa.
+   */
+  buyShopItem(id: string): boolean {
+    const e: ShopEntry | undefined = shopEntryById(id);
+    if (!e) return false;
+    if (this.ownedShop.has(id)) { this.equipShopItem(id); return false; }
+    if (e.evilOnly && !this.shopEvilUnlocked()) {
+      this.toast('Phải chinh phục Tà Vực (Evil) trước đã', '#b14bff');
+      sfx.warn();
+      return false;
+    }
+    if (this.gold < e.gold || this.gems < e.gems) {
+      this.toast(
+        this.gold < e.gold ? `Thiếu ${fmt(e.gold - this.gold)} Vàng` : `Thiếu ${fmt(e.gems - this.gems)} Ngọc`,
+        '#ff5a6a',
+      );
+      sfx.warn();
+      return false;
+    }
+    this.gold -= e.gold;
+    this.gems -= e.gems;
+    this.ownedShop.add(id);
+    if (e.kind === 'hero' && !this.ownedSkins.includes(id)) this.ownedSkins.push(id);
+    this.showBanner('CỬA HÀNG', `${e.name} đã thuộc về anh`, e.color, 3);
+    this.toast(`Đã mua ${e.name}!`, e.color);
+    this.equipShopItem(id);
+    this.checkAchievements();
+    this.save();
+    this.pushMeta();
+    return true;
+  }
+
+  equipShopItem(id: string): void {
+    const e = shopEntryById(id);
+    if (!e || !this.ownedShop.has(id)) return;
+    if (e.kind === 'hero') { this.equipSkin(id); return; }
+    // Bấm lại vào skin vũ khí đang khoác thì gỡ ra — không cần nút riêng.
+    const off = this.equippedWeaponSkin === id;
+    this.equippedWeaponSkin = off ? null : id;
+    this.recomputeParty();
+    if (!off) this.ascendFx(e.color, 2 + e.fx * 2);
+    else sfx.click();
     this.save();
     this.pushMeta();
   }
@@ -2106,8 +2352,233 @@ export class GameIdle {
     this.state = 'playing';
     this.startFloor(TOTAL_FLOORS, true);
     this.toast('Vực Vô Tận mở ra — dưới đáy không còn đáy nữa', '#a78bfa');
+    this.toast('Ba nấc độ khó đã mở: Thường · Hard · Evil', '#ff9a3c');
     this.save();
     this.pushMeta();
+  }
+
+  // ---------- độ khó Vực Vô Tận ----------
+  /** Hard/Evil chỉ mở sau khi đã dọn trọn 100 tầng. */
+  modesUnlocked(): boolean { return this.bestFloor >= TOTAL_FLOORS || this.victorySeen; }
+  currentMode(): DungeonMode { return this.dungeonMode; }
+  /**
+   * Đổi độ khó. Luôn khởi động lại tầng hiện tại: chỉ số quái được chốt lúc
+   * sinh ra, nên nếu không dọn sân thì người chơi có thể đổi sang Evil giữa
+   * đợt và vẫn đánh đám quái yếu của độ khó cũ.
+   */
+  setDungeonMode(m: DungeonMode): boolean {
+    if (m !== 'normal' && !this.modesUnlocked()) {
+      this.toast(`Phải dọn trọn ${TOTAL_FLOORS} tầng trước đã`, '#ff9a3c');
+      sfx.warn();
+      return false;
+    }
+    if (m === this.dungeonMode) return false;
+    this.dungeonMode = m;
+    const def = dungeonModeDef(m);
+    this.showBanner(def.name, def.desc, def.color, 3.4);
+    this.toast(`Độ khó: ${def.short}`, def.color);
+    sfx.roar();
+    if (this.state === 'playing' && this.floor >= TOTAL_FLOORS) this.startFloor(this.floor, true);
+    this.save();
+    this.pushMeta();
+    return true;
+  }
+
+  // ---------- nhiệm vụ & Huyết Lệnh ----------
+  /** Bộ đếm tích luỹ mà nhiệm vụ bám vào — cùng nguồn với bộ đếm thành tựu. */
+  private questCounter(stat: QuestStat): number { return this.ctr[stat]; }
+
+  /**
+   * Mục tiêu của một ô. Hai chỉ số tiền tệ (Vàng/Ngọc) phải co giãn theo tiến
+   * trình, nếu không thì ở tầng 200 người chơi hoàn thành trước khi kịp đọc đề.
+   */
+  private questTarget(def: QuestDef, weekly: boolean): number {
+    let n = def.base;
+    if (def.scaleWithFloor) {
+      n = def.stat === 'goldEarned'
+        ? Math.max(2000, this.goldPerKill() * 260)
+        : Math.max(300, (2 + this.gw() * 0.4) * this.sealMul() * 55);
+    }
+    if (weekly) n *= WEEKLY_SCALE;
+    return Math.max(1, Math.round(n));
+  }
+
+  /**
+   * Đưa nhiệm vụ về đúng ngày/tuần hiện tại.
+   * Khi sang chu kỳ mới, mốc `baseline` được đặt lại bằng bộ đếm hiện tại —
+   * đó là toàn bộ cơ chế reset, không có bộ đếm riêng nào phải xoá.
+   */
+  private syncQuests(now = new Date()): void {
+    const dk = dayKeyOf(now);
+    if (dk !== this.questDayKey) {
+      this.questDayKey = dk;
+      this.questClaimedDaily = [];
+      this.questBaseDaily = {};
+      for (const q of dailyQuestsOf(dk)) this.questBaseDaily[q.stat] = this.questCounter(q.stat);
+    }
+    const wk = weekKeyOf(now);
+    if (wk !== this.questWeekKey) {
+      this.questWeekKey = wk;
+      this.questClaimedWeekly = [];
+      this.questBaseWeekly = {};
+      for (const q of weeklyQuestsOf(wk)) this.questBaseWeekly[q.stat] = this.questCounter(q.stat);
+    }
+    // Huyết Lệnh reset cùng chu kỳ tháng với lịch điểm danh: một mùa = một tháng.
+    const cyc = cycleKeyOf(now);
+    if (cyc !== this.edictCycle) {
+      this.edictCycle = cyc;
+      this.edictPoints = 0;
+      this.edictLevel = 0;
+      this.edictClaimed = [];
+    }
+  }
+
+  private questRows(weekly: boolean): QuestRow[] {
+    const defs = weekly ? weeklyQuestsOf(this.questWeekKey) : dailyQuestsOf(this.questDayKey);
+    const base = weekly ? this.questBaseWeekly : this.questBaseDaily;
+    const claimed = weekly ? this.questClaimedWeekly : this.questClaimedDaily;
+    return defs.map((d) => {
+      const target = this.questTarget(d, weekly);
+      const progress = clamp(this.questCounter(d.stat) - (base[d.stat] ?? 0), 0, target);
+      return {
+        id: d.id,
+        name: d.name,
+        text: d.text(target),
+        color: d.color,
+        progress,
+        target,
+        points: Math.round(d.points * (weekly ? WEEKLY_SCALE : 1)),
+        done: progress >= target,
+        claimed: claimed.includes(d.id),
+      };
+    });
+  }
+
+  questInfo(): QuestInfo {
+    this.syncQuests();
+    const daily = this.questRows(false);
+    const weekly = this.questRows(true);
+    const nextCost = this.edictLevel >= EDICT_MAX_LEVEL ? 0 : edictCostAt(this.edictLevel);
+    const tiers: EdictTierRow[] = [];
+    for (let lv = 1; lv <= EDICT_MAX_LEVEL; lv++) {
+      const r = edictRewardAt(lv);
+      tiers.push({
+        level: lv, label: r.label, color: r.color, big: r.big === true,
+        reached: this.edictLevel >= lv, claimed: this.edictClaimed.includes(lv),
+      });
+    }
+    return {
+      daily,
+      weekly,
+      claimable: [...daily, ...weekly].filter((q) => q.done && !q.claimed).length,
+      points: this.edictPoints,
+      level: this.edictLevel,
+      maxLevel: EDICT_MAX_LEVEL,
+      nextCost,
+      progress: nextCost > 0 ? clamp(this.edictPoints / nextCost, 0, 1) : 1,
+      cycle: this.edictCycle,
+      daysLeft: daysLeftInCycle(),
+      edictMul: dungeonModeDef(this.dungeonMode).edictMul,
+      tiers,
+      claimableTiers: tiers.filter((t) => t.reached && !t.claimed).length,
+    };
+  }
+
+  /**
+   * Cộng Ấn Điểm. Hard/Evil nhân ở đây — đó là toàn bộ lý do để chọn độ khó
+   * cao dù Vàng/Ngọc rơi ra ít hơn.
+   */
+  private addEdict(n: number): void {
+    if (n <= 0) return;
+    const mul = this.floor >= TOTAL_FLOORS ? dungeonModeDef(this.dungeonMode).edictMul : 1;
+    this.edictPoints += Math.round(n * mul);
+    let leveled = 0;
+    while (this.edictLevel < EDICT_MAX_LEVEL && this.edictPoints >= edictCostAt(this.edictLevel)) {
+      this.edictPoints -= edictCostAt(this.edictLevel);
+      this.edictLevel += 1;
+      leveled += 1;
+    }
+    if (leveled > 0) {
+      this.toast(`HUYẾT LỆNH bậc ${this.edictLevel} — có phần thưởng chờ nhận`, '#ff4fd8');
+      sfx.levelup();
+    }
+  }
+
+  claimQuest(id: string, weekly: boolean): boolean {
+    this.syncQuests();
+    const row = this.questRows(weekly).find((q) => q.id === id);
+    if (!row || !row.done || row.claimed) return false;
+    (weekly ? this.questClaimedWeekly : this.questClaimedDaily).push(id);
+    this.addEdict(row.points);
+    // Nhiệm vụ trả Ngọc kèm Ấn Điểm: một nhịp thưởng dùng được ngay, một nhịp
+    // tích vào mùa giải — thiếu vế đầu thì ô nhiệm vụ ngày cảm giác rỗng.
+    const gems = Math.round(row.points * 6);
+    this.addGems(gems);
+    this.toast(`${row.name} hoàn thành — +${row.points} Ấn Điểm, +${fmt(gems)} Ngọc`, row.color);
+    sfx.pickup();
+    this.checkAchievements();
+    this.save();
+    this.pushMeta();
+    return true;
+  }
+
+  claimAllQuests(): number {
+    this.syncQuests();
+    let n = 0;
+    for (const w of [false, true]) {
+      for (const q of this.questRows(w)) {
+        if (q.done && !q.claimed && this.claimQuest(q.id, w)) n += 1;
+      }
+    }
+    if (n === 0) { this.toast('Chưa có nhiệm vụ nào xong', '#ff9a3c'); sfx.warn(); }
+    return n;
+  }
+
+  /** Nhận phần thưởng của một bậc Huyết Lệnh đã đạt tới. */
+  claimEdict(level: number): boolean {
+    this.syncQuests();
+    if (level < 1 || level > EDICT_MAX_LEVEL) return false;
+    if (this.edictLevel < level || this.edictClaimed.includes(level)) return false;
+    this.edictClaimed.push(level);
+    const r = edictRewardAt(level);
+    if (r.kind === 'gem') this.addGems(r.amount);
+    else if (r.kind === 'gold') this.addGold(this.dailyGoldValue(r.amount));
+    else if (r.kind === 'cloth') { this.clothShards += r.amount; this.ctr.clothEarned += r.amount; }
+    else if (r.kind === 'item') {
+      for (let i = 0; i < r.amount; i++) {
+        const it = pick(ITEMS);
+        this.ownedItems[it.id] = (this.ownedItems[it.id] ?? 0) + 1;
+        if (!this.equippedItems.includes(it.id) && this.equippedItems.length < MAX_ITEM_SLOTS) {
+          this.equippedItems.push(it.id);
+        }
+      }
+    } else {
+      // Mảnh vũ khí của Huyết Lệnh lấy bậc theo độ sâu của mùa: bậc 10 cho
+      // Cực Hiếm, bậc 40 cho Thần Khí — cao hơn hẳn mức lịch điểm danh trả.
+      const tier: WeaponTierId = level >= 40 ? 'divine' : level >= 30 ? 'mythic'
+        : level >= 20 ? 'legendary' : 'epic';
+      for (let i = 0; i < r.amount; i++) {
+        this.addWeapon(pick(WEAPONS.filter((w) => w.tier === tier)).id);
+      }
+    }
+    this.recomputeParty();
+    this.toast(`Huyết Lệnh bậc ${level} — ${r.label}`, r.color);
+    sfx.pickup();
+    this.checkAchievements();
+    this.save();
+    this.pushMeta();
+    return true;
+  }
+
+  claimAllEdict(): number {
+    this.syncQuests();
+    let n = 0;
+    for (let lv = 1; lv <= this.edictLevel; lv++) {
+      if (this.claimEdict(lv)) n += 1;
+    }
+    if (n === 0) { this.toast('Chưa có bậc Huyết Lệnh nào chờ nhận', '#ff9a3c'); sfx.warn(); }
+    else this.showBanner('HUYẾT LỆNH', `Nhận ${n} bậc phần thưởng`, '#ff4fd8', 2.6);
+    return n;
   }
   newGamePlus(): void {
     this.floor = 0; this.wave = 0;
@@ -2123,7 +2594,7 @@ export class GameIdle {
   save = (): void => {
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
-        v: 3,
+        v: 4,
         gold: this.gold, gems: this.gems, kaelLevel: this.kaelLevel, kaelXp: this.kaelXp,
         seals: this.seals, bestFloor: this.bestFloor,
         floor: this.floor, wave: this.wave, kills: this.kills, playTime: this.playTime,
@@ -2138,6 +2609,19 @@ export class GameIdle {
         daily: {
           cycle: this.dailyCycle, claimed: this.dailyClaimed, lastDay: this.dailyLastDay,
           streak: this.dailyStreak, best: this.dailyBestStreak, total: this.dailyTotalDays,
+        },
+        ownedShop: [...this.ownedShop],
+        equippedWeaponSkin: this.equippedWeaponSkin,
+        dungeonMode: this.dungeonMode,
+        evilCleared: this.evilCleared,
+        quests: {
+          dayKey: this.questDayKey, weekKey: this.questWeekKey,
+          baseDaily: this.questBaseDaily, baseWeekly: this.questBaseWeekly,
+          claimedDaily: this.questClaimedDaily, claimedWeekly: this.questClaimedWeekly,
+        },
+        edict: {
+          cycle: this.edictCycle, points: this.edictPoints,
+          level: this.edictLevel, claimed: this.edictClaimed,
         },
         ctr: this.ctr,
         weaponDex: [...this.weaponDex],
@@ -2203,6 +2687,74 @@ export class GameIdle {
       this.dailyTotalDays = n('total', 1e6);
     }
     this.syncDaily();
+
+    // ---- cửa hàng & độ khó ----
+    if (Array.isArray(d.ownedShop)) {
+      const valid = new Set(SHOP_ITEMS.map((s) => s.id));
+      this.ownedShop = new Set(
+        (d.ownedShop as unknown[]).filter((x): x is string => typeof x === 'string' && valid.has(x)),
+      );
+    }
+    if (typeof d.equippedWeaponSkin === 'string' && this.ownedShop.has(d.equippedWeaponSkin)) {
+      this.equippedWeaponSkin = d.equippedWeaponSkin;
+    }
+    this.evilCleared = d.evilCleared === true;
+    if (typeof d.dungeonMode === 'string' && DUNGEON_MODES.some((m) => m.id === d.dungeonMode)) {
+      this.dungeonMode = d.dungeonMode as DungeonMode;
+    }
+
+    // ---- nhiệm vụ & Huyết Lệnh ----
+    // Nạp TRƯỚC `syncQuests()`: sync so khoá ngày/tuần đã lưu với hôm nay để
+    // quyết định giữ hay đặt lại mốc, nên nếu chưa nạp thì mọi tiến độ đang
+    // dở sẽ bị coi là của chu kỳ cũ và bay sạch mỗi lần vào game.
+    if (d.quests && typeof d.quests === 'object') {
+      const q = d.quests as Record<string, unknown>;
+      if (typeof q.dayKey === 'string') this.questDayKey = q.dayKey;
+      if (typeof q.weekKey === 'string') this.questWeekKey = q.weekKey;
+      const baseOf = (v: unknown): Partial<Record<QuestStat, number>> => {
+        const out: Partial<Record<QuestStat, number>> = {};
+        if (!v || typeof v !== 'object') return out;
+        for (const [k, n] of Object.entries(v as Record<string, unknown>)) {
+          if (typeof n === 'number' && Number.isFinite(n) && n >= 0) out[k as QuestStat] = n;
+        }
+        return out;
+      };
+      this.questBaseDaily = baseOf(q.baseDaily);
+      this.questBaseWeekly = baseOf(q.baseWeekly);
+      const ids = (v: unknown): string[] => (Array.isArray(v)
+        ? (v as unknown[]).filter((x): x is string => typeof x === 'string' && questDefById(x) !== undefined)
+        : []);
+      this.questClaimedDaily = ids(q.claimedDaily);
+      this.questClaimedWeekly = ids(q.claimedWeekly);
+    } else {
+      // Bản lưu cũ chưa có khối nhiệm vụ. Giao diện đã gọi `getMeta()` một lần
+      // TRƯỚC khi bản lưu được nạp, nên `syncQuests()` lúc đó đã chốt mốc theo
+      // bộ đếm rỗng và khoá ngày hôm nay — nếu để nguyên thì mốc bằng 0 trong
+      // khi bộ đếm thật là hàng nghìn, và mọi ô nhiệm vụ xong ngay khi vào game.
+      // Xoá khoá để `syncQuests()` bên dưới chốt lại theo bộ đếm vừa nạp.
+      this.questDayKey = '';
+      this.questWeekKey = '';
+      this.questClaimedDaily = [];
+      this.questClaimedWeekly = [];
+      this.questBaseDaily = {};
+      this.questBaseWeekly = {};
+    }
+    if (d.edict && typeof d.edict === 'object') {
+      const e = d.edict as Record<string, unknown>;
+      if (typeof e.cycle === 'string') this.edictCycle = e.cycle;
+      if (typeof e.points === 'number' && Number.isFinite(e.points)) {
+        this.edictPoints = clamp(Math.round(e.points), 0, 1e9);
+      }
+      if (typeof e.level === 'number' && Number.isFinite(e.level)) {
+        this.edictLevel = clamp(Math.round(e.level), 0, EDICT_MAX_LEVEL);
+      }
+      if (Array.isArray(e.claimed)) {
+        this.edictClaimed = (e.claimed as unknown[])
+          .filter((x): x is number => typeof x === 'number' && x >= 1 && x <= this.edictLevel);
+      }
+    }
+    this.syncQuests();
+
     if (Array.isArray(d.weaponDex)) {
       const valid = new Set(WEAPONS.map((w) => w.id));
       this.weaponDex = new Set(
@@ -2324,7 +2876,7 @@ export class GameIdle {
         this.recomputeParty();
         const gold = Math.round(this.goldPerKill() * 1.4 * BAL.OFFLINE_RATE * sec);
         const gems = Math.round(BAL.GEM_CHANCE * this.partyGemAura * 1.4 * BAL.OFFLINE_RATE * sec
-          * (2 + this.gw() * 0.4) * this.sealMul() * 0.5);
+          * (2 + this.gw() * 0.4) * this.sealMul() * this.modeRewardMul() * 0.5);
         this.addGold(gold);
         this.addGems(gems);
         this.onEvent({ type: 'offline', report: { seconds: sec, gold, gems } });
@@ -2412,6 +2964,12 @@ export class GameIdle {
       ach: this.achInfo(),
       skins: this.skinInfo(),
       clothShards: this.clothShards,
+      mode: this.dungeonMode,
+      modesUnlocked: this.modesUnlocked(),
+      evilCleared: this.evilCleared,
+      quests: this.questInfo(),
+      ownedShop: [...this.ownedShop],
+      equippedWeaponSkin: this.equippedWeaponSkin,
     };
   }
 
@@ -2571,6 +3129,7 @@ export class GameIdle {
         }
         this.wave = Math.min(WAVES_PER_FLOOR - 1, this.wave + 1);
         this.ctr.wavesCleared += 1;
+        this.addEdict(EDICT_PER_WAVE);
         this.gainXp(this.xpUnit() * 3);
         this.startWave();
       }
@@ -2583,6 +3142,9 @@ export class GameIdle {
     if (this.achCheckT >= 2) {
       this.achCheckT = 0;
       this.checkAchievements();
+      // Tab để mở qua nửa đêm là chuyện thường: nhịp quét này cũng là chỗ
+      // nhiệm vụ ngày/tuần đổi sang chu kỳ mới mà không cần hẹn giờ riêng.
+      this.syncQuests();
     }
 
     this.refreshHud();

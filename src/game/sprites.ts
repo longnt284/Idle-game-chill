@@ -90,12 +90,18 @@ type Track = { keys: Array<[number, ActKey]>; eases: Array<(t: number) => number
 const MELEE_TRACK: Track = {
   keys: [
     [0.00, K({})],
-    [0.28, K({ ox: -9, lean: -0.2, spine: -0.24, head: -0.12, sF: -2.5, eF: 1.2, sB: 0.7, wrist: -0.6, squash: 0.95, kB: 0.34, hF: -0.3 })],
-    [0.46, K({ ox: 26, lean: 0.34, spine: 0.4, head: 0.16, sF: 0.95, eF: 0.1, sB: -0.85, wrist: 0.42, squash: 1.06, hB: -0.5, hF: 0.55, kF: 0.38 })],
-    [0.64, K({ ox: 15, lean: 0.15, spine: 0.19, head: 0.05, sF: 1.28, eF: 0.32, sB: -0.3, wrist: 0.58, squash: 1.0, hB: -0.22, hF: 0.28, kF: 0.18 })],
+    // dồn lực: bắt đầu chậm rồi mới xiết lại — nhịp "hít vào" trước khi bung
+    [0.14, K({ ox: -3, lean: -0.07, spine: -0.09, head: -0.05, sF: -0.9, eF: 0.7, sB: 0.28, wrist: -0.22, squash: 0.985, kB: 0.12 })],
+    [0.30, K({ ox: -10, lean: -0.22, spine: -0.26, head: -0.13, sF: -2.62, eF: 1.25, sB: 0.75, wrist: -0.65, squash: 0.945, kB: 0.36, hF: -0.32 })],
+    // chạm: đúng nhịp engine ghi nhận sát thương (actionT 0.42)
+    [0.44, K({ ox: 27, lean: 0.36, spine: 0.42, head: 0.17, sF: 1.02, eF: 0.08, sB: -0.9, wrist: 0.46, squash: 1.07, hB: -0.52, hF: 0.58, kF: 0.4 })],
+    [0.60, K({ ox: 16, lean: 0.16, spine: 0.2, head: 0.05, sF: 1.34, eF: 0.34, sB: -0.32, wrist: 0.6, squash: 1.0, hB: -0.24, hF: 0.3, kF: 0.2 })],
+    // lắc ngược nhẹ trước khi về nghỉ: chỗ trước kia là một đoạn nội suy dài
+    // 0.36 giây nên trông trôi tuột, giờ có nhịp thu tay rõ ràng
+    [0.80, K({ ox: 4, lean: -0.05, spine: -0.06, head: -0.03, sF: 0.28, eF: 0.34, sB: 0.06, wrist: 0.12, squash: 0.99, hF: 0.06 })],
     [1.00, K({})],
   ],
-  eases: [easeOutCubic, easeOutQuint, easeOutCubic, easeInOutCubic],
+  eases: [easeInQuad, easeInOutCubic, easeOutQuint, easeOutCubic, easeInOutCubic, easeInOutCubic],
 };
 
 /** Niệm phép: nâng tay tụ lực → phóng ra → thu về. */
@@ -315,45 +321,121 @@ const WEAPON_REST: Record<WeaponKind, number> = {
 const WEAPON_TRAIL = new Set<WeaponKind>(['sword', 'spear', 'daggers', 'greatsword', 'scythe', 'twinblade', 'hammer']);
 
 /**
- * Bảng chất liệu theo bậc vũ khí (0 Thường … 4 Thần Thoại).
- * Bậc càng cao lưỡi càng sáng, quầng càng mạnh, và từ bậc 3 trở lên có thêm
- * ấn văn phát sáng chạy dọc thân — đủ để nhìn là biết mình đang cầm gì.
+ * Bảng chất liệu theo bậc vũ khí (0 Thường … 9 Siêu Thoát).
+ *
+ * Mỗi bậc bật thêm đúng MỘT lớp mới thay vì đổi hẳn cách vẽ, nên nhìn hai bậc
+ * liền nhau là thấy ngay cái gì vừa được thêm vào — đó mới là thứ khiến việc
+ * lột xác lên bậc đáng nhớ. Thứ tự bật: quầng → ấn văn → tia lửa → dải năng
+ * lượng chạy dọc lưỡi → vành khắc quanh chuôi → lõi nứt phát sáng.
  */
-interface WeaponSkin { edge: string; core: string; glowR: number; runes: boolean; sparks: boolean }
-const WEAPON_SKINS: WeaponSkin[] = [
-  { edge: '#8b93a5', core: '#d5dbe7', glowR: 0, runes: false, sparks: false },
-  { edge: '#7fb6d8', core: '#e8f4ff', glowR: 5, runes: false, sparks: false },
-  { edge: '#e0a24a', core: '#fff0cf', glowR: 8, runes: false, sparks: false },
-  { edge: '#e05ac0', core: '#ffdcf6', glowR: 12, runes: true, sparks: false },
-  { edge: '#7de05a', core: '#e6ffdc', glowR: 17, runes: true, sparks: true },
+interface WeaponSkin {
+  edge: string; core: string;
+  glowR: number;
+  runes: boolean;
+  sparks: boolean;
+  /** Dải sáng chạy dọc thân lưỡi (bậc 5 trở lên). */
+  ribbon: boolean;
+  /** Vành ấn quay quanh chuôi (bậc 7 trở lên). */
+  halo: boolean;
+  /** Lõi nứt ra ánh sáng, đổi màu theo thời gian (bậc 9). */
+  fracture: boolean;
+}
+const WEAPON_TIER_LOOK: WeaponSkin[] = [
+  { edge: '#8b93a5', core: '#d5dbe7', glowR: 0, runes: false, sparks: false, ribbon: false, halo: false, fracture: false },
+  { edge: '#7fb6d8', core: '#e8f4ff', glowR: 5, runes: false, sparks: false, ribbon: false, halo: false, fracture: false },
+  { edge: '#e0a24a', core: '#fff0cf', glowR: 8, runes: false, sparks: false, ribbon: false, halo: false, fracture: false },
+  { edge: '#e05ac0', core: '#ffdcf6', glowR: 12, runes: true, sparks: false, ribbon: false, halo: false, fracture: false },
+  { edge: '#7de05a', core: '#e6ffdc', glowR: 17, runes: true, sparks: true, ribbon: false, halo: false, fracture: false },
+  { edge: '#ffd24a', core: '#fff6d0', glowR: 21, runes: true, sparks: true, ribbon: true, halo: false, fracture: false },
+  { edge: '#58f5ff', core: '#e6feff', glowR: 25, runes: true, sparks: true, ribbon: true, halo: false, fracture: false },
+  { edge: '#b14bff', core: '#f2e2ff', glowR: 30, runes: true, sparks: true, ribbon: true, halo: true, fracture: false },
+  { edge: '#ff6a2a', core: '#ffe4cf', glowR: 35, runes: true, sparks: true, ribbon: true, halo: true, fracture: false },
+  { edge: '#fff2fb', core: '#ffffff', glowR: 42, runes: true, sparks: true, ribbon: true, halo: true, fracture: true },
 ];
-const skinOf = (look: ChibiLook): WeaponSkin =>
-  WEAPON_SKINS[clamp(look.weaponTier ?? 0, 0, WEAPON_SKINS.length - 1)];
+
+/** Bảng màu của skin vũ khí mua ở Cửa Hàng — chỉ phủ màu, không đổi lớp nào. */
+const WSKIN_PALETTE: Record<string, { edge: string; core: string; element: string }> = {
+  ws_ember: { edge: '#ff7a3c', core: '#ffe6c0', element: 'ember' },
+  ws_frost: { edge: '#5ac8ff', core: '#e8faff', element: 'frost' },
+  ws_storm: { edge: '#b9a8ff', core: '#fbf4ff', element: 'storm' },
+  ws_chaos: { edge: '#ff4fd8', core: '#fff0fb', element: 'chaos' },
+};
+
+/**
+ * Chất liệu lưỡi cuối cùng = bậc rèn (quyết định CÓ những lớp nào) phủ lên
+ * bảng màu của skin (quyết định những lớp đó MÀU GÌ).
+ * Tách hai trục như vậy nên một bộ skin mua một lần là dùng được với mọi bậc,
+ * và bậc cao vẫn nhìn ra là bậc cao dù đang khoác skin nào.
+ */
+function skinOf(look: ChibiLook, a?: AnimState): WeaponSkin {
+  const base = WEAPON_TIER_LOOK[clamp(look.weaponTier ?? 0, 0, WEAPON_TIER_LOOK.length - 1)];
+  const pal = look.weaponSkin ? WSKIN_PALETTE[look.weaponSkin] : undefined;
+  // Bậc Siêu Thoát không có màu cố định: lưỡi trôi giữa hai cực suốt thời gian.
+  const live = base.fracture && a
+    ? { ...base, edge: mix('#ff4fd8', '#58f5ff', (Math.sin(a.t * 0.9) + 1) / 2) }
+    : base;
+  if (!pal) return live;
+  const fx = look.weaponFx ?? 0;
+  return {
+    ...live,
+    edge: pal.edge,
+    core: pal.core,
+    // Skin đắt tiền tự nó đã dày hiệu ứng, nên nâng cả những lớp mà bậc rèn
+    // chưa mở — người bỏ tiền thấy khác ngay ở bậc thấp.
+    glowR: Math.max(base.glowR, 6 + fx * 6),
+    runes: base.runes || fx >= 2,
+    sparks: base.sparks || fx >= 2,
+    ribbon: base.ribbon || fx >= 3,
+    halo: base.halo || fx >= 4,
+  };
+}
+/** Nguyên tố của skin vũ khí — quyết định kiểu hạt bay quanh lưỡi. */
+const elementOf = (look: ChibiLook): string =>
+  (look.weaponSkin ? WSKIN_PALETTE[look.weaponSkin]?.element : undefined) ?? 'none';
 
 /** Gradient kim loại lấy màu theo bậc vũ khí. */
-function bladeGrad(ctx: CanvasRenderingContext2D, sk: WeaponSkin, halfWidth: number): CanvasGradient {
+function bladeGrad(
+  ctx: CanvasRenderingContext2D, sk: WeaponSkin, halfWidth: number, edge = sk.edge,
+): CanvasGradient {
   const g = ctx.createLinearGradient(-halfWidth, 0, halfWidth, 0);
-  g.addColorStop(0, darken(sk.edge, 0.45));
-  g.addColorStop(0.32, sk.edge);
+  g.addColorStop(0, darken(edge, 0.45));
+  g.addColorStop(0.32, edge);
   g.addColorStop(0.55, sk.core);
-  g.addColorStop(0.78, sk.edge);
-  g.addColorStop(1, darken(sk.edge, 0.5));
+  g.addColorStop(0.78, edge);
+  g.addColorStop(1, darken(edge, 0.5));
   return g;
 }
 
-/** Quầng sáng và ấn văn phủ lên lưỡi — chỉ vẽ khi bậc đủ cao. */
+/**
+ * Quầng sáng, ấn văn và hạt nguyên tố phủ lên lưỡi.
+ * Vẽ TRƯỚC thân lưỡi (nên gọi ở đầu mỗi nhánh vũ khí) để phần kim loại luôn
+ * nằm trên và giữ được nét, còn ánh sáng thì loang ra sau.
+ */
 function bladeAura(
   ctx: CanvasRenderingContext2D, sk: WeaponSkin, a: AnimState, len: number, halfWidth: number,
+  element = 'none',
 ): void {
   if (sk.glowR <= 0) return;
+  const edge = sk.edge;
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
-  ctx.globalAlpha = 0.2 + 0.06 * Math.sin(a.t * 4 + a.seed);
+
+  // Hai lớp quầng lồng nhau: lớp ngoài rộng và mờ, lớp trong bó sát lưỡi.
+  // Bề ngang cố ý tăng chậm hơn nhiều so với `glowR` — để quầng nở tự do thì
+  // ở bậc cao nó thành một đĩa sáng lơ lửng và mất hẳn hình lưỡi kiếm; cái
+  // phải lớn lên theo bậc là ĐỘ SÁNG, không phải bán kính.
+  ctx.globalAlpha = 0.13 + 0.05 * Math.sin(a.t * 4 + a.seed);
+  ctx.fillStyle = edge;
+  ctx.beginPath();
+  ctx.ellipse(0, -len * 0.5, halfWidth + 3 + sk.glowR * 0.34, len * 0.68, 0, 0, TAU);
+  ctx.fill();
+  ctx.globalAlpha = 0.16 + 0.05 * Math.sin(a.t * 4 + a.seed) + sk.glowR * 0.004;
   ctx.fillStyle = sk.core;
   ctx.beginPath();
-  ctx.ellipse(0, -len * 0.5, halfWidth + sk.glowR * 0.45, len * 0.6, 0, 0, TAU);
+  ctx.ellipse(0, -len * 0.5, halfWidth + 1 + sk.glowR * 0.15, len * 0.58, 0, 0, TAU);
   ctx.fill();
   ctx.restore();
+
   if (sk.runes) {
     ctx.save();
     ctx.globalAlpha = 0.55 + 0.25 * Math.sin(a.t * 5 + a.seed * 2);
@@ -368,11 +450,30 @@ function bladeAura(
     }
     ctx.restore();
   }
+
+  // Dải năng lượng chạy dọc lưỡi: một vệt sáng trượt từ chuôi ra mũi rồi lặp.
+  // Đây là chi tiết khiến vũ khí bậc cao "sống" ngay cả lúc đứng yên.
+  if (sk.ribbon) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const ph = (a.t * 0.7 + a.seed * 0.3) % 1;
+    const y = -len * ph;
+    const h = len * 0.22;
+    const g = ctx.createLinearGradient(0, y + h, 0, y - h);
+    g.addColorStop(0, alpha(sk.core, 0));
+    g.addColorStop(0.5, alpha(sk.core, 0.75));
+    g.addColorStop(1, alpha(sk.core, 0));
+    ctx.fillStyle = g;
+    ctx.fillRect(-halfWidth * 0.7, y - h, halfWidth * 1.4, h * 2);
+    ctx.restore();
+  }
+
   if (sk.sparks) {
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    for (let i = 0; i < 3; i++) {
-      const ph = (a.t * 0.9 + i / 3) % 1;
+    const n = sk.fracture ? 6 : 3;
+    for (let i = 0; i < n; i++) {
+      const ph = (a.t * 0.9 + i / n) % 1;
       ctx.globalAlpha = 0.6 * (1 - ph);
       ctx.fillStyle = sk.core;
       ctx.beginPath();
@@ -381,6 +482,116 @@ function bladeAura(
     }
     ctx.restore();
   }
+
+  // Vành ấn quay quanh chuôi — chỉ bậc rất cao mới có, nên nó là dấu hiệu
+  // đọc được từ xa rằng người này đang cầm hàng thật.
+  if (sk.halo) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.4 + 0.14 * Math.sin(a.t * 3);
+    ctx.strokeStyle = sk.core;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.ellipse(0, -len * 0.12, halfWidth + 7, (halfWidth + 7) * 0.34, a.t * 1.4, 0, TAU);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(0, -len * 0.12, halfWidth + 11, (halfWidth + 11) * 0.26, -a.t * 1.1, 0, TAU);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Lõi nứt: hai đường gãy khúc chạy dọc lưỡi, đổi màu liên tục.
+  if (sk.fracture) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.75;
+    ctx.strokeStyle = edge;
+    ctx.lineWidth = 1.4;
+    for (const sd of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(0, -len * 0.08);
+      for (let i = 1; i <= 4; i++) {
+        const k = i / 4;
+        ctx.lineTo(sd * Math.sin(k * 7 + a.t * 3) * halfWidth * 0.4, -len * (0.08 + k * 0.84));
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  drawBladeElement(ctx, sk, a, len, halfWidth, element);
+  ctx.globalAlpha = 1;
+}
+
+/**
+ * Hạt nguyên tố của skin vũ khí.
+ * Bốn kiểu chuyển động khác hẳn nhau — tro bay LÊN, băng rơi XUỐNG, sét nháy
+ * tại chỗ, hỗn mang xoáy quanh — nên phân biệt được bốn bộ skin chỉ bằng
+ * chuyển động, không cần đọc màu.
+ */
+function drawBladeElement(
+  ctx: CanvasRenderingContext2D, sk: WeaponSkin, a: AnimState,
+  len: number, halfWidth: number, element: string,
+): void {
+  if (element === 'none') return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  if (element === 'ember') {
+    for (let i = 0; i < 5; i++) {
+      const ph = (a.t * 0.85 + i * 0.2 + a.seed * 0.1) % 1;
+      ctx.globalAlpha = 0.75 * (1 - ph);
+      ctx.fillStyle = mix(sk.core, '#ff5a1e', ph);
+      const x = Math.sin(i * 2.7 + a.t * 2.2) * (halfWidth + 3);
+      ctx.beginPath();
+      ctx.arc(x, -len * (0.15 + ph * 0.95), 1.4 + (1 - ph) * 1.3, 0, TAU);
+      ctx.fill();
+    }
+  } else if (element === 'frost') {
+    for (let i = 0; i < 5; i++) {
+      const ph = (a.t * 0.5 + i * 0.2) % 1;
+      ctx.globalAlpha = 0.7 * Math.sin(ph * Math.PI);
+      ctx.strokeStyle = sk.core;
+      ctx.lineWidth = 1;
+      const x = Math.cos(i * 1.9) * (halfWidth + 4);
+      const y = -len * (0.95 - ph * 0.85);
+      const r = 2.4;
+      for (let k = 0; k < 3; k++) {
+        const ang = (k * Math.PI) / 3 + a.t * 0.6;
+        ctx.beginPath();
+        ctx.moveTo(x - Math.cos(ang) * r, y - Math.sin(ang) * r);
+        ctx.lineTo(x + Math.cos(ang) * r, y + Math.sin(ang) * r);
+        ctx.stroke();
+      }
+    }
+  } else if (element === 'storm') {
+    const flick = Math.sin(a.t * 17 + a.seed) > 0.35 ? 1 : 0.25;
+    ctx.globalAlpha = 0.8 * flick;
+    ctx.strokeStyle = sk.core;
+    ctx.lineWidth = 1.2;
+    for (const sd of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(sd * halfWidth * 0.5, -len * 0.1);
+      for (let i = 1; i <= 5; i++) {
+        const k = i / 5;
+        const jitter = Math.sin(i * 9.7 + Math.floor(a.t * 14)) * halfWidth * 0.9;
+        ctx.lineTo(sd * halfWidth * 0.5 + jitter, -len * (0.1 + k * 0.85));
+      }
+      ctx.stroke();
+    }
+  } else {
+    // chaos: hạt xoáy quanh trục lưỡi theo hai chiều ngược nhau
+    for (let i = 0; i < 7; i++) {
+      const ph = (a.t * 0.6 + i / 7) % 1;
+      const sd = i % 2 === 0 ? 1 : -1;
+      ctx.globalAlpha = 0.65 * Math.sin(ph * Math.PI);
+      ctx.fillStyle = i % 3 === 0 ? '#58f5ff' : sk.core;
+      const ang = ph * TAU * sd + i;
+      ctx.beginPath();
+      ctx.arc(Math.cos(ang) * (halfWidth + 5), -len * ph, 1.5, 0, TAU);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
   ctx.globalAlpha = 1;
 }
 
@@ -388,6 +599,8 @@ export function drawHero(ctx: CanvasRenderingContext2D, look: ChibiLook, a: Anim
   const p = solvePose(a);
   const s = a.scale;
   const grounded = a.action !== 'dead';
+  /** Bậc hiệu ứng trang phục Cửa Hàng — 0 nghĩa là không vẽ lớp nào thêm. */
+  const sfx = clamp(look.skinFx ?? 0, 0, 4);
 
   ctx.save();
   // ---- bóng tiếp đất: co lại khi nhân vật nhấc lên ----
@@ -395,6 +608,17 @@ export function drawHero(ctx: CanvasRenderingContext2D, look: ChibiLook, a: Anim
   ctx.globalAlpha = (0.42 - lift * 0.16) * p.fade;
   ellipse(ctx, 0, 1 * s, 30 * s * (1 - lift * 0.18), 7.5 * s * (1 - lift * 0.3), 0, '#000000');
   ctx.globalAlpha = 1;
+
+  // ---- trận đồ dưới chân (trang phục Cửa Hàng) ----
+  // Vẽ ngay trên bóng và dưới mọi thứ khác: nó phải nằm "trên mặt đất" chứ
+  // không lơ lửng quanh người, nếu không sẽ đè mất hình nhân vật.
+  if (sfx >= 1) drawGroundSigil(ctx, look, a, sfx, p.fade);
+
+  // ---- lưu ảnh khi ra đòn (trang phục bậc 3+) ----
+  // Đặt trước phần thân để bóng lưu ảnh luôn nằm sau nhân vật thật.
+  if (sfx >= 3 && (a.action === 'attack' || a.action === 'cast')) {
+    drawAfterimage(ctx, look, a, sfx);
+  }
 
   // ---- hào quang nền ----
   const pulse = 0.32 + 0.14 * Math.sin(a.t * 3.4 + a.seed);
@@ -478,6 +702,9 @@ export function drawHero(ctx: CanvasRenderingContext2D, look: ChibiLook, a: Anim
   if (evo >= 2) drawEvoRunes(ctx, look.aura, a, evo);
   if (evo >= 6) drawEvoHalo(ctx, look.aura, a, evo);
 
+  // ---- hạt của trang phục Cửa Hàng ----
+  if (sfx >= 1) drawSkinMotes(ctx, look, a, sfx);
+
   // ---- lớp phủ băng / choáng ----
   if (a.frozen > 0) {
     ctx.fillStyle = 'rgba(150,215,255,0.28)';
@@ -496,6 +723,156 @@ export function drawHero(ctx: CanvasRenderingContext2D, look: ChibiLook, a: Anim
     ctx.fillRect(-16 * s, -140 * s, 32 * s, 140 * s);
     ctx.restore();
   }
+}
+
+/**
+ * Trận đồ dưới chân — lớp hiệu ứng đầu tiên mà trang phục Cửa Hàng mở ra.
+ *
+ * Vẽ trong hệ toạ độ chưa lật mặt (trước `ctx.scale(s * facing, s)`) nên nó
+ * không lật theo hướng nhìn — một vòng tròn quay ngược chiều thì lật hay
+ * không lật đều đúng, nhưng giữ nguyên giúp nó bám mặt đất thay vì "nhảy"
+ * mỗi lần nhân vật quay người.
+ */
+function drawGroundSigil(
+  ctx: CanvasRenderingContext2D, look: ChibiLook, a: AnimState, fx: number, fade: number,
+): void {
+  const s = a.scale;
+  const rings = Math.min(3, fx);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.translate(0, 1 * s);
+  ctx.scale(1, 0.34); // ép dẹt thành hình elip nằm trên mặt đất
+  for (let r = 0; r < rings; r++) {
+    const rad = (26 + r * 9) * s;
+    const spin = a.t * (r % 2 === 0 ? 0.55 : -0.4) + r;
+    ctx.globalAlpha = (0.3 - r * 0.06) * fade;
+    ctx.strokeStyle = look.aura;
+    ctx.lineWidth = 1.6 * s;
+    ctx.beginPath();
+    ctx.arc(0, 0, rad, 0, TAU);
+    ctx.stroke();
+    // vạch khắc chạy quanh vành — số vạch tăng theo bậc nên vòng ngoài dày hơn
+    const ticks = 6 + r * 4 + fx * 2;
+    ctx.globalAlpha = (0.42 - r * 0.08) * fade;
+    ctx.lineWidth = 2.2 * s;
+    for (let i = 0; i < ticks; i++) {
+      const ang = spin + (i * TAU) / ticks;
+      const c = Math.cos(ang), sn = Math.sin(ang);
+      ctx.beginPath();
+      ctx.moveTo(c * rad * 0.9, sn * rad * 0.9);
+      ctx.lineTo(c * rad * 1.06, sn * rad * 1.06);
+      ctx.stroke();
+    }
+  }
+  // Bậc cao nhất thêm một vòng xung nhịp giãn ra rồi tắt — nhịp thở của trận đồ.
+  if (fx >= 4) {
+    const ph = (a.t * 0.55) % 1;
+    ctx.globalAlpha = 0.4 * (1 - ph) * fade;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2 * s;
+    ctx.beginPath();
+    ctx.arc(0, 0, (24 + ph * 44) * s, 0, TAU);
+    ctx.stroke();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+/**
+ * Hạt xoay quanh thân. Bậc càng cao càng nhiều hạt và quỹ đạo càng cao,
+ * nên nhìn từ xa cũng đoán được người kia đang mặc bộ bao nhiêu tiền.
+ */
+function drawSkinMotes(
+  ctx: CanvasRenderingContext2D, look: ChibiLook, a: AnimState, fx: number,
+): void {
+  const n = 3 + fx * 2;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < n; i++) {
+    const ang = a.t * (0.8 + (i % 3) * 0.22) + (i * TAU) / n;
+    const rad = 20 + (i % 4) * 5;
+    const x = Math.cos(ang) * rad;
+    // hạt trôi lên chậm rồi lặp lại từ dưới chân
+    const rise = ((a.t * 0.35 + i / n) % 1);
+    const y = -8 - rise * (78 + fx * 8);
+    const depth = 0.4 + 0.6 * ((Math.sin(ang) + 1) / 2);
+    ctx.globalAlpha = 0.5 * depth * Math.sin(rise * Math.PI);
+    ctx.fillStyle = i % 4 === 0 ? '#ffffff' : look.aura;
+    ctx.beginPath();
+    ctx.arc(x, y, (1.1 + depth * 1.5) * (0.8 + fx * 0.12), 0, TAU);
+    ctx.fill();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+/**
+ * Lưu ảnh khi ra đòn — hai đến ba bóng của tư thế ở các thời điểm trước.
+ *
+ * Cố ý KHÔNG vẽ lại toàn bộ nhân vật cho từng bóng: mỗi bóng chỉ là bộ xương
+ * tô bằng nét dày trong suốt. Rẻ hơn nhiều lần mà mắt vẫn đọc ra đúng chuyển
+ * động, và vì lấy mẫu cùng một hàm tư thế nên bóng luôn khớp tuyệt đối với
+ * thân thật thay vì trôi lệch.
+ */
+function drawAfterimage(
+  ctx: CanvasRenderingContext2D, look: ChibiLook, a: AnimState, fx: number,
+): void {
+  const s = a.scale;
+  const n = fx >= 4 ? 3 : 2;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.scale(s * a.facing, s);
+  ctx.lineCap = 'round';
+  for (let i = 1; i <= n; i++) {
+    const tt = a.actionT - i * 0.055;
+    if (tt < 0) break;
+    const pp = solvePose({ ...a, actionT: tt });
+    ctx.save();
+    ctx.globalAlpha = (0.3 - i * 0.07) * pp.fade;
+    ctx.strokeStyle = look.aura;
+    ctx.translate(pp.ox, pp.oy);
+    ctx.translate(0, HIP_Y);
+    ctx.rotate(pp.lean);
+    ctx.translate(0, -HIP_Y);
+    // thân
+    ctx.lineWidth = 15;
+    ctx.beginPath();
+    ctx.moveTo(0, HIP_Y);
+    ctx.lineTo(pp.spine * 6, SHO_Y);
+    ctx.stroke();
+    ctx.lineWidth = 9;
+    for (const side of [0, 1] as const) {
+      const sd = side === 0 ? -1 : 1;
+      const [h, k] = pp.legs[side];
+      const root = { x: HIP_X * sd * 0.85, y: HIP_Y };
+      const d0 = dir(h, THIGH);
+      const mid = { x: root.x + d0.x, y: root.y + d0.y };
+      const d1 = dir(h + k, SHIN);
+      ctx.beginPath();
+      ctx.moveTo(root.x, root.y);
+      ctx.lineTo(mid.x, mid.y);
+      ctx.lineTo(mid.x + d1.x, mid.y + d1.y);
+      ctx.stroke();
+      const [sh, el] = pp.arms[side];
+      const sho = { x: SHO_X * sd + pp.spine * 6, y: SHO_Y };
+      const a0 = dir(sh, UPPER);
+      const elb = { x: sho.x + a0.x, y: sho.y + a0.y };
+      const a1 = dir(sh + el, FORE);
+      ctx.beginPath();
+      ctx.moveTo(sho.x, sho.y);
+      ctx.lineTo(elb.x, elb.y);
+      ctx.lineTo(elb.x + a1.x, elb.y + a1.y);
+      ctx.stroke();
+    }
+    // đầu
+    ctx.beginPath();
+    ctx.arc(0, HEAD_Y, HEAD_R * 0.9, 0, TAU);
+    ctx.fillStyle = look.aura;
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
 }
 
 /**
@@ -1030,13 +1407,14 @@ function drawWeapon(
   if (WEAPON_TRAIL.has(w) && a.action === 'attack' && a.actionT > 0.3 && a.actionT < 0.66) {
     drawSlashTrail(ctx, look, a);
   }
-  const sk = skinOf(look);
+  const sk = skinOf(look, a);
+  const el = elementOf(look);
 
   ctx.save();
   ctx.translate(hand.x, hand.y);
   ctx.rotate(ang);
   if (w === 'sword') {
-    bladeAura(ctx, sk, a, 44, 5);
+    bladeAura(ctx, sk, a, 44, 5, el);
     ctx.fillStyle = '#3a2a24';
     ctx.beginPath(); ctx.roundRect(-2.6, -2, 5.2, 11, 2); ctx.fill();
     ctx.strokeStyle = INK; ctx.lineWidth = 1.6; ctx.stroke();
@@ -1051,7 +1429,7 @@ function drawWeapon(
     ctx.beginPath(); ctx.moveTo(0.5, -8); ctx.lineTo(0.5, -40); ctx.stroke();
   } else if (w === 'greatsword') {
     // Đại đao: lưỡi bản rộng, chuôi dài hai tay.
-    bladeAura(ctx, sk, a, 58, 8);
+    bladeAura(ctx, sk, a, 58, 8, el);
     ctx.fillStyle = '#2f241d';
     ctx.beginPath(); ctx.roundRect(-3, -2, 6, 17, 2.4); ctx.fill();
     ctx.strokeStyle = INK; ctx.lineWidth = 1.6; ctx.stroke();
@@ -1066,7 +1444,7 @@ function drawWeapon(
     ctx.beginPath(); ctx.moveTo(0, -10); ctx.lineTo(0, -50); ctx.stroke();
   } else if (w === 'scythe') {
     // Lưỡi hái: cán dài, lưỡi cong vắt ngang đầu cán.
-    bladeAura(ctx, sk, a, 40, 5);
+    bladeAura(ctx, sk, a, 40, 5, el);
     ctx.fillStyle = '#4a3428';
     ctx.beginPath(); ctx.roundRect(-2.2, -50, 4.4, 64, 2); ctx.fill();
     ctx.strokeStyle = INK; ctx.lineWidth = 1.5; ctx.stroke();
@@ -1084,7 +1462,7 @@ function drawWeapon(
     ellipse(ctx, 0, -47, 3.4, 3.4, 0, sk.core, INK, 1.4);
   } else if (w === 'hammer') {
     // Chuỳ: đầu khối vuông nặng, cán ngắn.
-    bladeAura(ctx, sk, a, 34, 10);
+    bladeAura(ctx, sk, a, 34, 10, el);
     ctx.fillStyle = '#4a3428';
     ctx.beginPath(); ctx.roundRect(-2.6, -32, 5.2, 46, 2.4); ctx.fill();
     ctx.strokeStyle = INK; ctx.lineWidth = 1.6; ctx.stroke();
@@ -1103,7 +1481,7 @@ function drawWeapon(
     }
   } else if (w === 'twinblade') {
     // Song kiếm: hai lưỡi ngắn tréo nhau, lưỡi sau mờ hơn cho có chiều sâu.
-    bladeAura(ctx, sk, a, 30, 4);
+    bladeAura(ctx, sk, a, 30, 4, el);
     for (const [sd, sc, al] of [[-1, 0.86, 0.7], [1, 1, 1]] as Array<[number, number, number]>) {
       ctx.save();
       ctx.globalAlpha = al;
@@ -1124,7 +1502,7 @@ function drawWeapon(
     }
     ctx.globalAlpha = 1;
   } else if (w === 'spear') {
-    bladeAura(ctx, sk, a, 60, 5);
+    bladeAura(ctx, sk, a, 60, 5, el);
     ctx.fillStyle = '#6d4a2c';
     ctx.beginPath(); ctx.roundRect(-1.8, -46, 3.6, 60, 1.8); ctx.fill();
     ctx.strokeStyle = INK; ctx.lineWidth = 1.4; ctx.stroke();
@@ -1220,39 +1598,80 @@ function drawShield(ctx: CanvasRenderingContext2D, at: Joint, look: ChibiLook, p
   ctx.restore();
 }
 
-/** Vệt chém: lấy mẫu quỹ đạo mũi vũ khí ở 6 thời điểm trước đó rồi nối thành dải. */
+/**
+ * Vệt chém: lấy mẫu quỹ đạo mũi vũ khí ở 12 thời điểm trước đó rồi nối thành dải.
+ *
+ * Số mẫu tăng gấp đôi so với trước và bước lấy mẫu nhỏ lại, nên ở tốc độ ×4–×6
+ * dải không còn gãy thành đa giác thấy rõ. Bậc vũ khí và skin quyết định số
+ * LỚP chồng lên nhau: một lớp lõi trắng, một lớp màu rộng hơn, và ở bậc cao
+ * thêm hai vòng cung mỏng lệch pha — chính ba thứ đó tạo cảm giác "nặng đòn"
+ * mà không cần thêm hạt.
+ */
 function drawSlashTrail(ctx: CanvasRenderingContext2D, look: ChibiLook, a: AnimState): void {
   const len = WEAPON_LEN[look.weapon] || 34;
-  const pts: Joint[] = [];
-  const inner: Joint[] = [];
-  for (let i = 0; i < 7; i++) {
-    const tt = a.actionT - i * 0.028;
-    if (tt < 0.28) break;
-    const pp = solvePose({ ...a, actionT: tt });
-    const h = handOf(pp);
-    const ang = pp.arms[1][0] + pp.arms[1][1] + pp.wrist;
-    pts.push({ x: h.x + Math.sin(ang) * -len * 0.02 + Math.sin(ang + Math.PI) * 0, y: h.y });
-    const d = dir(ang + Math.PI, len);
-    pts[pts.length - 1] = { x: h.x + d.x, y: h.y + d.y };
-    const d2 = dir(ang + Math.PI, len * 0.35);
-    inner.push({ x: h.x + d2.x, y: h.y + d2.y });
-  }
-  if (pts.length < 3) return;
+  const sk = skinOf(look, a);
+  const tier = look.weaponTier ?? 0;
+  const fx = Math.max(look.weaponFx ?? 0, look.skinFx ?? 0);
+  const tint = tier > 0 || look.weaponSkin ? sk.core : look.aura;
+
+  /** Dải nối mũi vũ khí (bán kính `outer`) với một điểm gần tay (`innerK`). */
+  const band = (outer: number, innerK: number, samples: number, step: number): {
+    pts: Joint[]; inner: Joint[];
+  } => {
+    const pts: Joint[] = [];
+    const inner: Joint[] = [];
+    for (let i = 0; i < samples; i++) {
+      const tt = a.actionT - i * step;
+      if (tt < 0.28) break;
+      const pp = solvePose({ ...a, actionT: tt });
+      const h = handOf(pp);
+      const ang = pp.arms[1][0] + pp.arms[1][1] + pp.wrist;
+      const d = dir(ang + Math.PI, outer);
+      pts.push({ x: h.x + d.x, y: h.y + d.y });
+      const d2 = dir(ang + Math.PI, outer * innerK);
+      inner.push({ x: h.x + d2.x, y: h.y + d2.y });
+    }
+    return { pts, inner };
+  };
+
+  const fill = (pts: Joint[], inner: Joint[], c0: number, c1: number, color: string): void => {
+    if (pts.length < 3) return;
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    for (let i = inner.length - 1; i >= 0; i--) ctx.lineTo(inner[i].x, inner[i].y);
+    ctx.closePath();
+    const g = ctx.createLinearGradient(pts[0].x, pts[0].y, pts[pts.length - 1].x, pts[pts.length - 1].y);
+    g.addColorStop(0, alpha('#ffffff', c0));
+    g.addColorStop(0.35, alpha(lighten(color, 0.4), c1));
+    g.addColorStop(1, alpha(color, 0));
+    ctx.fillStyle = g;
+    ctx.fill();
+  };
+
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
-  ctx.beginPath();
-  ctx.moveTo(pts[0].x, pts[0].y);
-  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-  for (let i = inner.length - 1; i >= 0; i--) ctx.lineTo(inner[i].x, inner[i].y);
-  ctx.closePath();
-  const sk = skinOf(look);
-  const tint = (look.weaponTier ?? 0) > 0 ? sk.core : look.aura;
-  const g = ctx.createLinearGradient(pts[0].x, pts[0].y, pts[pts.length - 1].x, pts[pts.length - 1].y);
-  g.addColorStop(0, alpha('#ffffff', 0.85 + (look.weaponTier ?? 0) * 0.03));
-  g.addColorStop(0.35, alpha(lighten(tint, 0.4), 0.5 + (look.weaponTier ?? 0) * 0.06));
-  g.addColorStop(1, alpha(tint, 0));
-  ctx.fillStyle = g;
-  ctx.fill();
+  // lớp ngoài: rộng, mờ, màu theo bậc — tạo khối
+  const wide = band(len * 1.12, 0.18, 12, 0.016);
+  fill(wide.pts, wide.inner, 0.3 + tier * 0.02, 0.22 + tier * 0.03, tint);
+  // lớp lõi: hẹp, trắng gắt — tạo nét
+  const core = band(len, 0.4, 12, 0.016);
+  fill(core.pts, core.inner, Math.min(1, 0.8 + tier * 0.02), Math.min(0.95, 0.45 + tier * 0.05), tint);
+
+  // Bậc/skin cao: thêm hai vòng cung mỏng lệch pha, chạy trước và sau lưỡi.
+  if (tier >= 5 || fx >= 3) {
+    ctx.strokeStyle = alpha(sk.core, 0.55);
+    ctx.lineWidth = 1.6;
+    ctx.lineCap = 'round';
+    for (const off of [-0.045, 0.05]) {
+      const arc = band(len * (1 + off * 3), 0.9, 9, 0.02);
+      if (arc.pts.length < 3) continue;
+      ctx.beginPath();
+      ctx.moveTo(arc.pts[0].x, arc.pts[0].y);
+      for (let i = 1; i < arc.pts.length; i++) ctx.lineTo(arc.pts[i].x, arc.pts[i].y);
+      ctx.stroke();
+    }
+  }
   ctx.restore();
 }
 

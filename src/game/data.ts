@@ -303,9 +303,14 @@ export const COMPANIONS: CompanionDef[] = [
  * - `login` — CHỈ ghép được từ Mảnh Trang Phục nhặt khi điểm danh. Ngọc không
  *   mua được, gacha không quay ra. Đây là phần thưởng cho việc quay lại đều đặn,
  *   nên nếu để lọt vào bể gacha thì toàn bộ ý nghĩa của nó biến mất.
+ * - `shop` — CHỈ mua ở Cửa Hàng bằng Vàng **và** Ngọc cùng lúc. Cũng không
+ *   quay ra được: đây là đích đến dài hạn của việc cày, nên nếu gacha trả ra
+ *   thì giá tiền của nó thành vô nghĩa.
  */
-export type SkinSource = 'gacha' | 'login';
-export interface SkinDef { id: string; name: string; desc: string; source: SkinSource; look: ChibiLook }
+export type SkinSource = 'gacha' | 'login' | 'shop';
+export interface SkinDef {
+  id: string; name: string; desc: string; source: SkinSource; look: ChibiLook;
+}
 export const SKINS: SkinDef[] = [
   {
     id: 'default', name: 'Kiếm Sĩ Đen', desc: 'Bộ giáp ám đen nhuốm máu trận mạc.', source: 'gacha',
@@ -352,14 +357,136 @@ export const SKINS: SkinDef[] = [
     id: 'celestial', name: 'Thiên Hà Chấp Kiếm', desc: 'Vải áo là một mảnh trời đêm bị cắt rời và may lại.', source: 'login',
     look: { hair: '#cfe8ff', outfit: '#1b1b52', outfit2: '#0b0b28', skin: '#efe2f2', eyes: '#a8f0ff', hairStyle: 'wild', weapon: 'greatsword', accessory: 'halo', cape: '#2e2a86', aura: '#c0a8ff' },
   },
+  // ---- bốn bộ chỉ bán ở Cửa Hàng: càng đắt hiệu ứng càng dày ----
+  {
+    id: 'ember', name: 'Viêm Chủ Bất Diệt', desc: 'Tro tàn không rơi xuống — chúng bay lên theo anh.', source: 'shop',
+    look: {
+      hair: '#ffb347', outfit: '#6e1c10', outfit2: '#3a0c06', skin: '#e8b48a', eyes: '#ffd23c',
+      hairStyle: 'spiky', weapon: 'sword', accessory: 'horns', cape: '#8a2408', aura: '#ff7a3c', skinFx: 1,
+    },
+  },
+  {
+    id: 'frostmourn', name: 'Tuyết Tang Đế Quân', desc: 'Nơi anh đứng, thời gian đóng thành sương.', source: 'shop',
+    look: {
+      hair: '#dff3ff', outfit: '#173a5e', outfit2: '#0a1c30', skin: '#eef2ff', eyes: '#9fe8ff',
+      hairStyle: 'long', weapon: 'greatsword', accessory: 'crown', cape: '#2e6fa8', aura: '#8cdcff', skinFx: 2,
+    },
+  },
+  {
+    id: 'stormcrown', name: 'Lôi Đế Đăng Cơ', desc: 'Trời không đánh xuống nữa — trời chờ anh ra lệnh.', source: 'shop',
+    look: {
+      hair: '#fff0a8', outfit: '#2a2470', outfit2: '#120e3a', skin: '#f0d8b8', eyes: '#fff27a',
+      hairStyle: 'wild', weapon: 'spear', accessory: 'crown', cape: '#3a2ea8', aura: '#a8b4ff', skinFx: 3,
+    },
+  },
+  {
+    id: 'chaoslord', name: 'Hỗn Mang Chi Chủ', desc: 'Kẻ bước ra khỏi Tà Vực rồi mang cả Tà Vực theo mình.', source: 'shop',
+    look: {
+      hair: '#f4e6ff', outfit: '#2a0e3a', outfit2: '#12041c', skin: '#e6d4f0', eyes: '#ff4fd8',
+      hairStyle: 'wild', weapon: 'scythe', accessory: 'halo', cape: '#4a0e5e', aura: '#d24bff', skinFx: 4,
+    },
+  },
 ];
 export const SKIN_COST: Record<string, number> = { crimson: 500, gold: 800, shadow: 800, void: 2500 };
 /** Skin quay/mua được — bể gacha và tủ đồ bán Ngọc đều phải lọc qua đây. */
 export const GACHA_SKINS: SkinDef[] = SKINS.filter((s) => s.source === 'gacha');
 /** Skin chỉ ghép từ Mảnh Trang Phục. */
 export const LOGIN_SKINS: SkinDef[] = SKINS.filter((s) => s.source === 'login');
+/** Skin chỉ mua ở Cửa Hàng bằng Vàng + Ngọc. */
+export const SHOP_SKINS: SkinDef[] = SKINS.filter((s) => s.source === 'shop');
 /** Số Mảnh Trang Phục cần để ghép trọn một bộ. */
 export const SKIN_SHARD_COST = 10;
+
+// ============ CỬA HÀNG ============
+/**
+ * Giá cố ý đặt rất cao và **phải trả bằng cả Vàng lẫn Ngọc cùng lúc**: Vàng
+ * đến từ cày, Ngọc đến từ điểm danh/thành tựu/nhiệm vụ, nên không có đường
+ * tắt nào mua được sớm. Bậc `fx` càng cao thì lớp hiệu ứng renderer vẽ thêm
+ * càng dày — đó là thứ người chơi thật sự trả tiền để lấy.
+ */
+export interface ShopEntry {
+  id: string;
+  kind: 'hero' | 'weapon';
+  name: string;
+  desc: string;
+  gold: number;
+  gems: number;
+  /** Bậc hiệu ứng 1–4. */
+  fx: number;
+  color: string;
+  /** Chỉ mở bán sau khi đã chinh phục Tà Vực (Evil). */
+  evilOnly?: boolean;
+}
+
+/**
+ * Skin vũ khí là **lớp phủ**: nó đổi bảng màu, quầng sáng và hiệu ứng quanh
+ * lưỡi chứ không đổi hình dáng, nên dùng chung được với cả sáu loại vũ khí và
+ * với mọi bậc rèn. Nhờ vậy mua một bộ là dùng được mãi mãi.
+ */
+export interface WeaponSkinDef {
+  id: string;
+  name: string;
+  /** Màu lưỡi và màu lõi phát sáng. */
+  edge: string;
+  core: string;
+  /** Nguyên tố quyết định kiểu hạt bay quanh lưỡi. */
+  element: 'ember' | 'frost' | 'storm' | 'chaos';
+  fx: number;
+}
+export const WEAPON_SKINS_DEF: WeaponSkinDef[] = [
+  { id: 'ws_ember', name: 'Hoả Ngục Chi Nhận', edge: '#ff7a3c', core: '#ffe6c0', element: 'ember', fx: 1 },
+  { id: 'ws_frost', name: 'Băng Thiên Chi Nhận', edge: '#5ac8ff', core: '#e8faff', element: 'frost', fx: 2 },
+  { id: 'ws_storm', name: 'Lôi Ngục Chi Nhận', edge: '#b9a8ff', core: '#fbf4ff', element: 'storm', fx: 3 },
+  { id: 'ws_chaos', name: 'Hỗn Mang Chi Nhận', edge: '#ff4fd8', core: '#fff0fb', element: 'chaos', fx: 4 },
+];
+export const weaponSkinById = (id: string | null | undefined): WeaponSkinDef | undefined =>
+  (id ? WEAPON_SKINS_DEF.find((w) => w.id === id) : undefined);
+
+export const SHOP_ITEMS: ShopEntry[] = [
+  // ---- trang phục Kael ----
+  {
+    id: 'ember', kind: 'hero', name: 'Viêm Chủ Bất Diệt',
+    desc: 'Tro bay lên quanh người, dấu chân bén lửa.',
+    gold: 260_000, gems: 3_000, fx: 1, color: '#ff7a3c',
+  },
+  {
+    id: 'frostmourn', kind: 'hero', name: 'Tuyết Tang Đế Quân',
+    desc: 'Vòng sương dưới chân, tinh thể băng xoay quanh thân.',
+    gold: 1_400_000, gems: 9_000, fx: 2, color: '#8cdcff',
+  },
+  {
+    id: 'stormcrown', kind: 'hero', name: 'Lôi Đế Đăng Cơ',
+    desc: 'Trận đồ sấm dưới chân, tia điện chạy dọc giáp, bóng lưu ảnh khi ra đòn.',
+    gold: 7_000_000, gems: 26_000, fx: 3, color: '#a8b4ff',
+  },
+  {
+    id: 'chaoslord', kind: 'hero', name: 'Hỗn Mang Chi Chủ',
+    desc: 'Trận đồ ba tầng, hào quang gãy vỡ, lưu ảnh kép và cột sáng mỗi lần chém.',
+    gold: 34_000_000, gems: 78_000, fx: 4, color: '#d24bff', evilOnly: true,
+  },
+  // ---- skin vũ khí ----
+  {
+    id: 'ws_ember', kind: 'weapon', name: 'Hoả Ngục Chi Nhận',
+    desc: 'Lưỡi nung đỏ, tàn lửa rơi theo đường chém.',
+    gold: 190_000, gems: 2_400, fx: 1, color: '#ff7a3c',
+  },
+  {
+    id: 'ws_frost', kind: 'weapon', name: 'Băng Thiên Chi Nhận',
+    desc: 'Lưỡi phủ băng, mảnh tuyết vỡ ra mỗi nhát.',
+    gold: 1_000_000, gems: 7_000, fx: 2, color: '#5ac8ff',
+  },
+  {
+    id: 'ws_storm', kind: 'weapon', name: 'Lôi Ngục Chi Nhận',
+    desc: 'Hồ quang chạy dọc thân lưỡi, vệt chém tách đôi.',
+    gold: 4_800_000, gems: 20_000, fx: 3, color: '#b9a8ff',
+  },
+  {
+    id: 'ws_chaos', kind: 'weapon', name: 'Hỗn Mang Chi Nhận',
+    desc: 'Lưỡi nứt ra ánh sáng, ba lớp vệt chém chồng nhau.',
+    gold: 23_000_000, gems: 62_000, fx: 4, color: '#ff4fd8', evilOnly: true,
+  },
+];
+export const shopEntryById = (id: string): ShopEntry | undefined => SHOP_ITEMS.find((s) => s.id === id);
 
 // ---------- vật phẩm ----------
 export interface ItemDef {
@@ -381,23 +508,60 @@ export const ITEMS: ItemDef[] = [
 export const MAX_ITEM_SLOTS = 3;
 
 // ---------- chi phí triệu hồi ----------
-// Toàn bộ giá quay đã được nâng 10% so với bảng cũ (100/900/8500/40000 và
-// 150/1350). Nguồn Ngọc mới từ Điểm Danh và Thành Tựu đủ để bù phần chênh này,
-// nên giá cao hơn chỉ làm chậm nhịp quay lại chứ không chặn tiến trình.
+// Hai lần nâng giá cộng dồn: +10% của bảng cũ, rồi +20% nữa. Nguồn Ngọc mới
+// (Điểm Danh, Thành Tựu, Nhiệm Vụ, Huyết Lệnh) đủ bù phần chênh này, nên giá
+// cao hơn chỉ làm chậm nhịp quay chứ không chặn tiến trình.
 const GACHA_HIKE = 1.1;
-const hike = (base: number): number => Math.round(base * GACHA_HIKE);
+/** Lần nâng giá thứ hai — mọi cửa quay đều nhân thêm hệ số này. */
+export const GACHA_HIKE_2 = 1.2;
+const hike = (base: number): number => Math.round(base * GACHA_HIKE * GACHA_HIKE_2);
 export const GACHA_COST = hike(100);
 export const GACHA_X10_COST = hike(900);
 export const GACHA_X100_COST = hike(8500);
 export const GACHA_X500_COST = hike(40000);
 export const WGACHA_COST = hike(150);
 export const WGACHA_X10_COST = hike(1350);
+/** Rèn ×100: chiết khấu 15% so với 100 lượt lẻ, giống nhịp của Triệu Hồi ×100. */
+export const WGACHA_X100_COST = Math.round(WGACHA_COST * 100 * 0.85);
 
-// ---------- vũ khí: 5 bậc × 6 loại ----------
+// ---------- vũ khí: 10 bậc × 6 loại ----------
 // Trùng lặp không còn là "cộng thêm chút công" mà là nguyên liệu: đủ 6 mảnh
 // thì vũ khí lột xác lên bậc trên cùng loại, nên mỗi lần rèn ra đồ trùng vẫn
 // là một bước tiến rõ ràng.
 export type WeaponType = 'sword' | 'greatsword' | 'spear' | 'scythe' | 'twinblade' | 'hammer';
+
+/**
+ * Bậc vũ khí tách hẳn khỏi `Rarity` của đồng hành.
+ * Năm bậc đầu trùng tên với độ hiếm cũ để bản lưu và lịch điểm danh không
+ * phải đổi gì; năm bậc sau là phần mở rộng — chúng **không** quay thẳng ra
+ * được ở mức đáng kể, con đường lên đó là gom mảnh và ghép.
+ */
+export type WeaponTierId =
+  | Rarity | 'divine' | 'celestial' | 'abyssal' | 'primordial' | 'transcendent';
+export interface WeaponTierMeta {
+  name: string;
+  /** Tên rút gọn cho tiêu đề cột trong bảng 6 loại × 10 bậc. */
+  short: string;
+  color: string; glow: string; stars: number;
+}
+export const WTIER: Record<WeaponTierId, WeaponTierMeta> = {
+  common: { name: 'Thường', short: 'Thường', color: '#9db0c4', glow: '#4a5a6e', stars: 1 },
+  rare: { name: 'Hiếm', short: 'Hiếm', color: '#3fb9ff', glow: '#1868a8', stars: 2 },
+  epic: { name: 'Cực Hiếm', short: 'C.Hiếm', color: '#ffb43c', glow: '#a86414', stars: 3 },
+  legendary: { name: 'Huyền Thoại', short: 'H.Thoại', color: '#ff4fd8', glow: '#8a1e6e', stars: 4 },
+  mythic: { name: 'Thần Thoại', short: 'T.Thoại', color: '#7dff5a', glow: '#2a9e1e', stars: 5 },
+  divine: { name: 'Thần Khí', short: 'T.Khí', color: '#ffe066', glow: '#a8801e', stars: 6 },
+  celestial: { name: 'Thiên Mệnh', short: 'T.Mệnh', color: '#58f5ff', glow: '#18889e', stars: 7 },
+  abyssal: { name: 'Diệt Thế', short: 'D.Thế', color: '#b14bff', glow: '#5c18a8', stars: 8 },
+  primordial: { name: 'Hồng Hoang', short: 'H.Hoang', color: '#ff6a2a', glow: '#a83408', stars: 9 },
+  transcendent: { name: 'Siêu Thoát', short: 'S.Thoát', color: '#fff2fb', glow: '#c2172f', stars: 10 },
+};
+export const WTIER_ORDER: WeaponTierId[] = [
+  'common', 'rare', 'epic', 'legendary', 'mythic',
+  'divine', 'celestial', 'abyssal', 'primordial', 'transcendent',
+];
+export const wtierIdx = (t: WeaponTierId): number => Math.max(0, WTIER_ORDER.indexOf(t));
+export const MAX_WTIER = WTIER_ORDER.length - 1;
 
 export interface WeaponTypeDef {
   id: WeaponType;
@@ -423,39 +587,86 @@ export const WEAPON_TYPES: WeaponTypeDef[] = [
 export const weaponTypeDef = (t: WeaponType): WeaponTypeDef =>
   WEAPON_TYPES.find((w) => w.id === t) ?? WEAPON_TYPES[0];
 
-/** Phần trăm công mà vũ khí cộng cho Kael, theo bậc. */
-const WEAPON_TIER_PCT: Record<Rarity, number> = {
+/**
+ * Phần trăm công mà vũ khí cộng cho Kael, theo bậc.
+ * Nhịp nhân giữa hai bậc liền nhau giữ quanh 2.3–3.0 suốt cả mười bậc, nên
+ * năm bậc mới nối tiếp đúng đường cong cũ chứ không tạo bậc thang gãy.
+ */
+const WEAPON_TIER_PCT: Record<WeaponTierId, number> = {
   common: 0.15, rare: 0.45, epic: 1.1, legendary: 2.6, mythic: 6,
+  divine: 13.5, celestial: 30, abyssal: 66, primordial: 145, transcendent: 320,
 };
 const WEAPON_NAMES: Record<WeaponType, string[]> = {
-  sword: ['Thiết Kiếm', 'Ngân Nguyệt Kiếm', 'Huyết Vân Kiếm', 'Hắc Nguyệt Trảm Long', 'Khởi Nguyên Thần Kiếm'],
-  greatsword: ['Đại Đao Gỉ', 'Cự Phách Đao', 'Liệt Hoả Cuồng Đao', 'Long Cốt Trảm Thiên', 'Hỗn Mang Phá Giới'],
-  spear: ['Mộc Thương', 'Thanh Lang Thương', 'Lôi Đình Thương', 'Xuyên Vân Long Thương', 'Vĩnh Cửu Định Thiên'],
-  scythe: ['Lưỡi Hái Gãy', 'Nguyệt Nha Liêm', 'Huyết Nguyệt Liêm', 'Tử Thần Câu Hồn', 'Thần Phạt Đoạt Mệnh'],
-  twinblade: ['Song Chuỷ', 'Phong Ảnh Song Kiếm', 'Lôi Ảnh Song Sát', 'Vô Ảnh Tuyệt Mệnh', 'Hỗn Độn Song Sinh'],
-  hammer: ['Búa Đá', 'Thiết Chuỳ', 'Liệt Địa Chuỳ', 'Sơn Hà Trấn Nhạc', 'Thiên Băng Chi Chuỳ'],
+  sword: [
+    'Thiết Kiếm', 'Ngân Nguyệt Kiếm', 'Huyết Vân Kiếm', 'Hắc Nguyệt Trảm Long', 'Khởi Nguyên Thần Kiếm',
+    'Thần Khí Trảm Nguyệt', 'Thiên Mệnh Phán Kiếm', 'Diệt Thế Vô Danh', 'Hồng Hoang Khai Thiên', 'Siêu Thoát Nhất Niệm',
+  ],
+  greatsword: [
+    'Đại Đao Gỉ', 'Cự Phách Đao', 'Liệt Hoả Cuồng Đao', 'Long Cốt Trảm Thiên', 'Hỗn Mang Phá Giới',
+    'Thần Khí Phá Nhạc', 'Thiên Mệnh Đoạn Nhật', 'Diệt Thế Cuồng Lan', 'Hồng Hoang Trấn Ngục', 'Siêu Thoát Vô Ngân',
+  ],
+  spear: [
+    'Mộc Thương', 'Thanh Lang Thương', 'Lôi Đình Thương', 'Xuyên Vân Long Thương', 'Vĩnh Cửu Định Thiên',
+    'Thần Khí Quán Nhật', 'Thiên Mệnh Định Tinh', 'Diệt Thế Xuyên Không', 'Hồng Hoang Lập Trụ', 'Siêu Thoát Nhất Điểm',
+  ],
+  scythe: [
+    'Lưỡi Hái Gãy', 'Nguyệt Nha Liêm', 'Huyết Nguyệt Liêm', 'Tử Thần Câu Hồn', 'Thần Phạt Đoạt Mệnh',
+    'Thần Khí Tuyệt Luân', 'Thiên Mệnh Cát Hồn', 'Diệt Thế Hoàn Diệt', 'Hồng Hoang Thu Mệnh', 'Siêu Thoát Vô Sinh',
+  ],
+  twinblade: [
+    'Song Chuỷ', 'Phong Ảnh Song Kiếm', 'Lôi Ảnh Song Sát', 'Vô Ảnh Tuyệt Mệnh', 'Hỗn Độn Song Sinh',
+    'Thần Khí Song Nguyệt', 'Thiên Mệnh Âm Dương', 'Diệt Thế Loạn Vũ', 'Hồng Hoang Sinh Diệt', 'Siêu Thoát Nhị Nguyên',
+  ],
+  hammer: [
+    'Búa Đá', 'Thiết Chuỳ', 'Liệt Địa Chuỳ', 'Sơn Hà Trấn Nhạc', 'Thiên Băng Chi Chuỳ',
+    'Thần Khí Nghiền Tinh', 'Thiên Mệnh Trấn Vũ', 'Diệt Thế Băng Địa', 'Hồng Hoang Tạo Sơn', 'Siêu Thoát Nhất Chuỳ',
+  ],
 };
 
 export interface WeaponDef {
-  id: string; name: string; type: WeaponType; tier: Rarity;
+  id: string; name: string; type: WeaponType; tier: WeaponTierId;
+  /** Vị trí bậc 0–9, tiện cho renderer và giao diện khỏi tra bảng lại. */
+  tierIdx: number;
   /** Phần công cộng thêm, dạng tỉ lệ (0.45 = +45%). */
   atkPct: number;
 }
 export const WEAPONS: WeaponDef[] = WEAPON_TYPES.flatMap((t) =>
-  RARITY_ORDER.map((tier, ti) => ({
+  WTIER_ORDER.map((tier, ti) => ({
     id: `wp_${t.id}_${tier}`,
     name: WEAPON_NAMES[t.id][ti],
     type: t.id,
     tier,
+    tierIdx: ti,
     atkPct: WEAPON_TIER_PCT[tier] * t.atk,
   })),
 );
 export const weaponById = (id: string): WeaponDef | undefined => WEAPONS.find((w) => w.id === id);
 /** Vũ khí bậc kế tiếp cùng loại; null nếu đã ở bậc cao nhất. */
 export function nextWeaponOf(def: WeaponDef): WeaponDef | null {
-  const ti = rarityIdx(def.tier);
-  if (ti >= RARITY_ORDER.length - 1) return null;
-  return weaponById(`wp_${def.type}_${RARITY_ORDER[ti + 1]}`) ?? null;
+  const ti = wtierIdx(def.tier);
+  if (ti >= MAX_WTIER) return null;
+  return weaponById(`wp_${def.type}_${WTIER_ORDER[ti + 1]}`) ?? null;
+}
+
+/**
+ * Bảng tỉ lệ rèn — mỗi phần tử là mốc cộng dồn của `Math.random()`.
+ * So với bảng cũ, MỌI bậc từ Hiếm trở lên đều hẹp lại (Cực Hiếm 11%→7.5%,
+ * Huyền Thoại 2.8%→1.9%, Thần Thoại 0.2%→0.45% nhưng nay chỉ là bậc giữa),
+ * còn ba bậc chót **không quay thẳng ra được** — muốn tới đó phải gom mảnh.
+ * Đây là chốt giữ cho hệ ghép mảnh còn là con đường chính.
+ */
+export const WEAPON_ROLL_TABLE: Array<[number, WeaponTierId]> = [
+  [0.0004, 'celestial'],
+  [0.0015, 'divine'],
+  [0.0060, 'mythic'],
+  [0.0250, 'legendary'],
+  [0.1000, 'epic'],
+  [0.3400, 'rare'],
+  [1.0000, 'common'],
+];
+export function rollWeaponTier(r = Math.random()): WeaponTierId {
+  for (const [edge, tier] of WEAPON_ROLL_TABLE) if (r < edge) return tier;
+  return 'common';
 }
 /** Số bản trùng cần gom để lột xác lên bậc trên. */
 export const WEAPON_MERGE = 6;
@@ -669,6 +880,50 @@ export const BAL = {
   /** Máu gốc của Kael ở cấp 1. */
   KAEL_HP0: 320,
 } as const;
+
+// ============ ĐỘ KHÓ VỰC VÔ TẬN ============
+/**
+ * Ba nấc độ khó, chỉ mở sau khi dọn trọn 100 tầng và bước vào Vực Vô Tận.
+ *
+ * Đây là chỗ duy nhất trong game mà **phần thưởng đi ngược với độ khó**: quái
+ * mạnh hơn nhưng Vàng/Ngọc rơi ra lại ít hơn. Nếu chỉ có vậy thì không ai
+ * chọn Hard/Evil, nên bù lại chúng nhân mạnh Ấn Điểm của Huyết Lệnh và là
+ * điều kiện mở hai món đắt nhất trong Cửa Hàng — người chơi đổi tốc độ farm
+ * lấy tiến độ mùa giải và quyền mua đồ hiếm.
+ */
+export type DungeonMode = 'normal' | 'hard' | 'evil';
+export interface DungeonModeDef {
+  id: DungeonMode;
+  name: string;
+  short: string;
+  desc: string;
+  color: string;
+  /** Nhân vào cả Máu lẫn Công của quái. */
+  foeMul: number;
+  /** Nhân vào Vàng và Ngọc rơi ra. */
+  rewardMul: number;
+  /** Nhân vào Ấn Điểm nhận được từ nhiệm vụ và chiến đấu. */
+  edictMul: number;
+}
+export const DUNGEON_MODES: DungeonModeDef[] = [
+  {
+    id: 'normal', name: 'THƯỜNG', short: 'Thường',
+    desc: 'Vực Vô Tận nguyên bản — quái và phần thưởng giữ nguyên.',
+    color: '#8cdcff', foeMul: 1, rewardMul: 1, edictMul: 1,
+  },
+  {
+    id: 'hard', name: 'HARD — NGHIỆT ĐỊA', short: 'Hard',
+    desc: 'Quái mạnh hơn 100%. Vàng và Ngọc rơi ra ít hơn 10%. Ấn Điểm ×1.8.',
+    color: '#ff9a3c', foeMul: 2, rewardMul: 0.9, edictMul: 1.8,
+  },
+  {
+    id: 'evil', name: 'EVIL — TÀ VỰC', short: 'Evil',
+    desc: 'Quái mạnh hơn 150%. Vàng và Ngọc rơi ra ít hơn 20%. Ấn Điểm ×2.6 và mở khoá hai món đắt nhất trong Cửa Hàng.',
+    color: '#b14bff', foeMul: 2.5, rewardMul: 0.8, edictMul: 2.6,
+  },
+];
+export const dungeonModeDef = (m: DungeonMode): DungeonModeDef =>
+  DUNGEON_MODES.find((d) => d.id === m) ?? DUNGEON_MODES[0];
 
 /** Chi phí nâng 1 cấp từ `lvl` lên `lvl+1`. */
 export function upgradeCostAt(lvl: number): number {

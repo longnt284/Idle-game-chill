@@ -23,10 +23,23 @@ export interface ChibiLook {
    */
   evoTier?: number;
   /**
-   * Bậc vũ khí đang cầm (0 = Thường … 4 = Thần Thoại). Quyết định chất liệu,
+   * Bậc vũ khí đang cầm (0 = Thường … 9 = Siêu Thoát). Quyết định chất liệu,
    * quầng sáng và vệt chém — bậc càng cao trông càng dữ.
    */
   weaponTier?: number;
+  /**
+   * Skin vũ khí mua ở Cửa Hàng (`ws_*`). Là **lớp phủ**: đổi bảng màu lưỡi và
+   * kiểu hạt bay quanh, không đổi hình dáng, nên dùng chung cho mọi loại và
+   * mọi bậc vũ khí.
+   */
+  weaponSkin?: string;
+  /** Bậc hiệu ứng của skin vũ khí (0 = không có, 1–4 theo giá tiền). */
+  weaponFx?: number;
+  /**
+   * Bậc hiệu ứng của trang phục mua ở Cửa Hàng (0–4). Càng cao renderer càng
+   * chồng thêm lớp: trận đồ dưới chân, hạt xoay quanh thân, lưu ảnh khi chém.
+   */
+  skinFx?: number;
 }
 
 /** Trạng thái hoạt ảnh mà renderer cần để dựng tư thế nhân vật. */

@@ -5,6 +5,7 @@ import { TitleScreen, StoryScreen, EndScreen } from './ui/screens';
 import {
   HudOverlay, SummonModal, PartyModal, EquipModal, SkinModal, WeaponModal,
   PauseModal, PrestigeModal, OfflineModal, KaelModal, DailyModal, AchievementModal,
+  ShopModal, QuestModal,
 } from './ui/panels';
 import type { PanelId } from './ui/panels';
 
@@ -155,6 +156,8 @@ export default function App(): React.JSX.Element {
           {inGame && eng && meta && panel === 'kael' && <KaelModal meta={meta} engine={eng} onClose={closePanel} />}
           {inGame && eng && meta && panel === 'daily' && <DailyModal meta={meta} engine={eng} onClose={closePanel} />}
           {inGame && eng && meta && panel === 'achievement' && <AchievementModal meta={meta} engine={eng} onClose={closePanel} />}
+          {inGame && eng && meta && panel === 'shop' && <ShopModal meta={meta} engine={eng} onClose={closePanel} />}
+          {inGame && eng && meta && panel === 'quest' && <QuestModal meta={meta} engine={eng} onClose={closePanel} />}
           {inGame && eng && meta && panel === 'pause' && (
             <PauseModal
               engine={eng}

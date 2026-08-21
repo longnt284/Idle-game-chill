@@ -1,21 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type {
-  AchStatId, ChibiLook, CompanionStats, GachaResult, MetaInfo, OfflineReport, Pos, Rarity,
-  RuneId, WeaponDef,
+  AchStatId, ChibiLook, CompanionStats, DungeonMode, GachaResult, MetaInfo, OfflineReport, Pos,
+  Rarity, RuneId, ShopRow, QuestRow, WeaponDef,
 } from '../game/engine';
 import {
   ACHIEVEMENTS, ACH_GROUPS, ACH_RANKS, ACH_TOTAL, rankOfTier,
   BAL, COMPANIONS, GACHA_COST, GACHA_X10_COST, GACHA_X100_COST, GACHA_X500_COST, ITEMS,
   MAX_ITEM_SLOTS, MAX_PARTY, RARITY, RUNES, SKINS, TOTAL_FLOORS, WAVES_PER_FLOOR,
-  WEAPONS, WEAPON_MERGE, WEAPON_TYPES, WGACHA_COST, WGACHA_X10_COST, EVO_EVERY,
+  WEAPONS, WEAPON_MERGE, WEAPON_TYPES, WGACHA_COST, WGACHA_X10_COST, WGACHA_X100_COST, EVO_EVERY,
+  WTIER, WTIER_ORDER, WEAPON_SKINS_DEF, DUNGEON_MODES, dungeonModeDef,
   fmt, hasBossOnFloor, renderPortrait, weaponTypeDef, zoneOf,
 } from '../game/engine';
 import type { GameIdle } from '../game/engine';
 
 export type PanelId =
   | 'none' | 'summon' | 'party' | 'equip' | 'skin' | 'weapon' | 'pause' | 'prestige' | 'kael'
-  | 'daily' | 'achievement';
+  | 'daily' | 'achievement' | 'shop' | 'quest';
 
 // ============ nguyên thủy dùng chung ============
 
@@ -46,6 +47,9 @@ const ICONS = {
   check: 'M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z',
   trophy: 'M18 3h3v4a4 4 0 0 1-4 4h-.6A5 5 0 0 1 13 13.9V17h3v2H8v-2h3v-3.1A5 5 0 0 1 7.6 11H7a4 4 0 0 1-4-4V3h3V2h12v1zM5 5v2a2 2 0 0 0 1 1.7V5H5zm14 0h-1v3.7A2 2 0 0 0 19 7V5z',
   cloth: 'M9 2 5 4 3 9l3 1.4V22h12V10.4L21 9l-2-5-4-2a3 3 0 0 1-6 0z',
+  cart: 'M7 18a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm10 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM6.2 6h15L19 14H8L6.2 6zM2 2h3l.9 4H4.3L2 2z',
+  scroll: 'M6 2h12a2 2 0 0 1 2 2v3h-3v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm1 5h8v2H7V7zm0 4h8v2H7v-2zm0 4h5v2H7v-2z',
+  skull: 'M12 2a8 8 0 0 0-8 8v4l2 2v3a1 1 0 0 0 1 1h2v-3h2v3h2v-3h2v3h2a1 1 0 0 0 1-1v-3l2-2v-4a8 8 0 0 0-8-8zM9 11a2 2 0 1 1 0-4 2 2 0 0 1 0 4zm6 0a2 2 0 1 1 0-4 2 2 0 0 1 0 4z',
 };
 
 /** Chân dung nhân vật vẽ trên canvas. Chỉ chạy vòng lặp khi thật sự cần động. */
@@ -224,8 +228,25 @@ function FloorCard({ meta }: { meta: MetaInfo }): React.JSX.Element {
           {h.floorName}
         </span>
       </div>
-      <div className="font-ui text-[9px] font-bold tracking-widest mt-0.5 truncate" style={{ color: zone.accent }}>
-        {zone.name.toUpperCase()}
+      <div className="flex items-center gap-1.5 mt-0.5">
+        <span className="font-ui text-[9px] font-bold tracking-widest truncate" style={{ color: zone.accent }}>
+          {zone.name.toUpperCase()}
+        </span>
+        {/* Độ khó chỉ có hiệu lực trong Vực Vô Tận, nên chỉ dán nhãn ở đó —
+            hiện ở 100 tầng đầu sẽ khiến người chơi tưởng nó đang tác động. */}
+        {h.floor >= TOTAL_FLOORS && meta.mode !== 'normal' && (
+          <span
+            className="hk-tag ml-auto shrink-0"
+            style={{
+              color: dungeonModeDef(meta.mode).color,
+              border: `1px solid ${dungeonModeDef(meta.mode).color}66`,
+              background: `${dungeonModeDef(meta.mode).color}18`,
+            }}
+            title={dungeonModeDef(meta.mode).desc}
+          >
+            {dungeonModeDef(meta.mode).short.toUpperCase()}
+          </span>
+        )}
       </div>
       <div className="flex items-center gap-1 mt-1.5">
         {Array.from({ length: WAVES_PER_FLOOR }).map((_, i) => {
@@ -471,12 +492,52 @@ function DockBadge({ n, color }: { n: number; color: string }): React.JSX.Elemen
   );
 }
 
+/**
+ * Bộ chọn độ khó Vực Vô Tận.
+ * Cố ý là ba nút rời chứ không phải một nút xoay vòng: đổi độ khó sẽ dọn sân
+ * và khởi động lại tầng, nên người chơi phải chọn đúng thứ mình muốn ngay
+ * lần bấm đầu, không được lỡ tay đi qua Evil.
+ */
+function ModePicker({ meta, engine }: { meta: MetaInfo; engine: GameIdle }): React.JSX.Element | null {
+  if (!meta.modesUnlocked) return null;
+  return (
+    <div className="flex items-stretch gap-[3px]">
+      {DUNGEON_MODES.map((m) => {
+        const on = meta.mode === m.id;
+        return (
+          <button
+            key={m.id}
+            className="hk-dock"
+            style={{
+              padding: '5px 8px', fontSize: 10,
+              borderColor: on ? m.color : '#3a3350',
+              color: on ? m.color : '#8f8aa0',
+              background: on ? `${m.color}1c` : undefined,
+              boxShadow: on ? `0 0 12px ${m.color}44` : undefined,
+            }}
+            onClick={() => engine.setDungeonMode(m.id as DungeonMode)}
+            title={m.desc}
+          >
+            {m.id === 'normal' ? <Svg d={ICONS.shield} s={11} c={on ? m.color : '#8fa3b8'} />
+              : m.id === 'hard' ? <Svg d={ICONS.flame} s={11} c={on ? m.color : '#8fa3b8'} />
+                : <Svg d={ICONS.skull} s={11} c={on ? m.color : '#8fa3b8'} />}
+            {m.short.toUpperCase()}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function DockBar({ meta, engine }: { meta: MetaInfo; engine: GameIdle }): React.JSX.Element {
   const canPrestige = meta.canPrestige;
   const dailyReady = meta.daily.canClaim;
   const achReady = meta.ach.claimable;
+  const questReady = meta.quests.claimable + meta.quests.claimableTiers;
   return (
     <div className="absolute bottom-3 right-3 flex flex-col items-end gap-1.5 pointer-events-auto">
+      {/* độ khó Vực Vô Tận — chỉ hiện sau khi dọn trọn 100 tầng */}
+      <ModePicker meta={meta} engine={engine} />
       {/* hàng tiện ích — chỉ biểu tượng, gọn để chừa chỗ cho sân khấu */}
       <div className="flex items-stretch gap-1.5">
         <button
@@ -507,6 +568,23 @@ function DockBar({ meta, engine }: { meta: MetaInfo; engine: GameIdle }): React.
           <Svg d={ICONS.trophy} s={12} c={achReady > 0 ? '#ffd23c' : '#8fa3b8'} />
           THÀNH TỰU
           <DockBadge n={achReady} color="#ffd23c" />
+        </button>
+        <button
+          className="hk-dock"
+          style={{
+            borderColor: questReady > 0 ? '#ff4fd8' : '#3a3350',
+            color: questReady > 0 ? '#ffd6ec' : '#ece4d2',
+            padding: '5px 10px', fontSize: 11,
+            boxShadow: questReady > 0 ? '0 0 16px rgba(255,79,216,0.3)' : undefined,
+          }}
+          onClick={() => dispatchOpen('quest')}
+          title={questReady > 0
+            ? `${questReady} phần thưởng đang chờ nhận`
+            : `Huyết Lệnh bậc ${meta.quests.level}/${meta.quests.maxLevel} — nhiệm vụ ngày và tuần`}
+        >
+          <Svg d={ICONS.scroll} s={12} c={questReady > 0 ? '#ff4fd8' : '#8fa3b8'} />
+          HUYẾT LỆNH
+          <DockBadge n={questReady} color="#ff4fd8" />
         </button>
         <button
           className="hk-dock"
@@ -562,6 +640,9 @@ function DockBar({ meta, engine }: { meta: MetaInfo; engine: GameIdle }): React.
         </button>
         <button className="hk-dock" style={{ borderColor: '#ff8a5a88' }} onClick={() => dispatchOpen('weapon')}>
           <Svg d={ICONS.sword} s={14} c="#ff8a5a" /> VŨ KHÍ
+        </button>
+        <button className="hk-dock" style={{ borderColor: '#ffd23c88', color: '#ffeaa0' }} onClick={() => dispatchOpen('shop')}>
+          <Svg d={ICONS.cart} s={14} c="#ffd23c" /> HUYẾT THỊ
         </button>
         <button
           className="hk-dock"
@@ -1280,6 +1361,9 @@ export function EquipModal({ meta, engine, onClose }: { meta: MetaInfo; engine: 
 export function SkinModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }): React.JSX.Element {
   const gachaSkins = meta.skins.filter((s) => s.source === 'gacha');
   const loginSkins = meta.skins.filter((s) => s.source === 'login');
+  // Bộ mua ở Huyết Thị vẫn phải thay được từ tủ đồ: người chơi tìm trang phục
+  // ở tủ đồ trước, không ai nghĩ tới chuyện mở lại cửa hàng chỉ để đổi đồ.
+  const shopSkins = meta.skins.filter((s) => s.source === 'shop' && s.owned);
   const shards = meta.clothShards;
   const cost = meta.daily.shardCost;
   const forgedCount = loginSkins.filter((s) => s.owned).length;
@@ -1386,6 +1470,44 @@ export function SkinModal({ meta, engine, onClose }: { meta: MetaInfo; engine: G
         })}
       </div>
 
+      {/* ---- bộ đã mua ở Huyết Thị ---- */}
+      {shopSkins.length > 0 && (
+        <>
+          <div className="kicker text-[9px] text-[var(--color-bone-faint)] mb-1.5">HUYẾT THỊ — ĐÃ MUA</div>
+          <div className="grid grid-cols-3 gap-2.5 mb-4">
+            {shopSkins.map((s) => {
+              const def = SKINS.find((x) => x.id === s.id);
+              if (!def) return null;
+              const c = def.look.aura;
+              return (
+                <div
+                  key={s.id}
+                  className="rounded-md p-2.5 flex flex-col items-center text-center"
+                  style={{
+                    background: s.equipped ? `${c}22` : 'rgba(18,15,26,0.6)',
+                    border: `1.5px solid ${s.equipped ? c : `${c}55`}`,
+                    boxShadow: s.equipped ? `0 0 16px ${c}55` : 'none',
+                  }}
+                >
+                  <PortraitFrame look={def.look} ring={c} size={88} animate={s.equipped} />
+                  <div className="font-display text-[12.5px] leading-tight mt-1.5" style={{ color: s.equipped ? c : 'var(--color-bone)' }}>
+                    {s.name}
+                  </div>
+                  <div className="font-body text-[9px] text-[var(--color-bone-dim)] mt-1 leading-snug min-h-[24px]">{s.desc}</div>
+                  <div className="mt-1.5 w-full">
+                    {s.equipped ? (
+                      <span className="font-ui text-[10px] font-bold" style={{ color: c }}>ĐANG MẶC</span>
+                    ) : (
+                      <button onClick={() => engine.equipSkin(s.id)} className="hk-btn solid w-full justify-center" style={{ background: '#ece4d2' }}>MẶC</button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
       {/* ---- bộ quay/mua bằng Ngọc ---- */}
       <div className="kicker text-[9px] text-[var(--color-bone-faint)] mb-1.5">TRIỆU HỒI &amp; NGỌC</div>
       <div className="grid grid-cols-3 gap-2.5">
@@ -1438,24 +1560,41 @@ export function WeaponModal({ meta, engine, onClose }: { meta: MetaInfo; engine:
   const equipped = engine.equippedWeaponDef();
   const owned = engine.getWeapons();
   const ownedById = new Map(owned.map((o) => [o.def.id, o]));
-  const forge = (n: 1 | 10): void => {
+  const forge = (n: 1 | 10 | 100): void => {
     const r = engine.weaponGacha(n);
-    if (r) setLastPull(r);
+    // Rèn ×100 trả về 100 dòng — chỉ giữ lại phần đáng nhìn: mọi lần lột xác,
+    // mọi món mới, rồi bù cho đủ 12 ô. Đổ hết 100 ô ra thì không ai đọc nổi.
+    if (!r) return;
+    if (r.length <= 12) { setLastPull(r); return; }
+    const notable = r.filter((x) => x.merged || x.isNew);
+    setLastPull([...notable, ...r.filter((x) => !x.merged && !x.isNew)].slice(0, 12));
   };
+  const ws = meta.equippedWeaponSkin
+    ? WEAPON_SKINS_DEF.find((w) => w.id === meta.equippedWeaponSkin)
+    : undefined;
   return (
     <Modal
       title="LÒ RÈN"
-      subtitle={`${WEAPON_TYPES.length} loại × ${RARITY_ORDER_UI.length} bậc · gom đủ ${WEAPON_MERGE} bản trùng thì vũ khí lột xác lên bậc trên`}
+      subtitle={`${WEAPON_TYPES.length} loại × ${WTIER_ORDER.length} bậc · gom đủ ${WEAPON_MERGE} bản trùng thì vũ khí lột xác lên bậc trên`}
       accent="#ff8a5a"
       onClose={onClose}
       wide
       footer={
         <div className="flex items-center gap-2">
           <button onClick={() => forge(1)} disabled={meta.gems < WGACHA_COST} className="hk-btn lg solid flex-1 justify-center" style={{ background: '#ff8a5a' }}>
-            <Svg d={ICONS.anvil} s={14} c="#2a1208" /> RÈN ×1 — {fmt(WGACHA_COST)}
+            <Svg d={ICONS.anvil} s={14} c="#2a1208" /> ×1 — {fmt(WGACHA_COST)}
           </button>
           <button onClick={() => forge(10)} disabled={meta.gems < WGACHA_X10_COST} className="hk-btn lg solid flex-1 justify-center" style={{ background: '#ffb43c' }}>
-            <Svg d={ICONS.anvil} s={14} c="#2a1208" /> RÈN ×10 — {fmt(WGACHA_X10_COST)}
+            <Svg d={ICONS.anvil} s={14} c="#2a1208" /> ×10 — {fmt(WGACHA_X10_COST)}
+          </button>
+          <button
+            onClick={() => forge(100)}
+            disabled={meta.gems < WGACHA_X100_COST}
+            className="hk-btn lg solid flex-1 justify-center"
+            style={{ background: '#7dff5a' }}
+            title={`Rèn 100 lượt liên tiếp — rẻ hơn 15% so với ${fmt(WGACHA_COST * 100)} Ngọc`}
+          >
+            <Svg d={ICONS.anvil} s={14} c="#0e2a08" /> ×100 — {fmt(WGACHA_X100_COST)}
           </button>
           <div className="num text-[13px] text-[#ff4fd8] flex items-center gap-1.5 shrink-0">
             <Svg d={ICONS.gem} s={13} c="#ff4fd8" /> {fmt(meta.gems)}
@@ -1474,12 +1613,14 @@ export function WeaponModal({ meta, engine, onClose }: { meta: MetaInfo; engine:
         <div className="flex-1 min-w-0">
           {equipped ? (
             <>
-              <div className="font-display text-[15px] leading-none" style={{ color: RARITY[equipped.def.tier].color }}>
+              <div className="font-display text-[15px] leading-none" style={{ color: WTIER[equipped.def.tier].color }}>
                 {equipped.def.name}
                 {equipped.refine > 0 && <span className="num text-[10px] text-[#7dff5a] ml-1">tinh luyện +{equipped.refine}</span>}
+                {ws && <span className="num text-[10px] ml-1" style={{ color: ws.edge }}>· {ws.name}</span>}
               </div>
               <div className="font-ui text-[10px] text-[var(--color-bone-dim)] mt-1">
-                <span style={{ color: RARITY[equipped.def.tier].color }}>{RARITY[equipped.def.tier].name}</span>
+                <span style={{ color: WTIER[equipped.def.tier].color }}>{WTIER[equipped.def.tier].name}</span>
+                {' · bậc '}{equipped.def.tierIdx + 1}/{WTIER_ORDER.length}
                 {' · '}{weaponTypeDef(equipped.def.type).name}
                 {' · Kael '}<span className="text-[#ff8a5a] font-bold">+{equipped.pct}% Công</span>
                 {' · đội '}<span className="text-[#ffd23c] font-bold">+{equipped.partyPct}%</span>
@@ -1500,7 +1641,7 @@ export function WeaponModal({ meta, engine, onClose }: { meta: MetaInfo; engine:
         <div className="anim-fade-up grid grid-cols-2 gap-1.5 mb-3">
           {lastPull.map((r, i) => {
             const shown = r.merged ?? r.def;
-            const rc = RARITY[shown.tier];
+            const rc = WTIER[shown.tier];
             return (
               <div
                 key={i}
@@ -1518,46 +1659,63 @@ export function WeaponModal({ meta, engine, onClose }: { meta: MetaInfo; engine:
         </div>
       )}
 
-      {/* bảng 6 loại × 5 bậc — nhìn là biết còn thiếu gì */}
+      {/* bảng 6 loại × 10 bậc — nhìn là biết còn thiếu gì.
+          Mười cột thì tên vũ khí không còn chỗ, nên ô chỉ giữ phần đọc được
+          từ xa (% công + vạch mảnh) và đẩy tên vào tooltip. */}
+      <div className="flex items-center gap-2 mb-1">
+        <div className="w-[74px] shrink-0" />
+        <div className="grid grid-cols-10 gap-1 flex-1">
+          {WTIER_ORDER.map((tier) => (
+            <div
+              key={tier}
+              className="font-ui text-[7.5px] tracking-wide text-center leading-none truncate"
+              style={{ color: WTIER[tier].color }}
+              title={WTIER[tier].name}
+            >
+              {WTIER[tier].short}
+            </div>
+          ))}
+        </div>
+      </div>
       <div className="flex flex-col gap-1.5">
         {WEAPON_TYPES.map((t) => (
           <div key={t.id} className="flex items-center gap-2">
-            <div className="w-[86px] shrink-0">
+            <div className="w-[74px] shrink-0">
               <div className="font-display text-[12px] text-[var(--color-bone)] leading-none">{t.name}</div>
               <div className="font-ui text-[8px] text-[var(--color-bone-faint)] mt-0.5 leading-tight">{t.trait}</div>
             </div>
-            <div className="grid grid-cols-5 gap-1 flex-1">
-              {RARITY_ORDER_UI.map((tier) => {
+            <div className="grid grid-cols-10 gap-1 flex-1">
+              {WTIER_ORDER.map((tier) => {
                 const def = WEAPONS.find((w) => w.type === t.id && w.tier === tier);
                 if (!def) return null;
                 const own = ownedById.get(def.id);
-                const rc = RARITY[tier];
+                const rc = WTIER[tier];
                 const isEq = equipped?.def.id === def.id;
                 const have = (own?.count ?? 0) > 0;
+                const top = def.tierIdx === WTIER_ORDER.length - 1;
                 return (
                   <button
                     key={tier}
                     onClick={() => have && engine.equipWeapon(def.id)}
                     disabled={!have}
                     title={have
-                      ? `${def.name} — ${own?.pct}% Công · ${own?.count}/${WEAPON_MERGE} mảnh tới bậc sau`
-                      : `${def.name} — chưa sở hữu`}
-                    className="rounded-sm px-1 py-1 text-left transition-transform hover:-translate-y-0.5 disabled:hover:translate-y-0"
+                      ? `${def.name} (${rc.name}) — +${own?.pct}% Công · ${own?.count}/${WEAPON_MERGE} mảnh${top ? ' tới một lần tinh luyện' : ' tới bậc sau'}`
+                      : `${def.name} (${rc.name}) — chưa sở hữu`}
+                    className="rounded-sm px-0.5 py-1 text-center transition-transform hover:-translate-y-0.5 disabled:hover:translate-y-0"
                     style={{
                       background: have ? `linear-gradient(140deg, ${rc.color}22, #0d0a14 78%)` : 'rgba(18,15,26,0.5)',
                       border: `1px solid ${isEq ? rc.color : have ? `${rc.color}55` : '#241f33'}`,
                       boxShadow: isEq ? `0 0 10px ${rc.color}66` : 'none',
-                      opacity: have ? 1 : 0.45,
+                      opacity: have ? 1 : 0.4,
                       cursor: have ? 'pointer' : 'not-allowed',
                     }}
                   >
-                    <div className="font-display text-[9px] leading-tight truncate" style={{ color: have ? rc.color : '#4c4459' }}>
-                      {def.name}
-                    </div>
                     {have ? (
                       <>
-                        <div className="num text-[9px] leading-none mt-0.5" style={{ color: rc.color }}>+{own?.pct}%</div>
-                        <div className="flex gap-[2px] mt-1">
+                        <div className="num text-[9px] leading-none" style={{ color: rc.color }}>
+                          +{own?.pct}%
+                        </div>
+                        <div className="flex gap-[1px] mt-1">
                           {Array.from({ length: WEAPON_MERGE }).map((_, i) => (
                             <span
                               key={i}
@@ -1570,7 +1728,7 @@ export function WeaponModal({ meta, engine, onClose }: { meta: MetaInfo; engine:
                         </div>
                       </>
                     ) : (
-                      <div className="font-ui text-[8px] text-[var(--color-bone-faint)] mt-0.5">—</div>
+                      <div className="font-ui text-[9px] text-[var(--color-bone-faint)] leading-[1.6]">—</div>
                     )}
                   </button>
                 );
@@ -1581,13 +1739,12 @@ export function WeaponModal({ meta, engine, onClose }: { meta: MetaInfo; engine:
       </div>
       <p className="font-ui text-[9px] text-[var(--color-bone-faint)] mt-2.5 text-center leading-relaxed">
         Bấm vào một vũ khí đã sở hữu để trang bị · Đủ {WEAPON_MERGE} mảnh sẽ tự lột xác lên bậc trên cùng loại ·
-        Ở bậc Thần Thoại, {WEAPON_MERGE} mảnh đổi thành một lần tinh luyện
+        Ba bậc chót (từ {WTIER.abyssal.name}) <b className="text-[var(--color-bone-dim)]">không rèn thẳng ra được</b> — chỉ tới bằng đường ghép mảnh ·
+        Ở bậc {WTIER.transcendent.name}, {WEAPON_MERGE} mảnh đổi thành một lần tinh luyện
       </p>
     </Modal>
   );
 }
-
-const RARITY_ORDER_UI: Rarity[] = ['common', 'rare', 'epic', 'legendary', 'mythic'];
 
 // ============ KAEL: TIẾN HOÁ · NGỌC HUYẾT · HỒ SƠ ============
 
@@ -2290,6 +2447,291 @@ export function AchievementModal({ meta, engine, onClose }: { meta: MetaInfo; en
           })}
         </div>
       </div>
+    </Modal>
+  );
+}
+
+// ============ CỬA HÀNG ============
+
+/** Một dòng giá "Vàng + Ngọc": tô đỏ đúng vế đang thiếu, không tô cả cụm. */
+function PriceTag({ gold, gems, haveGold, haveGems }: {
+  gold: number; gems: number; haveGold: number; haveGems: number;
+}): React.JSX.Element {
+  const okGold = haveGold >= gold;
+  const okGems = haveGems >= gems;
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className="inline-flex items-center gap-1 num text-[11px]" style={{ color: okGold ? '#ffd23c' : '#ff5a6a' }}>
+        <Svg d={ICONS.coin} s={11} c={okGold ? '#ffd23c' : '#ff5a6a'} />{fmt(gold)}
+      </span>
+      <span className="inline-flex items-center gap-1 num text-[11px]" style={{ color: okGems ? '#ff4fd8' : '#ff5a6a' }}>
+        <Svg d={ICONS.gem} s={11} c={okGems ? '#ff4fd8' : '#ff5a6a'} />{fmt(gems)}
+      </span>
+    </span>
+  );
+}
+
+function ShopCard({ row, meta, engine }: { row: ShopRow; meta: MetaInfo; engine: GameIdle }): React.JSX.Element {
+  const skin = row.kind === 'hero' ? SKINS.find((s) => s.id === row.id) : undefined;
+  const ws = row.kind === 'weapon' ? WEAPON_SKINS_DEF.find((w) => w.id === row.id) : undefined;
+  // Xem trước skin vũ khí bằng chính vũ khí Kael đang cầm: người chơi thấy
+  // đúng thứ mình sẽ nhận, chứ không phải một hình mẫu chung chung.
+  const preview: ChibiLook | undefined = ws
+    ? { ...(SKINS.find((s) => s.id === meta.equippedSkin) ?? SKINS[0]).look, weaponSkin: ws.id, weaponFx: ws.fx, weaponTier: 6 }
+    : skin?.look;
+  return (
+    <div
+      className="rounded-md p-2.5 flex flex-col items-center text-center"
+      style={{
+        background: row.equipped ? `${row.color}22` : 'rgba(18,15,26,0.6)',
+        border: `1.5px solid ${row.equipped ? row.color : row.owned ? `${row.color}66` : '#241f33'}`,
+        boxShadow: row.equipped ? `0 0 16px ${row.color}55` : 'none',
+      }}
+    >
+      <div className="relative">
+        <div style={{ filter: row.owned ? 'none' : 'grayscale(0.4) brightness(0.72)' }}>
+          {preview && <PortraitFrame look={preview} ring={row.color} size={92} animate={row.equipped || row.owned} />}
+        </div>
+        {row.locked && (
+          <span
+            className="absolute -top-1 -right-1 flex items-center justify-center"
+            style={{ width: 20, height: 20, borderRadius: 4, background: '#150a20', border: '1px solid #b14bff88' }}
+          >
+            <Svg d={ICONS.skull} s={12} c="#b14bff" />
+          </span>
+        )}
+        <span
+          className="absolute -bottom-1 -left-1 font-ui text-[8px] px-1 rounded-sm leading-[1.5]"
+          style={{ background: row.color, color: '#120c1a' }}
+          title={`Bậc hiệu ứng ${row.fx}/4 — càng cao renderer càng chồng thêm lớp`}
+        >
+          FX {row.fx}
+        </span>
+      </div>
+      <div className="font-display text-[12.5px] leading-tight mt-1.5" style={{ color: row.owned ? row.color : 'var(--color-bone)' }}>
+        {row.name}
+      </div>
+      <div className="font-body text-[9px] text-[var(--color-bone-dim)] mt-1 leading-snug min-h-[32px]">{row.desc}</div>
+      <div className="mt-1.5 w-full">
+        {row.equipped ? (
+          <button
+            onClick={() => engine.equipShopItem(row.id)}
+            className="hk-btn w-full justify-center"
+            style={{ color: row.color, borderColor: `${row.color}88` }}
+          >
+            {row.kind === 'weapon' ? 'ĐANG KHOÁC — GỠ' : 'ĐANG MẶC'}
+          </button>
+        ) : row.owned ? (
+          <button onClick={() => engine.equipShopItem(row.id)} className="hk-btn solid w-full justify-center" style={{ background: '#ece4d2' }}>
+            {row.kind === 'weapon' ? 'KHOÁC' : 'MẶC'}
+          </button>
+        ) : row.locked ? (
+          <div className="font-ui text-[9px] leading-snug text-[#b14bff]">Cần chinh phục Tà Vực</div>
+        ) : (
+          <button
+            onClick={() => engine.buyShopItem(row.id)}
+            disabled={!row.affordable}
+            className="hk-btn w-full justify-center"
+            style={{ borderColor: row.affordable ? `${row.color}88` : '#241f33' }}
+          >
+            <PriceTag gold={row.gold} gems={row.gems} haveGold={meta.gold} haveGems={meta.gems} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function ShopModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }): React.JSX.Element {
+  const [tab, setTab] = useState<'hero' | 'weapon'>('hero');
+  const shop = engine.shopInfo();
+  const rows = shop.items.filter((i) => i.kind === tab);
+  return (
+    <Modal
+      title="HUYẾT THỊ"
+      subtitle="Trả bằng Vàng và Ngọc cùng lúc · càng đắt hiệu ứng càng dày · không đụng tới chỉ số"
+      accent="#ffd23c"
+      onClose={onClose}
+      wide
+      footer={
+        <div className="flex items-center justify-between gap-3">
+          <div className="num text-[13px] text-[#ffd23c] flex items-center gap-1.5">
+            <Svg d={ICONS.coin} s={13} c="#ffd23c" /> {fmt(meta.gold)}
+          </div>
+          <div className="font-ui text-[9.5px] text-[var(--color-bone-faint)] text-center flex-1 leading-snug">
+            {shop.evilUnlocked
+              ? 'Tà Vực đã khuất phục — hai món đắt nhất đã mở bán'
+              : 'Dọn một tầng ở độ khó Evil để mở khoá hai món đắt nhất'}
+          </div>
+          <div className="num text-[13px] text-[#ff4fd8] flex items-center gap-1.5">
+            <Svg d={ICONS.gem} s={13} c="#ff4fd8" /> {fmt(meta.gems)}
+          </div>
+        </div>
+      }
+    >
+      <div className="flex gap-1.5 mb-3">
+        {([['hero', 'TRANG PHỤC KAEL'], ['weapon', 'SKIN VŨ KHÍ']] as const).map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className="hk-btn flex-1 justify-center"
+            style={{
+              color: tab === id ? '#ffd23c' : 'var(--color-bone-dim)',
+              borderColor: tab === id ? '#ffd23c88' : '#241f33',
+              background: tab === id ? 'rgba(255,210,60,0.1)' : undefined,
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="grid grid-cols-4 gap-2.5">
+        {rows.map((r) => <ShopCard key={r.id} row={r} meta={meta} engine={engine} />)}
+      </div>
+      <p className="font-ui text-[9px] text-[var(--color-bone-faint)] mt-3 text-center leading-relaxed">
+        Skin vũ khí là lớp phủ — mua một lần dùng được với cả {WEAPON_TYPES.length} loại và cả {WTIER_ORDER.length} bậc rèn ·
+        Bấm lại vào skin vũ khí đang khoác để gỡ ra
+      </p>
+    </Modal>
+  );
+}
+
+// ============ NHIỆM VỤ & HUYẾT LỆNH ============
+
+function QuestLine({ q, weekly, engine }: { q: QuestRow; weekly: boolean; engine: GameIdle }): React.JSX.Element {
+  const pct = q.target > 0 ? q.progress / q.target : 0;
+  return (
+    <div
+      className="rounded-md px-2.5 py-2 flex items-center gap-2.5"
+      style={{
+        background: q.claimed ? 'rgba(18,15,26,0.4)' : `linear-gradient(120deg, ${q.color}14, #0d0a14 72%)`,
+        border: `1px solid ${q.claimed ? '#241f33' : q.done ? q.color : `${q.color}44`}`,
+        opacity: q.claimed ? 0.55 : 1,
+      }}
+    >
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline gap-1.5">
+          <span className="font-display text-[12px] leading-none" style={{ color: q.color }}>{q.name}</span>
+          <span className="font-body text-[9.5px] text-[var(--color-bone-dim)] truncate">{q.text}</span>
+        </div>
+        <div className="flex items-center gap-2 mt-1">
+          <Meter pct={pct} color={q.color} h={4} className="flex-1" />
+          <span className="num text-[9px] text-[var(--color-bone-faint)] shrink-0">
+            {fmt(q.progress)}/{fmt(q.target)}
+          </span>
+        </div>
+      </div>
+      <div className="shrink-0 w-[92px] text-right">
+        {q.claimed ? (
+          <span className="font-ui text-[9px] text-[var(--color-bone-faint)] inline-flex items-center gap-1">
+            <Svg d={ICONS.check} s={10} c="#4c4459" /> ĐÃ NHẬN
+          </span>
+        ) : (
+          <button
+            onClick={() => engine.claimQuest(q.id, weekly)}
+            disabled={!q.done}
+            className="hk-btn w-full justify-center"
+            style={{
+              color: q.done ? '#0d0a14' : '#6f6780',
+              background: q.done ? q.color : undefined,
+              borderColor: q.done ? q.color : '#241f33',
+            }}
+          >
+            +{q.points} ẤN
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function QuestModal({ meta, engine, onClose }: { meta: MetaInfo; engine: GameIdle; onClose: () => void }): React.JSX.Element {
+  const q = meta.quests;
+  const mode = dungeonModeDef(meta.mode);
+  return (
+    <Modal
+      title="HUYẾT LỆNH"
+      subtitle={`Mùa ${q.cycle} · còn ${q.daysLeft} ngày · nhiệm vụ ngày đổi lúc nửa đêm, nhiệm vụ tuần đổi thứ Hai`}
+      accent="#ff4fd8"
+      onClose={onClose}
+      wide
+      footer={
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => engine.claimAllQuests()}
+            disabled={q.claimable === 0}
+            className="hk-btn lg solid flex-1 justify-center"
+            style={{ background: q.claimable > 0 ? '#ff4fd8' : '#3a3350' }}
+          >
+            <Svg d={ICONS.check} s={14} c="#1a0a16" /> NHẬN {q.claimable} NHIỆM VỤ
+          </button>
+          <button
+            onClick={() => engine.claimAllEdict()}
+            disabled={q.claimableTiers === 0}
+            className="hk-btn lg solid flex-1 justify-center"
+            style={{ background: q.claimableTiers > 0 ? '#ffd23c' : '#3a3350' }}
+          >
+            <Svg d={ICONS.seal} s={14} c="#2a1e08" /> NHẬN {q.claimableTiers} BẬC LỆNH
+          </button>
+        </div>
+      }
+    >
+      {/* ---- thanh mùa giải ---- */}
+      <div
+        className="rounded-md px-3 py-2.5 mb-3"
+        style={{ background: 'linear-gradient(120deg, rgba(255,79,216,0.14), #0d0a14 72%)', border: '1.5px solid #ff4fd866' }}
+      >
+        <div className="flex items-baseline justify-between gap-3">
+          <div className="font-display text-[15px] leading-none text-[#ff4fd8]">
+            BẬC {q.level}<span className="text-[var(--color-bone-faint)] text-[11px]">/{q.maxLevel}</span>
+          </div>
+          <div className="num text-[11px] text-[var(--color-bone-dim)]">
+            {q.nextCost > 0 ? `${fmt(q.points)}/${fmt(q.nextCost)} Ấn Điểm` : 'Đã đi hết mùa'}
+          </div>
+          <div className="font-ui text-[10px]" style={{ color: mode.color }}>
+            Ấn Điểm ×{q.edictMul} · {mode.short}
+          </div>
+        </div>
+        <Meter pct={q.progress} color="linear-gradient(90deg,#ff4fd8,#ffd23c)" h={6} className="mt-2" />
+        <div className="flex gap-[3px] mt-2 overflow-x-auto pb-1">
+          {q.tiers.map((t) => (
+            <button
+              key={t.level}
+              onClick={() => t.reached && !t.claimed && engine.claimEdict(t.level)}
+              disabled={!t.reached || t.claimed}
+              title={`Bậc ${t.level} — ${t.label}`}
+              className="shrink-0 rounded-sm flex flex-col items-center justify-center"
+              style={{
+                width: t.big ? 26 : 18, height: 30,
+                background: t.claimed ? 'rgba(18,15,26,0.5)' : t.reached ? `${t.color}33` : 'rgba(18,15,26,0.7)',
+                border: `1px solid ${t.claimed ? '#241f33' : t.reached ? t.color : `${t.color}33`}`,
+                cursor: t.reached && !t.claimed ? 'pointer' : 'default',
+                opacity: t.reached ? 1 : 0.5,
+              }}
+            >
+              <span className="num text-[8px] leading-none" style={{ color: t.claimed ? '#4c4459' : t.color }}>
+                {t.level}
+              </span>
+              {t.claimed
+                ? <Svg d={ICONS.check} s={9} c="#4c4459" />
+                : <span style={{ width: 5, height: 5, borderRadius: 5, background: t.color, marginTop: 3 }} />}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="kicker text-[9px] text-[var(--color-bone-faint)] mb-1.5">NHIỆM VỤ NGÀY</div>
+      <div className="flex flex-col gap-1.5 mb-3">
+        {q.daily.map((x) => <QuestLine key={x.id} q={x} weekly={false} engine={engine} />)}
+      </div>
+      <div className="kicker text-[9px] text-[var(--color-bone-faint)] mb-1.5">NHIỆM VỤ TUẦN</div>
+      <div className="flex flex-col gap-1.5">
+        {q.weekly.map((x) => <QuestLine key={x.id} q={x} weekly engine={engine} />)}
+      </div>
+      <p className="font-ui text-[9px] text-[var(--color-bone-faint)] mt-3 text-center leading-relaxed">
+        Mỗi ô hoàn thành trả Ấn Điểm và Ngọc · Dọn đợt quái và hạ boss cũng nhỏ giọt Ấn Điểm ·
+        Chọn độ khó Hard/Evil ở Vực Vô Tận để nhân Ấn Điểm lên {DUNGEON_MODES[1].edictMul}–{DUNGEON_MODES[2].edictMul} lần
+      </p>
     </Modal>
   );
 }

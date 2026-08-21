@@ -834,10 +834,10 @@ export class GameIdle {
       b.aspd += (def.bonus.aspd ?? 0) * c;
     }
     // Trần mềm để tích trữ vô hạn bản sao không phá vỡ cân bằng.
-    b.atk = Math.min(b.atk, 12);
-    b.hp = Math.min(b.hp, 12);
-    b.crit = Math.min(b.crit, 0.45);
-    b.aspd = Math.min(b.aspd, 1.2);
+    b.atk = Math.min(b.atk, BAL.ITEM_ATK_CAP);
+    b.hp = Math.min(b.hp, BAL.ITEM_HP_CAP);
+    b.crit = Math.min(b.crit, BAL.ITEM_CRIT_CAP);
+    b.aspd = Math.min(b.aspd, BAL.ITEM_ASPD_CAP);
     return b;
   }
   private power(): number {
@@ -937,7 +937,7 @@ export class GameIdle {
   private kaelCrit(bonus = this.itemBonus()): number {
     return clamp(
       0.08 + bonus.crit + this.runeBonus('crit') + this.weaponCritAdd() + this.synergy.crit,
-      0, 0.85,
+      0, BAL.CRIT_CAP,
     );
   }
   /**
@@ -1056,7 +1056,7 @@ export class GameIdle {
     const homeX = LANE_ANCHOR[lane] - Math.min(n, LANE_CAP - 1) * LANE_GAP;
     return {
       uid: o.uid, isKael: o.isKael, defId: o.defId, level: o.level,
-      atk: o.atk, maxHp: o.maxHp, hp: o.maxHp, aspd: o.aspd, crit: clamp(o.crit, 0, 0.85),
+      atk: o.atk, maxHp: o.maxHp, hp: o.maxHp, aspd: o.aspd, crit: clamp(o.crit, 0, BAL.CRIT_CAP),
       ranged: o.ranged, pos: o.pos, lane,
       x: homeX, homeX, y: LANE_Y[lane], scale: LANE_SCALE[lane] * (o.isKael ? 1.14 : 1), vx: 0,
       atkCd: rand(0.1, 0.7), hitCount: 0, dead: false, respawnT: 0,
@@ -1086,7 +1086,7 @@ export class GameIdle {
       crit: clamp(
         c.crit + bonus.crit + this.synergy.crit
         + (c.skill.id === 'crit' ? 0.18 : c.skill.id === 'flurry' ? 0.25 : 0),
-        0, 0.85,
+        0, BAL.CRIT_CAP,
       ),
     };
   }
@@ -1932,13 +1932,13 @@ export class GameIdle {
     const z = zoneOf(this.floor);
     const boss = kind === 'boss';
     const k = boss ? this.bossDef().kind : kind;
-    const hp = this.foeHpBase() * (FOE_HP_MUL[k] ?? 1) * (boss ? 2.4 : 1);
+    const hp = this.foeHpBase() * (FOE_HP_MUL[k] ?? 1) * (boss ? BAL.BOSS_HP_MUL : 1);
     // Luật Bầy Đàn dựng ba boss cùng lúc — dồn hết vào làn 0 thì chúng chồng lên nhau.
     const ln = boss && !this.trial ? 0 : lane;
     this.enemies.push({
       uid: this.uid++, kind: k, boss,
       hp, maxHp: hp,
-      atk: this.foeAtkBase() * (FOE_ATK_MUL[k] ?? 1) * (boss ? 1.3 : 1),
+      atk: this.foeAtkBase() * (FOE_ATK_MUL[k] ?? 1) * (boss ? BAL.BOSS_ATK_MUL : 1),
       atkCd: rand(0.9, 1.6),
       x: VIEW_W + rand(70, 150) + (boss ? 160 : 0),
       y: LANE_Y[ln], lane: ln,
@@ -1994,10 +1994,12 @@ export class GameIdle {
       this.ring(e.x, e.y - 40, splashR * 0.8, h.look.aura);
     }
 
-    // khống chế
-    const stunChance = has(h, 'stun') ? 0.25 : has(h, 'freeze') ? (h.defId === 'vex' ? 0.35 : 0.3) : 0;
+    // Khống chế: mọi nguồn dùng chung một trần tỉ lệ và một thời lượng.
+    // Trước đây Vex (35%/0.9s) chồng với Rhea và Gấu Nhỏ là khoá cứng cả đợt
+    // quái — boss không kịp ra chiêu lần nào, nên độ khó của boss vô nghĩa.
+    const stunChance = has(h, 'stun') || has(h, 'freeze') ? BAL.CC_CHANCE_CAP : 0;
     if (stunChance > 0 && Math.random() < stunChance && !e.dead) {
-      e.stunT = h.defId === 'vex' ? 0.9 : 0.8;
+      e.stunT = Math.max(e.stunT, BAL.CC_DURATION);
       this.burst(e.x, e.y - 60 * e.scale, 9, '#8cdcff', 'ice');
       sfx.splat();
     }
@@ -2008,7 +2010,14 @@ export class GameIdle {
     }
     // Hút máu gồm cả phần do Liên Kết Huyết Nguyệt cộng vào, nên một đội
     // không có ai mang kỹ năng `lifesteal` vẫn hút được nếu đủ liên kết.
-    const steal = (has(h, 'lifesteal') ? 0.3 : 0) + this.synergy.lifesteal;
+    // Mỗi nguồn đóng góp tối đa 5% và tổng bị chặn ở 10%: hút máu từng là
+    // đường tắt bất tử ở tầng sâu — sát thương càng cao thì càng không thể
+    // chết — nên nó phải là một lớp đệm, không phải một lá chắn.
+    const steal = Math.min(
+      BAL.LIFESTEAL_CAP,
+      (has(h, 'lifesteal') ? BAL.LIFESTEAL_STACK : 0)
+      + Math.min(BAL.LIFESTEAL_STACK, this.synergy.lifesteal),
+    );
     if (steal > 0 && !h.dead && !this.trialHasRule('noHeal')) {
       const amt = Math.min(h.maxHp - h.hp, dmg * steal);
       if (amt > 0) {
@@ -2783,7 +2792,7 @@ export class GameIdle {
         unlocked: this.bestFloor >= trialUnlockFloor(t),
         unlockFloor: trialUnlockFloor(t) + 1,
         cleared: this.trialBest >= t.id,
-        foeHp: BAL.FOE_HP0 * Math.pow(BAL.FOE_HP_RATE, gwT - 1) * t.power * 2.4,
+        foeHp: BAL.FOE_HP0 * Math.pow(BAL.FOE_HP_RATE, gwT - 1) * t.power * BAL.BOSS_HP_MUL,
       };
     });
     const offers: BadgeRow[] = BADGE_OFFERS.map((o) => ({
@@ -4100,7 +4109,7 @@ export class GameIdle {
           e.skillCd -= dt;
           if (e.skillCd <= 0) {
             e.skillCd = rand(6.5, 9);
-            e.telegraph = 1.15;
+            e.telegraph = BAL.BOSS_TELEGRAPH;
             e.telegraphKind = e.kind;
             this.toast('⚠ Boss đang tụ lực!', '#ff9a3c');
             sfx.warn();
@@ -4163,7 +4172,7 @@ export class GameIdle {
       if (h.frozenT > 0) { h.frozenT -= dt; h.vx = 0; return; }
       // hồi máu tự nhiên — luật Tuyệt Dược của Tháp chặn mọi nguồn hồi
       if (!this.trialHasRule('noHeal')) {
-        h.hp = Math.min(h.maxHp, h.hp + h.maxHp * 0.012 * dt);
+        h.hp = Math.min(h.maxHp, h.hp + h.maxHp * BAL.REGEN_PS * dt);
       }
 
       if (h.act === 'attack' || h.act === 'cast' || h.act === 'hurt' || h.act === 'spawn') {
@@ -4505,7 +4514,7 @@ export class GameIdle {
     // Cảnh báo tụ lực của boss — vẽ dưới chân nhân vật để người chơi đọc được.
     for (const e of this.enemies) {
       if (e.telegraph <= 0 || e.dead) continue;
-      const p = 1 - e.telegraph / 1.15;
+      const p = 1 - e.telegraph / BAL.BOSS_TELEGRAPH;
       ctx.save();
       ctx.globalAlpha = 0.35 + 0.3 * Math.sin(this.globalT * 22);
       ctx.strokeStyle = '#ff3b52';

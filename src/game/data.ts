@@ -113,7 +113,7 @@ export const COMPANIONS: CompanionDef[] = [
   {
     id: 'gau', name: 'Gấu Nhỏ', title: 'Thiết Quyền', role: 'Đấu Sĩ', school: 'Thiết Quyền', pos: 'front', rarity: 'common',
     atkBase: 8, hpBase: 110, atkSpd: 0.9, ranged: false, crit: 0.05,
-    skill: { id: 'stun', name: 'Choáng Váng', desc: '25% cơ hội đấm choáng kẻ địch 0.8 giây.' },
+    skill: { id: 'stun', name: 'Choáng Váng', desc: '20% cơ hội đấm choáng kẻ địch 0.5 giây.' },
     look: { hair: '#6a4a2e', outfit: '#9a7a4a', outfit2: '#5e4a2a', skin: '#e0a878', eyes: '#3a2412', hairStyle: 'mohawk', weapon: 'none', accessory: 'ears', aura: '#9db0c4' },
   },
   {
@@ -132,7 +132,7 @@ export const COMPANIONS: CompanionDef[] = [
   {
     id: 'rhea', name: 'Rhea', title: 'Nữ Hoàng Băng', role: 'Pháp Sư', school: 'Băng Giá', pos: 'back', rarity: 'rare',
     atkBase: 15, hpBase: 85, atkSpd: 0.95, ranged: true, crit: 0.06,
-    skill: { id: 'freeze', name: 'Đóng Băng', desc: '30% cơ hội đóng băng kẻ địch 0.8 giây.' },
+    skill: { id: 'freeze', name: 'Đóng Băng', desc: '20% cơ hội đóng băng kẻ địch 0.5 giây.' },
     look: { hair: '#a8d8f0', outfit: '#5a8ac8', outfit2: '#38588a', skin: '#f0e0e8', eyes: '#3a8ad0', hairStyle: 'long', weapon: 'staff', accessory: 'crown', aura: '#3fb9ff' },
   },
   {
@@ -144,7 +144,7 @@ export const COMPANIONS: CompanionDef[] = [
   {
     id: 'fenrir', name: 'Fenrir', title: 'Sói Xám', role: 'Đấu Sĩ', school: 'Huyết Nguyệt', pos: 'front', rarity: 'rare',
     atkBase: 14, hpBase: 120, atkSpd: 1.0, ranged: false, crit: 0.1,
-    skill: { id: 'lifesteal', name: 'Hút Máu', desc: 'Hồi máu bằng 30% sát thương gây ra.' },
+    skill: { id: 'lifesteal', name: 'Hút Máu', desc: 'Hồi máu bằng 5% sát thương gây ra (trần hút máu toàn đội 10%).' },
     look: { hair: '#9aa0b0', outfit: '#5a6070', outfit2: '#3a3e4a', skin: '#d8b898', eyes: '#e8c83a', hairStyle: 'wild', weapon: 'spear', accessory: 'ears', cape: '#3a3e4a', aura: '#3fb9ff' },
   },
   {
@@ -193,7 +193,7 @@ export const COMPANIONS: CompanionDef[] = [
   {
     id: 'vex', name: 'Vex', title: 'Ấn Phong Ấn', role: 'Pháp Sư', school: 'Phong Ấn', pos: 'back', rarity: 'epic',
     atkBase: 24, hpBase: 105, atkSpd: 1.0, ranged: true, crit: 0.08,
-    skill: { id: 'freeze', name: 'Trọng Lực', desc: '35% cơ hội đè bẹp — kẻ địch bất động 0.9 giây, nổ lan 50%.' },
+    skill: { id: 'freeze', name: 'Trọng Lực', desc: '20% cơ hội đè bẹp — kẻ địch bất động 0.5 giây, nổ lan 50%.' },
     look: { hair: '#5a5a7a', outfit: '#3a3a5e', outfit2: '#22223a', skin: '#d8c8b8', eyes: '#a8a8e8', hairStyle: 'hood', weapon: 'orb', accessory: 'mask', aura: '#ffb43c' },
   },
   {
@@ -238,17 +238,17 @@ export const COMPANIONS: CompanionDef[] = [
     { id: 'double', name: 'Song Trảm', desc: 'Mỗi đòn đánh chém thêm một nhát (70% sát thương).' },
     { id: 'pierce', name: 'Xuyên Thấu', desc: 'Đòn đánh xuyên thêm 1 mục tiêu.' },
     { id: 'splash', name: 'Bùng Nổ', desc: 'Gây 60% sát thương lan ra kẻ địch xung quanh.' },
-    { id: 'stun', name: 'Đánh Choáng', desc: '25% cơ hội làm choáng kẻ địch 0.8 giây.' },
+    { id: 'stun', name: 'Đánh Choáng', desc: '20% cơ hội làm choáng kẻ địch 0.5 giây.' },
     { id: 'heal', name: 'Trị Liệu', desc: 'Hồi máu cho đồng đội thấp máu nhất (40% sát thương).' },
     { id: 'crit', name: 'Tử Huyệt', desc: '+18% chí mạng, chí mạng nhân 2.5 sát thương.' },
-    { id: 'lifesteal', name: 'Hút Hồn', desc: 'Hồi máu bằng 30% sát thương gây ra.' },
+    { id: 'lifesteal', name: 'Hút Hồn', desc: 'Hồi máu bằng 5% sát thương gây ra (trần hút máu toàn đội 10%).' },
     { id: 'buff', name: 'Cường Hóa', desc: 'Tăng 12% Công cho toàn đội (cộng dồn).' },
     { id: 'thorns', name: 'Gai Góc', desc: 'Kẻ đánh trúng nhận lại 60% sát thương.' },
     { id: 'meteor', name: 'Thiên Thạch', desc: 'Cứ 4 đòn gọi thiên thạch nổ diện rộng ×2.5.' },
     { id: 'execute', name: 'Kết Liễu', desc: 'Gấp đôi sát thương lên kẻ dưới 30% máu.' },
     { id: 'strongheal', name: 'Đại Trị Liệu', desc: 'Hồi 90% sát thương thành máu cho đồng đội.' },
     { id: 'berserk', name: 'Cuồng Chiến', desc: 'Dưới 50% máu tăng 60% sát thương.' },
-    { id: 'freeze', name: 'Băng Phong', desc: '30% cơ hội đóng băng kẻ địch 0.8 giây.' },
+    { id: 'freeze', name: 'Băng Phong', desc: '20% cơ hội đóng băng kẻ địch 0.5 giây.' },
     { id: 'flurry', name: 'Loạn Vũ', desc: 'Chém 2 nhát liên hoàn, +25% chí mạng, tốc đánh +20%.' },
     { id: 'annihilate', name: 'Tận Diệt', desc: 'Chém lan + Tử Hình kẻ dưới 30% máu + phản đòn 60%.' },
   ];
@@ -777,7 +777,7 @@ export const EVOLUTIONS: EvoStage[] = [
   },
   {
     name: 'Huyết Nghiệp Giả', skill: 'lifesteal', skillName: 'Huyết Ẩm',
-    skillDesc: 'Hút 30% sát thương gây ra thành máu.',
+    skillDesc: 'Hút 5% sát thương gây ra thành máu (trần hút máu toàn đội 10%).',
     aura: '#ff3b52', accessory: 'headband', mul: 1.35,
   },
   {
@@ -885,14 +885,53 @@ export const BAL = {
   COMBO_WINDOW: 3.2,
   COMBO_MAX: 50,
   /**
-   * Đồng hành chỉ còn 25% sức mạnh: sát thương chính phải đến từ Kael.
-   * Bù lại chỉ số gốc của Kael được nâng mạnh và có thêm Ngọc + Tiến Hoá.
+   * Đồng hành giữ 60% sức mạnh (trước đây 25%).
+   * Đổi trục thiết kế: Kael không còn là nguồn sát thương áp đảo, đội hình
+   * mới là thứ quyết định — nhờ vậy 72 đồng hành và Liên Kết mới có ý nghĩa.
    */
-  COMPANION_POWER: 0.25,
-  /** Sát thương gốc của Kael ở cấp 1. */
-  KAEL_ATK0: 95,
-  /** Máu gốc của Kael ở cấp 1. */
-  KAEL_HP0: 320,
+  COMPANION_POWER: 0.6,
+  /**
+   * Sát thương gốc của Kael ở cấp 1 — hạ còn 1/3 (95 → 32).
+   * Kael bắt đầu yếu và mạnh lên bằng cấp, Ngọc, Tiến Hoá, vũ khí; không còn
+   * chuyện một mình cân cả tầng ngay từ đợt đầu.
+   */
+  KAEL_ATK0: 32,
+  /** Máu gốc của Kael ở cấp 1 — gấp đôi để bù cho phần công bị cắt. */
+  KAEL_HP0: 640,
+
+  // ---------- TRẦN SỨC MẠNH ----------
+  // Mọi trần nằm ở đây, không rải rác trong engine: sửa một chỗ là toàn bộ
+  // đường tính (Kael, đồng hành, giao diện) đổi theo cùng lúc.
+  /** Trần chí mạng của mọi đơn vị phe ta. */
+  CRIT_CAP: 0.6,
+  /** Mỗi nguồn hút máu đóng góp tối đa bấy nhiêu. */
+  LIFESTEAL_STACK: 0.05,
+  /** Trần hút máu sau khi cộng mọi nguồn. */
+  LIFESTEAL_CAP: 0.1,
+  /** Hồi máu tự nhiên mỗi giây, theo tỉ lệ máu tối đa (1.2%/s → 0.3%/s). */
+  REGEN_PS: 0.003,
+  /** Trần phần công cộng thêm từ vật phẩm (+800%). */
+  ITEM_ATK_CAP: 8,
+  /** Trần phần máu cộng thêm từ vật phẩm (+1200%) — máu không phá cân bằng. */
+  ITEM_HP_CAP: 12,
+  /** Trần chí mạng cộng thêm từ vật phẩm. */
+  ITEM_CRIT_CAP: 0.45,
+  /** Trần tốc đánh cộng thêm từ vật phẩm. */
+  ITEM_ASPD_CAP: 1.2,
+
+  // ---------- KHỐNG CHẾ ----------
+  /** Trần tỉ lệ gây choáng/đóng băng của một đòn đánh. */
+  CC_CHANCE_CAP: 0.2,
+  /** Thời gian khống chế (giây). */
+  CC_DURATION: 0.5,
+
+  // ---------- BOSS ----------
+  /** Máu boss so với quái thường cùng đợt (2.4 → 6.0, tức +150%). */
+  BOSS_HP_MUL: 6,
+  /** Sát thương boss so với quái thường cùng đợt (1.3 → 1.95, tức +50%). */
+  BOSS_ATK_MUL: 1.95,
+  /** Thời gian báo trước (telegraph) của chiêu boss — 1.15s → 0.8s. */
+  BOSS_TELEGRAPH: 0.8,
 } as const;
 
 // ============ ĐỘ KHÓ VỰC VÔ TẬN ============

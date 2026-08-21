@@ -50,9 +50,9 @@ export const SYNERGIES: SynergyDef[] = [
   {
     id: 'syn_bloodmoon', name: 'Huyết Nguyệt', kind: 'school', key: 'Huyết Nguyệt', color: '#ff3b52',
     tiers: [
-      { need: 2, desc: 'Toàn đội hút 10% sát thương thành máu', effect: { lifesteal: 0.1 } },
-      { need: 4, desc: 'Hút máu 18% · +12% sát thương', effect: { lifesteal: 0.18, atkMul: 1.12 } },
-      { need: 6, desc: 'Hút máu 28% · +25% sát thương', effect: { lifesteal: 0.28, atkMul: 1.25 } },
+      { need: 2, desc: 'Toàn đội hút 2% sát thương thành máu', effect: { lifesteal: 0.02 } },
+      { need: 4, desc: 'Hút máu 3.5% · +12% sát thương', effect: { lifesteal: 0.035, atkMul: 1.12 } },
+      { need: 6, desc: 'Hút máu 5% · +25% sát thương', effect: { lifesteal: 0.05, atkMul: 1.25 } },
     ],
   },
   {
@@ -84,7 +84,7 @@ export const SYNERGIES: SynergyDef[] = [
     tiers: [
       { need: 2, desc: 'Hồi sinh nhanh hơn 25%', effect: { respawnMul: 0.75 } },
       { need: 4, desc: 'Hồi sinh nhanh hơn 40% · +18% máu', effect: { respawnMul: 0.6, hpMul: 1.18 } },
-      { need: 6, desc: 'Hồi sinh nhanh hơn 55% · +35% máu · hút máu 12%', effect: { respawnMul: 0.45, hpMul: 1.35, lifesteal: 0.12 } },
+      { need: 6, desc: 'Hồi sinh nhanh hơn 55% · +35% máu · hút máu 3%', effect: { respawnMul: 0.45, hpMul: 1.35, lifesteal: 0.03 } },
     ],
   },
   {
@@ -114,7 +114,7 @@ export const SYNERGIES: SynergyDef[] = [
     id: 'syn_support', name: 'Hậu Cần', kind: 'role', key: 'Hỗ Trợ', color: '#3fe0b0',
     tiers: [
       { need: 2, desc: 'Hồi sinh nhanh hơn 20% · +10% máu', effect: { respawnMul: 0.8, hpMul: 1.1 } },
-      { need: 3, desc: 'Hồi sinh nhanh hơn 35% · +22% máu · hút máu 8%', effect: { respawnMul: 0.65, hpMul: 1.22, lifesteal: 0.08 } },
+      { need: 3, desc: 'Hồi sinh nhanh hơn 35% · +22% máu · hút máu 2%', effect: { respawnMul: 0.65, hpMul: 1.22, lifesteal: 0.02 } },
     ],
   },
   {
